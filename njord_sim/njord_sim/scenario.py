@@ -10,6 +10,7 @@ from pathlib import Path
 import xml.etree.ElementTree as ET
 
 from .scenario_core import load_scenario, obstacles, scenario_digest
+from .run_manifest import atomic_text
 
 
 def element(parent, tag, text=None, **attrs):
@@ -107,7 +108,7 @@ def generate(scenario_file, output_dir, seed=None, environment=None):
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
     (output / "njord_course.sdf").write_text(world_xml(scenario) + "\n")
-    (output / "resolved_scenario.json").write_text(json.dumps(scenario, indent=2, allow_nan=False) + "\n")
+    atomic_text(output / "resolved_scenario.json", json.dumps(scenario, indent=2, allow_nan=False) + "\n")
     (output / "scenario.sha256").write_text(scenario_digest(scenario) + "\n")
     return scenario
 

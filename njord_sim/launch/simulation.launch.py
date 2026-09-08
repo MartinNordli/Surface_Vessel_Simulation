@@ -10,13 +10,20 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from njord_sim.scenario import generate as generate_scenario
 from njord_sim.vessel import generate as generate_vessel
+from njord_sim.run_manifest import publish_ready
 
 
 def launch(context):
     p = lambda name: LaunchConfiguration(name).perform(context)
     out = Path(p('output_dir')).resolve()
+    run_id = os.environ.get('RUN_ID', '')
+    if not run_id:
+        raise ValueError('Set a unique RUN_ID or use scripts/njord')
+    if (out/'run_ready.json').exists():
+        raise ValueError('Output directory contains a previous run; select a fresh OUTPUT_HOST')
     scenario = generate_scenario(p('scenario'), out, seed=int(p('seed')), environment=p('environment'))
     urdf, _ = generate_vessel(out, p('vessel_config'))
+    publish_ready(out, run_id, scenario)
     args = ['gz', 'sim', '-r', '-v', '3', '--seed', str(scenario['seed'])]
     if p('headless').lower() == 'true':
         args += ['-s', '--headless-rendering']

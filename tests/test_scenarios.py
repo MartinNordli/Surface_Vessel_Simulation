@@ -184,6 +184,11 @@ class ScenarioTests(unittest.TestCase):
         def fake_output(command, env=None):
             if command[:3] == ["git", "status", "--porcelain"]:
                 return ""
+            if command[:3] == ["docker", "compose", "config"]:
+                return json.dumps({"services": {name: {"image": env.get("NJORD_IMAGE", "njord-sim:local")}
+                                                for name in ("simulator", "autonomy", "evaluator")}})
+            if command[:3] == ["docker", "image", "inspect"]:
+                return json.dumps([{"Id": "sha256:" + "a"*64, "Config": {"Labels": {}}}])
             return "test-identity"
 
         with tempfile.TemporaryDirectory() as temporary:

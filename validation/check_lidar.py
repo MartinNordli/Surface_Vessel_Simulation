@@ -46,7 +46,7 @@ class LidarCheck(Node):
         super().__init__("lidar_check")
         self.declare_parameters("", [
             ("points_topic", "/wamv/sensors/lidars/lidar_wamv_sensor/points"),
-            ("odom_topic", "/wamv/ground_truth/odometry"), ("body_frame", "base_link"),
+            ("odom_topic", "/wamv/ground_truth/odometry"), ("body_frame", "wamv/base_link"),
             ("target", [25.0, 7.0, 0.5]), ("min_height_m", 0.4),
             ("max_error_m", 0.5), ("wall_timeout_s", 120.0)])
         self.target = np.asarray(self.get_parameter("target").value, dtype=float)

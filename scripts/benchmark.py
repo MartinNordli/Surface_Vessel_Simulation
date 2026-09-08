@@ -65,6 +65,28 @@ def command_output(args, env=None):
     return subprocess.check_output(args, cwd=ROOT, env=env, text=True, stderr=subprocess.STDOUT).strip()
 
 
+def pin_image(environment):
+    """Resolve once and pin every race service to immutable image contents."""
+    def race_images():
+        configuration = json.loads(command_output(['docker', 'compose', 'config', '--format', 'json'], environment))
+        return {configuration['services'][service]['image'] for service in ('simulator', 'autonomy', 'evaluator')}
+
+    images = race_images()
+    if len(images) != 1:
+        raise ValueError('Benchmark race services must use the same simulator image')
+    inspection = json.loads(command_output(['docker', 'image', 'inspect', images.pop()], environment))[0]
+    image_id = inspection['Id']
+    labels = inspection.get('Config', {}).get('Labels') or {}
+    environment['NJORD_IMAGE'] = image_id
+    environment['IMAGE_ID'] = image_id
+    if race_images() != {image_id}:
+        raise ValueError('Compose overrides must honor NJORD_IMAGE for all race services')
+    return {'image_identity': image_id,
+            'image_source_commit': labels.get('org.opencontainers.image.revision', 'unknown')
+            if 'io.njord.source.digest' in labels else 'unknown',
+            'image_source_digest': labels.get('io.njord.source.digest', 'unknown')}
+
+
 def run_one(index, item, total, output, base_env, wall_timeout, domain_id, cancelled):
     environment, seed, profile = item
     label = f"{environment}-{seed}-{profile}"
@@ -73,7 +95,7 @@ def run_one(index, item, total, output, base_env, wall_timeout, domain_id, cance
     project = f"njord-bench-{os.getpid()}-{index}"
     env = base_env | {"OUTPUT_HOST": str(run_dir), "OUTPUT_DIR": "/outputs", "SEED": str(seed),
                       "ENVIRONMENT": environment, "PROFILE": profile, "RUN_LABEL": label,
-                      "COMPOSE_PROJECT_NAME": project, "GZ_PARTITION": project,
+                      "COMPOSE_PROJECT_NAME": project, "GZ_PARTITION": project, "RUN_ID": project,
                       "ROS_DOMAIN_ID": str(domain_id)}
     command = ["docker", "compose", "-p", project]
     wall_start = time.monotonic()
@@ -132,6 +154,8 @@ def run_one(index, item, total, output, base_env, wall_timeout, domain_id, cance
         metrics = {"status": reason or "missing_metrics", "collision": None,
                    "contact_status": "unavailable", "geometric_overlap": None}
     metrics.update({"label": label, "environment": environment, "seed": seed, "profile": profile,
+                    "runner_git_commit": base_env.get("RUNNER_GIT_COMMIT", "unknown"),
+                    "image_identity": base_env.get("IMAGE_ID", "unknown"),
                     "benchmark_wall_time_s": time.monotonic() - wall_start})
     return metrics
 
@@ -166,13 +190,11 @@ def main():
     output.mkdir(parents=True, exist_ok=False)
     base_env = os.environ.copy()
     base_env.setdefault("COMPOSE_FILE", str(ROOT / "compose.yaml"))
-    base_env["GIT_COMMIT"] = command_output(["git", "rev-parse", "HEAD"])
-    # Store Docker's immutable image ID, not only a tag that can move.
-    images = command_output(["docker", "compose", "config", "--images"], base_env).splitlines()
-    base_env["IMAGE_ID"] = ",".join(sorted({command_output(
-        ["docker", "image", "inspect", image, "--format", "{{.Id}}"], base_env) for image in images}))
-    manifest = {"git_commit": base_env["GIT_COMMIT"], "git_dirty": bool(command_output(["git", "status", "--porcelain"])),
-                "image_identity": base_env["IMAGE_ID"], "matrix": matrix, "wall_timeout_s": args.wall_timeout, "jobs": args.jobs,
+    base_env["RUNNER_GIT_COMMIT"] = command_output(["git", "rev-parse", "HEAD"])
+    image_metadata = pin_image(base_env)
+    manifest = {"runner_git_commit": base_env["RUNNER_GIT_COMMIT"],
+                "runner_git_dirty": bool(command_output(["git", "status", "--porcelain"])),
+                **image_metadata, "matrix": matrix, "wall_timeout_s": args.wall_timeout, "jobs": args.jobs,
                 "compose_file": base_env["COMPOSE_FILE"], "created_utc": stamp}
     (output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     runs = []

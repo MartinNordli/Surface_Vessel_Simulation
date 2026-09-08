@@ -1,0 +1,166 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Enabled: true
+  Global Options:
+    Background Color: 30; 40; 50
+    Fixed Frame: map
+    Frame Rate: 20
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Metre grid
+      Enabled: true
+      Cell Size: 5
+      Plane Cell Count: 32
+      Color: 95; 110; 120
+      Alpha: 0.3
+      Reference Frame: map
+      Plane: XY
+    - Class: rviz_default_plugins/Map
+      Name: Observed occupancy
+      Enabled: true
+      Alpha: 0.7
+      Color Scheme: map
+      Draw Behind: true
+      Topic:
+        Value: /njord/occupancy
+        Reliability Policy: Best Effort
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 1
+    - Class: rviz_default_plugins/Path
+      Name: D Star Lite route
+      Enabled: true
+      Color: 50; 230; 180
+      Alpha: 1
+      Buffer Length: 1
+      Line Style: Billboards
+      Line Width: 0.18
+      Pose Style: None
+      Topic:
+        Value: /njord/path
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 1
+    - Class: rviz_default_plugins/Pose
+      Name: Current mission goal
+      Enabled: true
+      Color: 255; 180; 60
+      Shape: Arrow
+      Shaft Length: 2
+      Shaft Radius: 0.15
+      Head Length: 0.8
+      Head Radius: 0.4
+      Topic:
+        Value: /njord/goal
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 1
+    - Class: rviz_default_plugins/RobotModel
+      Name: WAM-V
+      Enabled: true
+      Alpha: 1
+      Description Source: Topic
+      Description Topic:
+        Value: /robot_description
+        Reliability Policy: Reliable
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Depth: 1
+      Visual Enabled: true
+      Collision Enabled: false
+      Update Interval: 0
+    - Class: rviz_default_plugins/TF
+      Name: Boat and sensor frames
+      Enabled: true
+      Show Arrows: false
+      Show Axes: true
+      Show Names: false
+      Marker Scale: 0.7
+      Frame Timeout: 10
+      Frames:
+        All Enabled: false
+        wamv/base_link:
+          Value: true
+        wamv/lidar_wamv_link:
+          Value: true
+        wamv/front_left_camera_link_optical:
+          Value: true
+        wamv/front_right_camera_link_optical:
+          Value: true
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Lidar returns
+      Enabled: true
+      Alpha: 0.85
+      Position Transformer: XYZ
+      Color Transformer: AxisColor
+      Axis: Z
+      Autocompute Value Bounds:
+        Value: false
+        Min Value: 0
+        Max Value: 4
+      Style: Flat Squares
+      Size (Pixels): 3
+      Size (m): 0.08
+      Decay Time: 0
+      Queue Size: 3
+      Topic:
+        Value: /wamv/sensors/lidars/lidar_wamv_sensor/points
+        Reliability Policy: Best Effort
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 3
+    - Class: rviz_default_plugins/Image
+      Name: Front left camera
+      Enabled: true
+      Normalize Range: true
+      Queue Size: 2
+      Topic:
+        Value: /wamv/sensors/cameras/front_left_camera_sensor/image_raw
+        Reliability Policy: Best Effort
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 2
+    - Class: rviz_default_plugins/Image
+      Name: Front right camera
+      Enabled: true
+      Normalize Range: true
+      Queue Size: 2
+      Topic:
+        Value: /wamv/sensors/cameras/front_right_camera_sensor/image_raw
+        Reliability Policy: Best Effort
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 2
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/Measure
+  Transformation:
+    Current:
+      Class: rviz_default_plugins/TF
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Name: Course overview
+      Target Frame: map
+      Distance: 95
+      Pitch: 1.35
+      Yaw: -1.5708
+      Focal Point:
+        X: 35
+        Y: 0
+        Z: 0
+      Near Clip Distance: 0.05
+Window Geometry:
+  Width: 1440
+  Height: 900
+  Hide Left Dock: false
+  Hide Right Dock: false

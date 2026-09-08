@@ -73,6 +73,12 @@ COPY scripts /opt/njord/scripts
 COPY validation /opt/njord/validation
 COPY docker/entrypoint.sh /entrypoint.sh
 COPY docker/dependencies.lock.json /opt/njord/dependencies.lock.json
+ARG NJORD_IMAGE_SOURCE_COMMIT=unknown
+ARG NJORD_IMAGE_SOURCE_DIGEST=unknown
+LABEL org.opencontainers.image.revision="${NJORD_IMAGE_SOURCE_COMMIT}" \
+      io.njord.source.digest="${NJORD_IMAGE_SOURCE_DIGEST}"
+ENV NJORD_IMAGE_SOURCE_COMMIT=${NJORD_IMAGE_SOURCE_COMMIT} \
+    NJORD_IMAGE_SOURCE_DIGEST=${NJORD_IMAGE_SOURCE_DIGEST}
 ENV PYTHONUNBUFFERED=1 NVIDIA_DRIVER_CAPABILITIES=graphics,utility,compute,display ROS_DOMAIN_ID=42
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["ros2", "launch", "njord_sim", "simulation.launch.py"]

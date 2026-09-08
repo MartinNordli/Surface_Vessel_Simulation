@@ -2,6 +2,7 @@
 """Explicit maintenance command: resolve remote refs, never run during builds."""
 import json
 from pathlib import Path
+import re
 import subprocess
 import urllib.request
 
@@ -12,6 +13,35 @@ VENDORS = ['gz_math_vendor', 'gz_msgs_vendor', 'gz_sim_vendor',
 def get(url, headers=None):
     with urllib.request.urlopen(urllib.request.Request(url, headers=headers or {}), timeout=60) as response:
         return response.read(), response.headers
+
+
+def update_base_image(dockerfile, image):
+    """Replace exactly the pinned external base; preserve subsequent stages."""
+    if not re.fullmatch(r'ros:jazzy-ros-base@sha256:[0-9a-f]{64}', image):
+        raise ValueError('ROS base must contain a complete SHA256 digest')
+    pattern = r'^(FROM[ \t]+)ros:jazzy-ros-base@sha256:[0-9a-f]{64}([ \t]+AS[ \t]+vrx-base[ \t]*)$'
+    result, count = re.subn(pattern, lambda match: match[1] + image + match[2],
+                            dockerfile, flags=re.MULTILINE)
+    if count != 1:
+        raise ValueError('Dockerfile must contain exactly one pinned vrx-base FROM declaration')
+    return result
+
+
+def write_lock(root, lock):
+    # Validate the Dockerfile before changing any lock artifacts.
+    dockerfile = root / 'Dockerfile'
+    updated = update_base_image(dockerfile.read_text(), lock['ros_image'])
+    repos = {'repositories': {f'gz_libs/{name}': {'type': 'git', 'url': info['url'], 'version': info['commit']}
+                             for name, info in lock['vendors'].items()}}
+    target = root / 'docker'
+    target.mkdir(exist_ok=True)
+    artifacts = {dockerfile: updated,
+                 target / 'dependencies.lock.json': json.dumps(lock, indent=2) + '\n',
+                 target / 'gz.repos': json.dumps(repos, indent=2) + '\n'}
+    for path, content in artifacts.items():
+        temporary = path.with_name(path.name + '.tmp')
+        temporary.write_text(content)
+        temporary.replace(path)
 
 def main():
     token = json.loads(get('https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/ros:pull')[0])['token']
@@ -24,12 +54,7 @@ def main():
         url = f'https://github.com/gazebo-release/{name}.git'
         sha = subprocess.check_output(['git', 'ls-remote', url, 'refs/heads/jazzy'], text=True).split()[0]
         lock['vendors'][name] = {'url': url, 'commit': sha}
-    target = ROOT / 'docker'
-    target.mkdir(exist_ok=True)
-    (target / 'dependencies.lock.json').write_text(json.dumps(lock, indent=2) + '\n')
-    repos = {'repositories': {f'gz_libs/{name}': {'type': 'git', 'url': info['url'], 'version': info['commit']}
-                             for name, info in lock['vendors'].items()}}
-    (target / 'gz.repos').write_text(json.dumps(repos, indent=2) + '\n')
+    write_lock(ROOT, lock)
     print(json.dumps(lock, indent=2))
 
 if __name__ == '__main__':

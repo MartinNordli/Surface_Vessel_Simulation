@@ -2,14 +2,10 @@
 """Wait for resolved scenario before starting the scorer; bound infrastructure wait."""
 import os
 from pathlib import Path
-import time
+from njord_sim.run_manifest import wait_ready
 
 path = Path(os.environ.get('OUTPUT_DIR', '/outputs'))
-deadline = time.monotonic() + 120
-while not (path/'resolved_scenario.json').exists():
-    if time.monotonic() > deadline:
-        raise SystemExit('Simulator did not generate its scenario within 120 seconds')
-    time.sleep(0.1)
+wait_ready(path, os.environ.get('RUN_ID', ''))
 args = ['ros2', 'run', 'njord_sim', 'evaluator', '--ros-args', '-p', 'use_sim_time:=true',
         '-p', f'scenario_file:={path}/resolved_scenario.json', '-p', f'output:={path}/run_metrics.json',
         '-p', 'run_label:='+os.environ.get('RUN_LABEL', 'demo'),

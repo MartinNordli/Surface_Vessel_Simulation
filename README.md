@@ -1,163 +1,221 @@
-# njord-sim-poc
+# Njord VRX simulator
 
-A D* Lite planner running closed loop against a simulated boat, first in pure
-Python and then in VRX / Gazebo, with validation at every level so the results
-mean something.
+A Docker-based ROS 2 Jazzy / Gazebo Harmonic / VRX v3.1.0 simulator for Njord
+NTNU's autonomous surface-vessel work. The reference WAM-V uses two RGB cameras
+and a 3D lidar to discover red-left/green-right gates, GPS/IMU estimation for
+navigation, incremental D* Lite for routes, and force-based differential thrust.
 
-The point of this repo is not the planner. It is that every claim it makes is
-checkable: the planner is checked against an independent optimal search, the
-vessel model is checked against measurable manoeuvres, the lidar is checked
-against world geometry, and the closed loop is scored on ground truth across
-repeated runs.
+This is a WAM-V reference simulator, not a calibrated digital twin of Njord's
+hull. Read [interfaces](docs/interfaces.md) for integration contracts and
+[AGENTS.md](AGENTS.md) for engineering and agent collaboration instructions.
 
-```
-njord_sim/           ROS 2 (ament_python) package
-  njord_sim/
-    dstar_lite.py    planner core, no ROS or Gazebo dependency
-    mapper_node.py   lidar point cloud -> inflated occupancy grid
-    planner_node.py  persistent D* Lite search, publishes nav_msgs/Path
-    guidance_node.py line-of-sight following, differential thrust
-    evaluator_node.py ground truth scoring, writes JSON
-  launch/dstar_demo.launch.py
-tests/               planner correctness against A*
-sandbox/             closed loop with no ROS and no Gazebo
-validation/          checks that run against a live VRX simulation
+## Run
+
+Requirements: Ubuntu 24.04, Docker Engine with Compose v2, NVIDIA Container
+Toolkit, and a working NVIDIA host driver. The setup script installs Docker and
+the toolkit, **never a GPU kernel driver**:
+
+```bash
+sudo bash scripts/setup-host.sh
+./scripts/njord build
+./scripts/njord doctor
+./scripts/njord demo
 ```
 
-## The validation ladder
+Docker commands require access to the Docker socket. Use `sudo` or your chosen
+Docker group configuration. If group membership was just added, start a fresh
+login or use `sg docker -c './scripts/njord demo'` for the existing shell.
 
-Run these in order. Each level is only meaningful if the level below it
-passed. Skipping a level does not save time, it moves the debugging to a place
-where the cause is much harder to see.
+`demo` starts simulator, autonomy and evaluator, creates a fresh timestamped
+`outputs/run-*` directory, waits for valid perception/planning/navigation and
+contact monitoring, then starts race timing. It stops all services on completion
+or failure. Exit status is nonzero for a failed race. Generated SDF, URDF, bridge
+configuration, resolved scenario and metrics are kept in the output directory.
 
-### 0. Planner correctness, no simulator needed
-
+```bash
+./scripts/njord gui                         # Gazebo window
+./scripts/njord test                        # CPU + ROS transport/model tests in Docker
+./scripts/njord benchmark --jobs 2          # 10 seeds × 2 environments × 2 profiles
+./scripts/njord benchmark --dry-run         # inspect matrix without launching
+ENVIRONMENT=moderate PROFILE=fast ./scripts/njord demo
 ```
+
+The default simulator uses OGRE2 with headless EGL rendering. NVIDIA graphics
+capabilities are supplied to the container. On WSL2, `scripts/njord` automatically
+adds `compose.wsl.yaml`, mounting WSLg/DXG and selecting Mesa D3D12 on the NVIDIA
+adapter. WSL uses the Windows driver; do not install Linux NVIDIA kernel modules
+inside WSL. `nvidia-smi` passing alone does not establish rendering: inspect
+Gazebo's `~/.gz/rendering/ogre2.log` and run the live smoke test.
+
+To keep an interactive simulator running and inspect it from another terminal:
+
+```bash
+export COMPOSE_FILE=compose.yaml:compose.wsl.yaml  # WSL; native Linux: compose.yaml
+export RUN_ID=$(python3 -c 'import uuid; print(uuid.uuid4().hex)')
+export OUTPUT_HOST=./outputs/manual-$RUN_ID
+docker compose up simulator autonomy evaluator
+# Another terminal, same Compose configuration:
+./scripts/njord smoke
+# Finish:
+docker compose down
+```
+
+The GUI overlay uses the existing X display and Xauthority; it never runs
+`xhost +`. A separate RViz service is available with `docker compose --profile gui up rviz`
+using the same Compose files, ROS domain and Gazebo partition as the simulator.
+
+Optional recording (add `compose.wsl.yaml` in the list on WSL):
+
+```bash
+COMPOSE_FILE=compose.yaml:compose.record.yaml ./scripts/njord demo recorder
+```
+
+This writes compressed MCAP bags under the run directory, including `/clock`,
+TF, sensors, navigation, commands and evaluation topics. `recording.json` records
+topic selection and image/source provenance. Existing bags are never overwritten.
+
+The project provides `sim_platform`, `perception`, `autonomy` and `validation`
+roles under `.codex/agents/`, using the
+[documented custom-agent format](https://learn.chatgpt.com/docs/agent-configuration/subagents#custom-agents).
+They inherit the parent model and permissions; AGENTS.md defines ownership and
+review rules. Ask Codex to delegate an independent task to the relevant role.
+
+## Data flow
+
+```mermaid
+flowchart LR
+  G[Gazebo / VRX physics] --> S[Camera + lidar + GPS + IMU]
+  S --> E[GPS/IMU estimator]
+  S --> P[Camera/lidar buoy fusion]
+  S --> M[Observed occupancy map]
+  P --> Q[Ordered gate mission]
+  E --> D[D* Lite]
+  M --> D
+  Q --> D
+  D --> C[Collision-checked guidance]
+  C --> W[ROS guard + Gazebo timeout]
+  W --> G
+  G --> V[Ground-truth evaluator]
+```
+
+The scenario file is the only source of world/evaluator obstacle geometry.
+Autonomy receives the gate count through an atomic, run-specific startup manifest,
+never the hidden coordinates. Output directories containing a prior run are rejected. Both cameras
+have calibrated optical frames, and pointcloud transforms use their acquisition
+time with full roll/pitch/yaw. Free ray observations and aged occupancy replace
+the old permanent obstacle map. Unknown cells remain explicitly unknown; the
+route planner may explore through them, but the controller only advances into
+an observed-free corridor.
+
+## Configuration
+
+- `scenarios/reference.yaml`: three 14 m-wide gates, two additional obstacles,
+  starting pose, seed, timeout and calm/moderate wind/wave presets. JSON syntax is
+  valid YAML; general YAML is accepted too. Scenario generation saves resolved
+  geometry and a SHA256 digest per run.
+- `njord_sim/config/vessel.yaml` and `sensors.xacro`: sensor geometry, rates,
+  resolution and noise, thruster limits. Defaults: 640×360 RGB at 15 Hz, 720×16
+  lidar at 10 Hz/80 m, GPS 10 Hz, IMU 100 Hz. WAM-V thruster separation 2.05427 m.
+- `njord_sim/config/localization.yaml`: local attitude EKF, global GPS/IMU EKF,
+  and local-cartesian GPS conversion. No ground-truth odometry enters these nodes.
+- `PROFILE=conservative|fast`: speed ceilings 1.0 and 2.0 m/s, respectively,
+  reduced by heading error, clearance and available stopping corridor. Thrust
+  limit 500 N per engine. Initial braking assumption 0.25 m/s² must be checked
+  through dynamics experiments before transferring parameters to another boat.
+
+Harmonic's NavSat implementation applies horizontal noise in **degrees**. We
+therefore disable that built-in noise and add independently seeded metric noise
+in the GPS adapter, using WGS84 curvature to convert metres to latitude/longitude.
+Default horizontal standard deviation 0.3 m and vertical 0.5 m. IMU attitude noise
+is 0.005 rad; angular-rate and acceleration noise remain the upstream sensor model.
+
+The mission initializes its first search from estimated heading. A gate leaving
+the camera field of view may be remembered for at most 45 s inside a bounded
+15 m approach/crossing corridor; fresh camera frames, odometry and observed-free
+lidar guidance are still required. Mapping inflates obstacles by 4 m.
+
+The command guard requires current planner, mission, navigation and evaluator
+heartbeats. Commands expire after 0.5 seconds of steady time. A separate Gazebo
+plugin removes thrust if the ROS guard or bridge disappears. Zero thrust leaves
+momentum and wind drift; it is not an instant stop or a collision guarantee.
+
+## Validation
+
+```bash
 python3 tests/test_dstar_lite.py
+python3 -m unittest discover -s tests -p 'test_*.py'
+./scripts/njord test
 ```
 
-Checks D* Lite against an independent A* on several hundred random grids, and
-then the property that actually matters: after the robot moves and obstacles
-appear and disappear, the incrementally repaired solution must equal a
-from-scratch optimal replan. Two floating point bugs in the priority queue were
-found by exactly this test. Both produced a `g` value that was slightly too
-low rather than a crash, so the planner reported a cost it could not achieve
-and path extraction failed several cycles later, far from the cause. Neither
-would have been visible in a demo video.
+CPU tests cover independent A* comparisons, incremental obstacle repair, invalid
+endpoints, complete grid geometry, observed-free tracking, map clearing/aging,
+full 3D sensor transforms, camera color detection, lidar association, ordered gates,
+collision scoring, strict metrics and benchmark comparisons. ROS/model tests
+explicitly skip when their dependencies are absent on the host; run the container
+suite for the full check. Transport tests run in isolated ROS domains.
 
-Expected output:
+`sandbox/headless_demo.py` runs the planner core closed loop against a 3-DOF
+vessel and a simulated 2D lidar, with no ROS and no Gazebo. Five seeds take about
+ten seconds and exit nonzero if any seed fails to reach the goal or collides. It
+tests planner, inflation and guidance parameters, not hydrodynamics, rendering or
+ROS integration. `sandbox/make_gif.py` animates the same run. Both write to
+`outputs/sandbox/`; the committed figures in `sandbox/` are illustrations and are
+not regenerated by a run.
 
-```
-  static grids: 200 cases, 146 solvable, all match A*
-  incremental replanning: 655 repair steps, all match a full A* replan
-  block + clear + moving start: 610 repair steps, all match a full A* replan
-  obstacle removal: cost dropped 25.31 -> 10.00, matches A*
-  walled-off goal: reported unreachable, no path returned
-```
+`validation/check_runtime.py` checks actual camera pixels, finite lidar returns,
+GPS/IMU odometry and optical TF against a running simulator. Benchmark acceptance
+requires every reference run to finish the ordered course with no contact and no
+geometric overlap, verified contact monitoring, and a faster median for the fast
+profile on matched seeds. Reports retain failures, timeouts and unavailable data.
+Seeds improve repeatability; GPU rendering is not promised to be bit deterministic.
 
-### 1. Closed loop, no simulator needed
+Run dynamics measurements with **only the simulator service** running:
 
-```
-python3 sandbox/headless_demo.py
-```
-
-A 3-DOF vessel, a simulated 2D lidar and the real planner, in the same loop
-shape as the ROS nodes. The boat starts with an empty map, so every obstacle is
-discovered en route and every detour is a genuine replan. Runs five seeds in
-about ten seconds and writes `sandbox/headless_demo.png` and
-`sandbox/headless_metrics.json`. For a version you can put in a slide:
-
-```
-python3 sandbox/make_gif.py
+```bash
+export RUN_ID=$(python3 -c 'import uuid; print(uuid.uuid4().hex)')
+export OUTPUT_HOST=./outputs/dynamics-$RUN_ID
+export SCENARIO=/opt/njord/scenarios/dynamics.yaml
+docker compose up simulator
+# A second terminal with the same environment:
+docker compose run --rm autonomy python3 validation/check_dynamics.py --ros-args -p use_sim_time:=true
 ```
 
-writes `sandbox/headless_demo.gif`, the same run animated. It shows what the
-boat knows rather than what the world looks like: the occupancy grid grows as
-the lidar sweeps, the plan snaps to a new route each time a buoy is found, and
-the track lags the plan because the boat cannot turn on the spot.
+The script is the sole force-envelope publisher for this experiment. It measures
+straight-line acceleration/top speed, turning speed/yaw rate/radius, and coast
+arc length. An unfinished stop is reported explicitly. Use a clear scenario for
+these open-loop manoeuvres. Lidar validation accepts a known cylindrical target
+and measures range from the actual sensor origin using a separate truth TF buffer.
 
-This is the level that catches inflation radius, lookahead distance and control
-gains, and it catches them in seconds instead of in minutes of Gazebo wall
-clock. If the planner cannot get a boat through here, no amount of
-hydrodynamic fidelity will save it.
+## Limits and next vessel integration
 
-### 2. Vessel dynamics in VRX
+The stock hydrodynamics are a reference, not Njord measurements. Buoys are fixed
+vertical cylinders approximating moored markers. The camera baseline assumes
+colored gates and undistorted images; it is not a general learned detector.
+Lidar's no-return scan supplement assumes obstacles intersect its sensing volume;
+very short objects, spray, sun glare and physical water optics need further work.
+Moving-traffic behavior, currents, COLREGs and global time-optimal control are not
+implemented. D* Lite minimizes geometric grid distance; the two speed profiles
+provide a measurable timing comparison, not a proof of a fastest possible route.
 
-```
-ros2 launch vrx_gz competition.launch.py world:=sydney_regatta
-python3 validation/check_dynamics.py
-```
+For the real vessel, replace the model/configuration, sensor extrinsics and
+actuator mapping; calibrate mass/inertia, drag, thrust curves, turn response and
+stopping behaviour against measurements; then repeat the validation ladder.
 
-Prints top speed, acceleration time, steady yaw rate, turning radius and
-stopping distance from three open-loop manoeuvres. These are the same three
-manoeuvres you can measure on the real boat in an afternoon, and until the two
-sets of numbers agree, everything downstream is a result about a simulator
-rather than about Njord's boat.
+## Reproducibility and attribution
 
-The turning radius this reports is also the lower bound for the costmap
-inflation radius. A boat cannot stop.
+Docker pins the ROS base image digest, VRX commit and Gazebo vendor source
+commits in `docker/dependencies.lock.json`. `scripts/lock-dependencies.py` is an
+explicit maintenance command, not part of normal builds. Ubuntu/ROS apt package
+repositories still receive updates; preserve the built image ID for exact binary
+reproduction. Builds through `scripts/njord build` bake the source commit and a SHA256 of Docker
+source inputs into the image, including dirty source changes. Benchmarks pin the
+immutable image ID and record its source metadata separately from the runner Git
+commit and dirty state. Direct Docker builds without these arguments report unknown
+source provenance.
 
-### 3. Sensor against world geometry
-
-```
-python3 validation/check_lidar.py --ros-args -p target:="[-470.0, 210.0, 1.5]"
-```
-
-Holds position, compares the closest lidar return against the distance
-computed from the world file, and reports the fraction of returns falling below
-the wave-rejection height. A bias larger than one cell width means the
-occupancy grid is offset from the world, which looks exactly like a planner
-that avoids obstacles that are not there.
-
-### 4. Closed loop in VRX
-
-```
-colcon build --packages-select njord_sim && source install/setup.bash
-ros2 launch vrx_gz competition.launch.py world:=sydney_regatta
-ros2 launch njord_sim dstar_demo.launch.py
-ros2 topic pub --once /njord/goal geometry_msgs/PoseStamped \
-  "{header: {frame_id: map}, pose: {position: {x: -380.0, y: 250.0}}}"
-```
-
-Watch `/njord/path` in RViz next to the Gazebo view. The evaluator writes
-`run_metrics.json` on completion.
-
-### 5. Repeats
-
-Run level 4 across several starting positions and obstacle layouts with
-`--ros-args -p run_label:=...` and collect the JSON files. One successful run
-is an anecdote. A table of clearance, path efficiency and replan latency over
-ten runs is evidence, and it is also the regression test that stops next year's
-team from breaking this without noticing.
-
-## Before it will run
-
-Every topic name is a launch argument, because they are the single thing most
-likely to differ between VRX releases and thruster configurations. Check them
-first:
-
-```
-ros2 topic list | grep -E "thrust|points|odom"
-```
-
-The defaults assume `/wamv/thrusters/{left,right}/thrust` (`std_msgs/Float64`),
-a lidar on `/wamv/sensors/lidars/lidar_wamv_sensor/points`, and ground truth
-odometry on `/wamv/ground_truth/odometry`. Override whichever differ.
-
-## Deliberate shortcuts
-
-These are fine for a proof of concept and wrong for the real system. They are
-listed here so nobody inherits them by accident.
-
-- **Ground truth odometry is used as the navigation solution.** There is no
-  state estimator. Swapping in GPS and IMU fusion will degrade path following,
-  and that degradation is itself worth measuring.
-- **Points are transformed with odometry plus a static sensor offset, not
-  through tf2.** Exact while the odometry is ground truth, wrong the moment it
-  is not.
-- **The map only grows.** Nothing is cleared except the boat's own footprint,
-  so a moving target vessel leaves a permanent smear. Fine for static buoys,
-  not for traffic.
-- **The stock VRX WAM-V is used, not Njord's hull.** Replacing it is the first
-  real task, and level 2 above is how you know when it is done.
-- **Control gains are hand-tuned for the WAM-V** and will need retuning.
+The Docker base setup derives from the Apache-2.0 licensed
+[VRX v3.1.0 container setup](https://github.com/osrf/vrx/tree/v3.1.0/docker),
+including its SDFormat/Python vendor compatibility approach. WAM-V assets and VRX
+plugins retain upstream licenses. The adapted Docker setup retains the
+[VRX Apache-2.0 license](docker/LICENSE.vrx). See [VRX](https://github.com/osrf/vrx) and
+[Gazebo EGL rendering](https://gazebosim.org/api/sim/8/headless_rendering.html).

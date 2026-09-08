@@ -2,6 +2,7 @@
 services:
   recorder:
     extends:
+      file: compose.yaml
       service: autonomy
     profiles: [record]
     command: [python3, /opt/njord/scripts/run_recorder.py]

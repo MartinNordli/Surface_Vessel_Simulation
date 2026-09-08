@@ -1,119 +1,190 @@
-"""Scores a run against ground truth and writes it to JSON.
+"""Score ordered gate races using simulation-only ground truth and /clock.
 
-This node is the argument. A video of a boat avoiding a buoy convinces nobody
-for long; a table of clearance, path efficiency and replan latency across
-repeated runs is something the team can act on and can regress against.
-
-Obstacle positions are given as a parameter because they come from the world
-file, not from any topic. Keep them in sync with the world you launch.
+A steady-clock timer ends the process if Gazebo never starts, freezes, or loses
+odometry. Missing contact data cannot establish a collision-free run.
 """
-
 import json
 import math
+import os
+from pathlib import Path as FilePath
+import sys
+import time
 
-import numpy as np
 import rclpy
 from nav_msgs.msg import Odometry, Path
+from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus
+from rclpy.clock import Clock, ClockType
 from rclpy.node import Node
-from std_msgs.msg import Float64
+from rclpy.qos import qos_profile_sensor_data, QoSProfile, DurabilityPolicy
+from std_msgs.msg import Float64, Bool
+
+from .scenario_core import RaceScorer, load_scenario, scenario_digest
 
 
 class Evaluator(Node):
     def __init__(self):
         super().__init__("evaluator")
-        self.declare_parameters(
-            "",
-            [
-                ("odom_topic", "/wamv/ground_truth/odometry"),
-                ("path_topic", "/njord/path"),
-                ("goal", [100.0, 100.0]),
-                ("goal_tolerance_m", 6.0),
-                ("obstacles", [0.0]),  # flat [x, y, radius, x, y, radius, ...]
-                ("hull_radius_m", 2.5),
-                ("timeout_s", 300.0),
-                ("output", "run_metrics.json"),
-                ("run_label", "run"),
-            ],
-        )
-        p = self.get_parameter
-        self.goal = np.array(p("goal").value, dtype=float)
-        self.goal_tolerance = p("goal_tolerance_m").value
-        flat = p("obstacles").value
-        self.obstacles = np.array(flat, dtype=float).reshape(-1, 3) if len(flat) >= 3 else np.empty((0, 3))
-        self.hull_radius = p("hull_radius_m").value
-        self.timeout = p("timeout_s").value
-        self.output = p("output").value
-        self.label = p("run_label").value
-
-        self.start_time = None
-        self.origin = None
-        self.previous = None
-        self.travelled = 0.0
-        self.min_clearance = math.inf
+        self.declare_parameters("", [
+            ("scenario_file", ""), ("odom_topic", "/wamv/ground_truth/odometry"),
+            ("path_topic", "/njord/path"), ("contacts_topic", "/njord/contacts"),
+            ("output", "outputs/run_metrics.json"), ("run_label", "run"),
+            ("profile", "conservative"), ("wall_timeout_s", 600.0),
+            ("odom_wall_timeout_s", 30.0),
+            ("wait_for_ready", True),
+            ("git_commit", os.environ.get("GIT_COMMIT", "unknown")),
+            ("image_identity", os.environ.get("IMAGE_ID", "unknown")),
+        ])
+        p = lambda name: self.get_parameter(name).value
+        self.scenario = load_scenario(p("scenario_file"))
+        self.scorer = RaceScorer(self.scenario)
+        self.wall_start = time.monotonic()
+        self.first_odom_wall = None
+        self.last_odom_wall = None
+        self.output = FilePath(p("output"))
+        self.done = False
+        self.exit_code = 2
         self.replans = 0
         self.latencies = []
-        self.reached = False
-        self.done = False
+        self.started = not p("wait_for_ready")
+        self.readiness = {}
+        self.latest_ground_truth = None
+        self.contact_last_wall = None
+        self.contact_last_stamp = None
+        self.active_pub = self.create_publisher(Bool, "/njord/race_active",
+            QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
+        for topic in ("mission_status", "planner_status", "navigation_status"):
+            self.create_subscription(DiagnosticArray, "/njord/" + topic, self.on_readiness, 10)
+        self.create_subscription(Odometry, p("odom_topic"), self.on_odom, qos_profile_sensor_data)
+        self.create_subscription(Path, p("path_topic"), self.on_path, 10)
+        self.create_subscription(Float64, "/njord/plan_ms", self.on_latency, 10)
+        try:
+            from ros_gz_interfaces.msg import Contacts
+            self.create_subscription(Contacts, p("contacts_topic"), self.on_contacts, qos_profile_sensor_data)
+        except ImportError:
+            self.get_logger().warning("Contact message type unavailable; contact result will be null")
+        self.create_timer(0.1, self.check_timeout, clock=Clock(clock_type=ClockType.STEADY_TIME))
 
-        self.create_subscription(Odometry, p("odom_topic").value, self.on_odom, 10)
-        self.create_subscription(Path, p("path_topic").value, lambda _: self.count_replan(), 1)
-        self.create_subscription(Float64, "/njord/plan_ms", lambda m: self.latencies.append(m.data), 10)
+    def on_readiness(self, message):
+        stamp = message.header.stamp.sec + message.header.stamp.nanosec * 1e-9
+        for status in message.status:
+            self.readiness[status.name] = (status.level == DiagnosticStatus.OK, stamp, time.monotonic())
 
-    def count_replan(self):
+    def ready(self):
+        now_sim = self.get_clock().now().nanoseconds * 1e-9
+        now_wall = time.monotonic()
+        return self.latest_ground_truth is not None and self.last_odom_wall is not None and now_wall - self.last_odom_wall <= 0.5 and self.contact_last_wall is not None and now_wall - self.contact_last_wall <= 0.5 and all(
+            name in self.readiness and self.readiness[name][0]
+            and 0 <= now_sim - self.readiness[name][1] <= 0.5
+            and now_wall - self.readiness[name][2] <= 0.5
+            for name in ("njord/planner", "mission", "navigation"))
+
+    def on_path(self, _):
         self.replans += 1
 
-    def on_odom(self, msg):
+    def on_latency(self, message):
+        if math.isfinite(message.data) and message.data >= 0:
+            self.latencies.append(message.data)
+
+    def on_contacts(self, message):
         if self.done:
             return
-        now = self.get_clock().now().nanoseconds * 1e-9
-        position = np.array([msg.pose.pose.position.x, msg.pose.pose.position.y])
-        if self.start_time is None:
-            self.start_time = now
-            self.origin = position.copy()
+        stamp = message.header.stamp.sec + message.header.stamp.nanosec * 1e-9
+        if self.contact_last_stamp is None or stamp > self.contact_last_stamp:
+            self.contact_last_stamp, self.contact_last_wall = stamp, time.monotonic()
+        def name(collision):
+            return getattr(collision, "name", str(collision))
+        involved = any("wamv" in name(c.collision1) or "wamv" in name(c.collision2)
+                       for c in message.contacts)
+        self.scorer.contact(involved)
+        if involved:
+            self.finish()
 
-        if self.previous is not None:
-            self.travelled += float(np.linalg.norm(position - self.previous))
-        self.previous = position
+    def on_odom(self, message):
+        if self.done:
+            return
+        wall = time.monotonic()
+        stamp = message.header.stamp.sec + message.header.stamp.nanosec * 1e-9
+        if self.latest_ground_truth is None or stamp > self.latest_ground_truth[0]:
+            self.last_odom_wall = wall
+        q = message.pose.pose.orientation
+        yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
+        pos = message.pose.pose.position
+        self.latest_ground_truth = (stamp, pos.x, pos.y, yaw)
+        if not self.started:
+            return
+        if self.first_odom_wall is None:
+            self.first_odom_wall = wall
+        self.scorer.update(stamp, pos.x, pos.y, yaw)
+        if self.scorer.status != "running":
+            self.finish()
 
-        if len(self.obstacles):
-            gaps = np.linalg.norm(self.obstacles[:, :2] - position[None, :], axis=1)
-            gaps -= self.obstacles[:, 2] + self.hull_radius
-            self.min_clearance = min(self.min_clearance, float(np.min(gaps)))
+    def check_timeout(self):
+        if self.done:
+            return
+        now = time.monotonic()
+        if not self.started and self.ready():
+            self.started = True
+            self.first_odom_wall = now
+            self.scorer.update(*self.latest_ground_truth)
+            self.get_logger().info("Navigation, mission and planner ready; race started")
+        self.active_pub.publish(Bool(data=self.started and self.scorer.status == "running"))
+        if now - self.wall_start >= self.get_parameter("wall_timeout_s").value:
+            self.scorer.status = "wall_timeout"
+        elif self.last_odom_wall is not None and now - self.last_odom_wall >= self.get_parameter("odom_wall_timeout_s").value:
+            self.scorer.status = "odometry_timeout"
+        elif self.started and self.contact_last_wall is not None and now - self.contact_last_wall > 0.5:
+            self.scorer.status = "contact_monitor_timeout"
+        elif self.scorer.start_time is not None:
+            elapsed = self.get_clock().now().nanoseconds * 1e-9 - self.scorer.start_time
+            if elapsed >= self.scenario["timeout_s"]:
+                self.scorer.elapsed = elapsed
+                self.scorer.status = "simulation_timeout"
+        if self.scorer.status != "running":
+            self.finish()
 
-        elapsed = now - self.start_time
-        if np.linalg.norm(position - self.goal) < self.goal_tolerance:
-            self.reached = True
-            self.finish(elapsed)
-        elif elapsed > self.timeout:
-            self.finish(elapsed)
-
-    def finish(self, elapsed):
+    def finish(self):
+        if self.done:
+            return
+        metrics = self.scorer.metrics()
+        elapsed_wall = time.monotonic() - self.wall_start
+        simulation_wall = time.monotonic() - self.first_odom_wall if self.first_odom_wall else 0
+        metrics.update({
+            "label": self.get_parameter("run_label").value,
+            "profile": self.get_parameter("profile").value,
+            "seed": self.scenario["seed"], "environment": self.scenario["environment_name"],
+            "scenario": self.scenario, "scenario_sha256": scenario_digest(self.scenario),
+            "git_commit": self.get_parameter("git_commit").value,
+            "image_identity": self.get_parameter("image_identity").value,
+            "wall_time_s": elapsed_wall,
+            "real_time_factor": self.scorer.elapsed / simulation_wall if simulation_wall > 0 else None,
+            "replans": self.replans, "plan_samples": len(self.latencies),
+            "max_plan_ms": max(self.latencies) if self.latencies else None,
+            "mean_plan_ms": sum(self.latencies) / len(self.latencies) if self.latencies else None,
+        })
+        self.output.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.output.with_suffix(self.output.suffix + ".tmp")
+        temporary.write_text(json.dumps(metrics, indent=2, allow_nan=False) + "\n")
+        temporary.replace(self.output)
         self.done = True
-        metrics = {
-            "label": self.label,
-            "reached_goal": self.reached,
-            "time_s": round(elapsed, 2),
-            "distance_travelled_m": round(self.travelled, 1),
-            "straight_line_m": round(float(np.linalg.norm(self.goal - self.origin)), 1),
-            "min_clearance_m": round(self.min_clearance, 2) if math.isfinite(self.min_clearance) else None,
-            "collision": bool(math.isfinite(self.min_clearance) and self.min_clearance < 0.0),
-            "replans": self.replans,
-            "max_plan_ms": round(max(self.latencies), 1) if self.latencies else 0.0,
-            "mean_plan_ms": round(sum(self.latencies) / len(self.latencies), 1) if self.latencies else 0.0,
-        }
-        with open(self.output, "w") as fh:
-            json.dump(metrics, fh, indent=2)
-        self.get_logger().info(json.dumps(metrics))
-        self.get_logger().info(f"metrics written to {self.output}")
+        self.active_pub.publish(Bool(data=False))
+        self.exit_code = 0 if self.scorer.status == "completed" else 2
+        self.get_logger().info(f"Race {self.scorer.status}; metrics: {self.output}")
 
 
 def main():
     rclpy.init()
     node = Evaluator()
     try:
-        rclpy.spin(node)
+        while rclpy.ok() and not node.done:
+            rclpy.spin_once(node, timeout_sec=0.25)
     except KeyboardInterrupt:
-        pass
+        node.scorer.status = "interrupted"
+        node.finish()
     finally:
         node.destroy_node()
         rclpy.try_shutdown()
+    sys.exit(node.exit_code)
+
+
+if __name__ == "__main__":
+    main()

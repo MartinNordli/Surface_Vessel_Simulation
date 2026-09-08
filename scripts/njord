@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+export GIT_COMMIT="$(git rev-parse HEAD)"
+export NJORD_UID="$(id -u)"
+export NJORD_GID="$(id -g)"
+if grep -qi microsoft /proc/sys/kernel/osrelease; then
+  export COMPOSE_FILE="${COMPOSE_FILE:-compose.yaml:compose.wsl.yaml}"
+else
+  export COMPOSE_FILE="${COMPOSE_FILE:-compose.yaml}"
+fi
+action="${1:-demo}"
+shift || true
+case "$action" in
+  build) docker compose build "$@" ;;
+  test) docker compose run --rm tests "$@" ;;
+  demo|gui)
+    if [ "$action" = gui ]; then export COMPOSE_FILE="$COMPOSE_FILE:compose.gui.yaml"; fi
+    export IMAGE_ID="$(docker image inspect njord-sim:local --format '{{.Id}}')"
+    export OUTPUT_HOST="${OUTPUT_HOST:-$PWD/outputs/run-$(date -u +%Y%m%dT%H%M%S)}"
+    mkdir -p "$OUTPUT_HOST"
+    trap 'docker compose down --timeout 10' EXIT INT TERM
+    docker compose up --abort-on-container-exit --exit-code-from evaluator simulator autonomy evaluator "$@"
+    ;;
+  benchmark) exec python3 scripts/benchmark.py "$@" ;;
+  smoke) docker compose run --rm autonomy python3 /opt/njord/validation/check_runtime.py "$@" ;;
+  doctor)
+    docker version
+    docker compose version
+    nvidia-smi
+    docker compose run --rm simulator nvidia-smi
+    ;;
+  *) echo 'Usage: scripts/njord {build|test|demo|gui|benchmark|smoke|doctor}' >&2; exit 2 ;;
+esac

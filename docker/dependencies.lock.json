@@ -1,0 +1,26 @@
+{
+  "ros_image": "ros:jazzy-ros-base@sha256:2589a8fba5257307857890173c069852c2abf913a0be7970f172478baecb09e4",
+  "vrx_commit": "03eae362bb544f630595acd53b931e4a7060dffd",
+  "vendors": {
+    "gz_math_vendor": {
+      "url": "https://github.com/gazebo-release/gz_math_vendor.git",
+      "commit": "887b1c499e668072707c40ba04662740e702c371"
+    },
+    "gz_msgs_vendor": {
+      "url": "https://github.com/gazebo-release/gz_msgs_vendor.git",
+      "commit": "6016bae281f2196e3522e0d2b0729eed9f4b5402"
+    },
+    "gz_sim_vendor": {
+      "url": "https://github.com/gazebo-release/gz_sim_vendor.git",
+      "commit": "2c82e3037c01c9eac0d723f340d8948ee8c68bfb"
+    },
+    "gz_transport_vendor": {
+      "url": "https://github.com/gazebo-release/gz_transport_vendor.git",
+      "commit": "2026b3bff03f5d2855c4bbfa57d5443de348348d"
+    },
+    "sdformat_vendor": {
+      "url": "https://github.com/gazebo-release/sdformat_vendor.git",
+      "commit": "19d78ba3dd51e3d47c3c6501b9e1480bcb54d1f4"
+    }
+  }
+}

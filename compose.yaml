@@ -1,0 +1,54 @@
+name: njord-sim
+x-common: &common
+  image: njord-sim:local
+  build: .
+  init: true
+  user: ${NJORD_UID:-1000}:${NJORD_GID:-1000}
+  network_mode: host
+  ipc: host
+  environment: &environment
+    HOME: /tmp/njord-home
+    ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-42}
+    SCENARIO: ${SCENARIO:-/opt/njord/scenarios/reference.yaml}
+    SEED: ${SEED:-1}
+    GZ_PARTITION: ${GZ_PARTITION:-njord-sim}
+    ENVIRONMENT: ${ENVIRONMENT:-calm}
+    PROFILE: ${PROFILE:-fast}
+    RUN_LABEL: ${RUN_LABEL:-demo}
+    OUTPUT_DIR: /outputs
+    GIT_COMMIT: ${GIT_COMMIT:-unknown}
+    IMAGE_ID: ${IMAGE_ID:-unknown}
+  volumes:
+    - ${OUTPUT_HOST:-./outputs/demo}:/outputs
+  stop_grace_period: 10s
+services:
+  simulator:
+    <<: *common
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    command: [ros2, launch, njord_sim, simulation.launch.py]
+  autonomy:
+    <<: *common
+    command: [ros2, launch, njord_sim, dstar_demo.launch.py]
+  evaluator:
+    <<: *common
+    command: [python3, /opt/njord/scripts/run_evaluator.py]
+  tests:
+    <<: *common
+    profiles: [test]
+    command: [bash, -c, "python3 tests/test_dstar_lite.py && python3 -m unittest discover -s tests -p 'test_*.py'"]
+  rviz:
+    <<: *common
+    profiles: [gui]
+    environment:
+      <<: *environment
+      DISPLAY: ${DISPLAY:-:0}
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:ro
+      - ${XAUTHORITY:-/dev/null}:/tmp/xauthority:ro
+    command: [rviz2, --ros-args, -p, use_sim_time:=true]

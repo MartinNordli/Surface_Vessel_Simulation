@@ -1,0 +1,9 @@
+.git
+.codex
+outputs
+build
+install
+log
+**/__pycache__
+sandbox/*.gif
+sandbox/*.png

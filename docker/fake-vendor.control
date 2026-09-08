@@ -1,0 +1,5 @@
+Package: fake-ros-jazzy-gz-vendor
+Version: 999.999
+Architecture: all
+Description: OSRF Gazebo Python-compatible library providers
+Provides: ros-jazzy-gz-math-vendor, ros-jazzy-gz-msgs-vendor, ros-jazzy-gz-transport-vendor, ros-jazzy-gz-sim-vendor, ros-jazzy-sdformat-vendor

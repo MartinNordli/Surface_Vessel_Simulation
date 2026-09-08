@@ -3,8 +3,8 @@
 <package format="3">
   <name>njord_sim</name>
   <version>0.2.0</version>
-  <description>D* Lite closed-loop proof of concept for VRX / Gazebo</description>
-  <maintainer email="you@example.com">Njord simulation</maintainer>
+  <description>Sensor-based reference autonomy, scenarios and scoring for the Njord VRX simulator</description>
+  <maintainer email="simulation@njord.no">Njord simulation</maintainer>
   <license>MIT</license>
 
   <exec_depend>rclpy</exec_depend>

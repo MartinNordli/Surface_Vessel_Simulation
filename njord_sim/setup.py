@@ -16,8 +16,8 @@ setup(
     install_requires=["setuptools"],
     zip_safe=True,
     maintainer="Njord simulation",
-    maintainer_email="you@example.com",
-    description="D* Lite closed-loop proof of concept for VRX / Gazebo",
+    maintainer_email="simulation@njord.no",
+    description="Sensor-based reference autonomy, scenarios and scoring for the Njord VRX simulator",
     license="MIT",
     entry_points={
         "console_scripts": [

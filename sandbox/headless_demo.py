@@ -10,8 +10,12 @@ Gazebo: if the planner cannot get a boat through here, no amount of
 hydrodynamic fidelity will save it.
 
     python3 sandbox/headless_demo.py
+
+Results are written to outputs/sandbox/ so a run never rewrites the committed
+figures in this directory. Use --output-dir for a different destination.
 """
 
+import argparse
 import json
 import math
 import os
@@ -291,7 +295,14 @@ def plot(trajectory, first_plan, grid, path):
     fig.savefig(path, dpi=140)
 
 
+DEFAULT_OUTPUT = os.path.join(os.path.dirname(__file__), "..", "outputs", "sandbox")
+
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Closed-loop planner run without ROS or Gazebo")
+    parser.add_argument("--output-dir", default=DEFAULT_OUTPUT)
+    arguments = parser.parse_args()
+    output_dir = os.path.abspath(arguments.output_dir)
+    os.makedirs(output_dir, exist_ok=True)
     all_metrics = []
     for seed in range(5):
         metrics, trajectory, first_plan, grid, _ = run(seed)
@@ -303,10 +314,9 @@ if __name__ == "__main__":
             f"replans={metrics['replans']:3d}  worst plan={metrics['max_plan_ms']:.1f}ms"
         )
         if seed == 0:
-            out = os.path.join(os.path.dirname(__file__), "headless_demo.png")
-            plot(trajectory, first_plan, grid, out)
+            plot(trajectory, first_plan, grid, os.path.join(output_dir, "headless_demo.png"))
 
-    with open(os.path.join(os.path.dirname(__file__), "headless_metrics.json"), "w") as fh:
+    with open(os.path.join(output_dir, "headless_metrics.json"), "w") as fh:
         json.dump(all_metrics, fh, indent=2)
 
     ok = all(m["reached_goal"] and not m["collision"] for m in all_metrics)

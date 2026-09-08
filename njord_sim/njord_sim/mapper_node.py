@@ -1,142 +1,129 @@
-"""Lidar point cloud -> inflated 2D occupancy grid.
-
-Deliberately simple: a fixed world-frame grid, hits marked occupied, an
-inflation disc around each hit, and the boat's own footprint forced free every
-cycle. Nothing is ever un-marked apart from the footprint, so the map only
-grows. That is enough for the demo and it keeps the failure modes few.
-
-Points are transformed with the pose from odometry plus a static sensor offset
-rather than through tf2. That is a deliberate shortcut for the proof of
-concept: it removes a whole class of tf timing problems while the ground truth
-odometry is exact anyway. Move to tf2 once a real state estimator replaces it.
-"""
-
-import math
-
+"""Timestamped lidar mapping with full TF, observed free rays and aging."""
 import numpy as np
 import rclpy
-from nav_msgs.msg import OccupancyGrid, Odometry
+from nav_msgs.msg import OccupancyGrid
 from rclpy.node import Node
-from sensor_msgs.msg import PointCloud2
+from rclpy.qos import qos_profile_sensor_data
+from rclpy.time import Time
+from sensor_msgs.msg import LaserScan, PointCloud2
 from sensor_msgs_py import point_cloud2
+from tf2_ros import Buffer, TransformException, TransformListener
 
-
-def yaw_from_quaternion(q):
-    return math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y**2 + q.z**2))
+from njord_sim.geometry import stamp_seconds, transform_from_ros, yaw_from_quaternion
+from njord_sim.mapping_core import OccupancyMapper
 
 
 class Mapper(Node):
     def __init__(self):
         super().__init__("mapper")
-        self.declare_parameters(
-            "",
-            [
-                ("points_topic", "/wamv/sensors/lidars/lidar_wamv_sensor/points"),
-                ("odom_topic", "/wamv/ground_truth/odometry"),
-                ("grid_topic", "/njord/occupancy"),
-                ("map_frame", "map"),
-                ("resolution", 2.0),
-                ("size_m", 600.0),
-                ("origin_x", -300.0),
-                ("origin_y", -300.0),
-                ("inflation_m", 6.0),
-                ("footprint_m", 5.0),
-                ("min_height_m", 0.4),   # world-frame z, rejects wave returns
-                ("max_height_m", 6.0),
-                ("max_range_m", 80.0),
-                ("sensor_offset", [1.0, 0.0, 2.0]),
-                ("publish_hz", 2.0),
-            ],
-        )
-        p = self.get_parameter
-        self.res = p("resolution").value
-        self.n = int(p("size_m").value / self.res)
-        self.origin = np.array([p("origin_x").value, p("origin_y").value])
-        self.map_frame = p("map_frame").value
-        self.min_z = p("min_height_m").value
-        self.max_z = p("max_height_m").value
-        self.max_range = p("max_range_m").value
-        self.offset = np.array(p("sensor_offset").value, dtype=float)
-
-        self.inflation = self._disc(int(round(p("inflation_m").value / self.res)))
-        self.footprint = self._disc(int(round(p("footprint_m").value / self.res)))
-
-        self.occ = np.zeros((self.n, self.n), dtype=np.int8)
-        self.pose = None
-
-        self.create_subscription(Odometry, p("odom_topic").value, self.on_odom, 10)
-        self.create_subscription(PointCloud2, p("points_topic").value, self.on_cloud, 5)
-        self.pub = self.create_publisher(OccupancyGrid, p("grid_topic").value, 1)
-        self.create_timer(1.0 / p("publish_hz").value, self.publish_grid)
-
-    @staticmethod
-    def _disc(radius_cells):
-        offsets = [
-            (dr, dc)
-            for dr in range(-radius_cells, radius_cells + 1)
-            for dc in range(-radius_cells, radius_cells + 1)
-            if dr * dr + dc * dc <= radius_cells**2
-        ]
-        return np.array(offsets, dtype=int) if offsets else np.zeros((1, 2), dtype=int)
-
-    def on_odom(self, msg):
-        self.pose = (
-            msg.pose.pose.position.x,
-            msg.pose.pose.position.y,
-            msg.pose.pose.position.z,
-            yaw_from_quaternion(msg.pose.pose.orientation),
-        )
-
-    def _stamp(self, cells, value):
-        rows, cols = cells[:, 0], cells[:, 1]
-        keep = (rows >= 0) & (rows < self.n) & (cols >= 0) & (cols < self.n)
-        self.occ[rows[keep], cols[keep]] = value
+        self.declare_parameters("", [
+            ("points_topic", "/wamv/sensors/lidars/lidar_wamv_sensor/points"),
+            ("scan_topic", "/wamv/sensors/lidars/lidar_wamv_sensor/scan"),
+            ("grid_topic", "/njord/occupancy"), ("map_frame", "map"),
+            ("base_frame", "wamv/base_link"), ("resolution", 0.5), ("size_m", 160.0),
+            ("origin_x", -40.0), ("origin_y", -40.0), ("inflation_m", 4.0),
+            ("observation_ttl_s", 5.0), ("min_height_m", 0.2), ("max_height_m", 5.0),
+            ("max_range_m", 80.0), ("self_length_m", 5.0), ("self_width_m", 2.8),
+            ("input_max_age_s", 0.5), ("publish_hz", 5.0),
+        ])
+        self.p = lambda name: self.get_parameter(name).value
+        self.config = dict(resolution=self.p("resolution"), size_m=self.p("size_m"),
+                           origin=(self.p("origin_x"), self.p("origin_y")),
+                           inflation_m=self.p("inflation_m"), observation_ttl_s=self.p("observation_ttl_s"))
+        self.mapper = OccupancyMapper(**self.config)
+        self.last_stamp = None
+        self.last_clock = None
+        self.tf = Buffer()
+        self.listener = TransformListener(self.tf, self)
+        self.pub = self.create_publisher(OccupancyGrid, self.p("grid_topic"), 1)
+        self.create_subscription(PointCloud2, self.p("points_topic"), self.on_cloud, qos_profile_sensor_data)
+        self.create_subscription(LaserScan, self.p("scan_topic"), self.on_scan, qos_profile_sensor_data)
+        self.create_timer(1.0/self.p("publish_hz"), self.publish_grid)
 
     def on_cloud(self, msg):
-        if self.pose is None:
+        now = self.get_clock().now().nanoseconds*1e-9
+        stamp = stamp_seconds(msg.header.stamp)
+        if self.last_clock is not None and now < self.last_clock:
+            self.mapper = OccupancyMapper(**self.config)
+            self.last_stamp = None
+        self.last_clock = now
+        if not msg.header.frame_id or not 0 <= now-stamp <= self.p("input_max_age_s"):
             return
-        x, y, z, yaw = self.pose
-
+        try:
+            when = Time.from_msg(msg.header.stamp)
+            to_map = self.tf.lookup_transform(self.p("map_frame"), msg.header.frame_id, when)
+            to_base = self.tf.lookup_transform(self.p("base_frame"), msg.header.frame_id, when)
+        except TransformException:
+            return
         raw = point_cloud2.read_points_numpy(msg, field_names=("x", "y", "z"), skip_nans=True)
-        if raw.size == 0:
+        raw = np.asarray(raw).reshape(-1, 3)
+        if not len(raw):
             return
-        rng = np.linalg.norm(raw[:, :2], axis=1)
-        raw = raw[rng < self.max_range]
-        if raw.size == 0:
+        ranges = np.linalg.norm(raw, axis=1)
+        raw = raw[np.isfinite(raw).all(axis=1) & (ranges > 0.1) & (ranges <= self.p("max_range_m"))]
+        if not len(raw):
             return
-
-        body = raw + self.offset[None, :]
-        c, s = math.cos(yaw), math.sin(yaw)
-        world = np.column_stack(
-            [
-                x + c * body[:, 0] - s * body[:, 1],
-                y + s * body[:, 0] + c * body[:, 1],
-                z + body[:, 2],
-            ]
-        )
-        world = world[(world[:, 2] > self.min_z) & (world[:, 2] < self.max_z)]
-        if world.size == 0:
+        body = transform_from_ros(raw, to_base)
+        # Reject self returns, without declaring the surrounding footprint free.
+        outside_self = (np.abs(body[:, 0]) > self.p("self_length_m")/2) | (np.abs(body[:, 1]) > self.p("self_width_m")/2)
+        filtered = raw[outside_self]
+        world = transform_from_ros(filtered, to_map)
+        has_return = np.linalg.norm(filtered, axis=1) < self.p("max_range_m")-0.01
+        if not len(world):
             return
+        origin = transform_from_ros([[0., 0., 0.]], to_map)[0]
+        # Water returns establish free visibility only up to their contact point;
+        # high returns can occlude objects and therefore do not clear the 2D map.
+        height_valid = world[:, 2] <= self.p("max_height_m")
+        world, has_return = world[height_valid], has_return[height_valid]
+        hit = (world[:, 2] >= self.p("min_height_m")) & has_return
+        if self.mapper.update(origin, world, hit, stamp):
+            self.last_stamp = msg.header.stamp
 
-        cells = np.floor((world[:, :2] - self.origin[None, :]) / self.res).astype(int)
-        cells = np.unique(cells[:, ::-1], axis=0)  # (row, col)
-        if len(cells):
-            self._stamp((cells[:, None, :] + self.inflation[None, :, :]).reshape(-1, 2), 100)
+    def on_scan(self, msg):
+        """Use explicit +inf range evidence; NaN/negative ranges stay unknown.
 
-        robot = np.floor((np.array([x, y]) - self.origin) / self.res).astype(int)[::-1]
-        self._stamp(robot[None, :] + self.footprint, 0)
+        The planar scan supplements sparse 3D rays. Like any projected 2D lidar
+        map, it assumes obstacles intersect the sensing volume; overhanging and
+        low objects require the 3D cloud and empirical sensor validation.
+        """
+        now = self.get_clock().now().nanoseconds*1e-9
+        stamp = stamp_seconds(msg.header.stamp)
+        if not msg.header.frame_id or not 0 <= now-stamp <= self.p("input_max_age_s"):
+            return
+        try:
+            transform = self.tf.lookup_transform(self.p("map_frame"), msg.header.frame_id, Time.from_msg(msg.header.stamp))
+        except TransformException:
+            return
+        ranges = np.asarray(msg.ranges, dtype=float)
+        angles = msg.angle_min + np.arange(len(ranges))*msg.angle_increment
+        maximum = min(float(msg.range_max), self.p("max_range_m"))
+        if not np.isfinite(maximum) or maximum <= 0:
+            return
+        valid = (np.isposinf(ranges) | np.isfinite(ranges)) & (ranges >= max(msg.range_min, 0.1))
+        angles, ranges = angles[valid], ranges[valid]
+        hit = np.isfinite(ranges) & (ranges < maximum)
+        ranges = np.minimum(ranges, maximum)
+        raw = np.column_stack((ranges*np.cos(angles), ranges*np.sin(angles), np.zeros(len(ranges))))
+        world = transform_from_ros(raw, transform)
+        origin = transform_from_ros([[0., 0., 0.]], transform)[0]
+        # Only no-return rays supplement the 3D cloud, which owns obstacle hits
+        # and self filtering. Finite planar hits may come from the vessel itself.
+        world = world[~hit]
+        if len(world) and self.mapper.update(origin, world, np.zeros(len(world), dtype=bool), stamp):
+            self.last_stamp = msg.header.stamp
 
     def publish_grid(self):
+        if self.last_stamp is None:
+            return
         msg = OccupancyGrid()
-        msg.header.stamp = self.get_clock().now().to_msg()
-        msg.header.frame_id = self.map_frame
-        msg.info.resolution = self.res
-        msg.info.width = self.n
-        msg.info.height = self.n
-        msg.info.origin.position.x = float(self.origin[0])
-        msg.info.origin.position.y = float(self.origin[1])
+        msg.header.stamp = self.last_stamp  # A heartbeat must never freshen old lidar.
+        msg.header.frame_id = self.p("map_frame")
+        msg.info.resolution = self.mapper.resolution
+        msg.info.width = msg.info.height = self.mapper.size
+        msg.info.origin.position.x, msg.info.origin.position.y = map(float, self.mapper.origin)
         msg.info.origin.orientation.w = 1.0
-        msg.data = self.occ.ravel().tolist()
+        msg.data = self.mapper.grid(self.get_clock().now().nanoseconds*1e-9).ravel().tolist()
         self.pub.publish(msg)
 
 

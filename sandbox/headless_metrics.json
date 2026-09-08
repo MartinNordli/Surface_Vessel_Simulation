@@ -1,0 +1,62 @@
+[
+  {
+    "seed": 0,
+    "reached_goal": true,
+    "time_s": 85.45,
+    "distance_travelled_m": 235.9,
+    "straight_line_m": 226.3,
+    "min_clearance_m": 5.82,
+    "collision": false,
+    "replans": 166,
+    "max_plan_ms": 129.4,
+    "mean_plan_ms": 3.3
+  },
+  {
+    "seed": 1,
+    "reached_goal": true,
+    "time_s": 85.1,
+    "distance_travelled_m": 235.8,
+    "straight_line_m": 226.3,
+    "min_clearance_m": 5.8,
+    "collision": false,
+    "replans": 169,
+    "max_plan_ms": 125.3,
+    "mean_plan_ms": 2.9
+  },
+  {
+    "seed": 2,
+    "reached_goal": true,
+    "time_s": 85.2,
+    "distance_travelled_m": 235.8,
+    "straight_line_m": 226.3,
+    "min_clearance_m": 5.78,
+    "collision": false,
+    "replans": 164,
+    "max_plan_ms": 123.2,
+    "mean_plan_ms": 3.2
+  },
+  {
+    "seed": 3,
+    "reached_goal": true,
+    "time_s": 85.2,
+    "distance_travelled_m": 235.8,
+    "straight_line_m": 226.3,
+    "min_clearance_m": 5.78,
+    "collision": false,
+    "replans": 160,
+    "max_plan_ms": 124.3,
+    "mean_plan_ms": 3.3
+  },
+  {
+    "seed": 4,
+    "reached_goal": true,
+    "time_s": 85.5,
+    "distance_travelled_m": 235.9,
+    "straight_line_m": 226.3,
+    "min_clearance_m": 5.79,
+    "collision": false,
+    "replans": 166,
+    "max_plan_ms": 130.2,
+    "mean_plan_ms": 3.2
+  }
+]

@@ -13,7 +13,7 @@ from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from vision_msgs.msg import Detection3DArray
 
-from njord_sim.geometry import stamp_seconds
+from njord_sim.geometry import stamp_seconds, yaw_from_quaternion
 from njord_sim.perception_core import choose_gate
 
 
@@ -28,6 +28,7 @@ class Mission(Node):
             ("approach_m", 5.0), ("exit_m", 6.0), ("arrival_tolerance_m", 2.0),
             ("detection_max_age_s", 2.0), ("camera_max_age_s", 0.5),
             ("odometry_max_age_s", 0.5), ("crossing_memory_s", 45.0),
+            ("crossing_entry_m", 15.0),
         ])
         self.p = lambda name: self.get_parameter(name).value
         self.heading = self.p("initial_heading_rad")
@@ -53,8 +54,14 @@ class Mission(Node):
         if self.odom_stamp is not None and stamp <= self.odom_stamp:
             return
         p = msg.pose.pose.position
-        if np.isfinite([p.x, p.y]).all():
-            self.position, self.odom_stamp = np.array([p.x, p.y]), stamp
+        q = msg.pose.pose.orientation
+        quaternion = np.array([q.x, q.y, q.z, q.w])
+        if (not np.isfinite([p.x, p.y]).all() or not np.isfinite(quaternion).all()
+                or abs(float(quaternion@quaternion)-1.0) > 1e-3):
+            return
+        self.position, self.odom_stamp = np.array([p.x, p.y]), stamp
+        if self.gate is None and not self.passed:
+            self.heading = yaw_from_quaternion(q)
 
     def on_buoys(self, msg):
         if msg.header.frame_id != self.p("map_frame"):
@@ -130,7 +137,7 @@ class Mission(Node):
         signed = float(offset@self.gate.forward)
         lateral = abs(float(offset@np.array([-self.gate.forward[1], self.gate.forward[0]])))
         half_width = np.linalg.norm(self.gate.red-self.gate.green)/2
-        memory = self.p("crossing_memory_s") if -8.0 <= signed <= self.p("exit_m")+2.0 and lateral < half_width-1.0 else self.p("detection_max_age_s")
+        memory = self.p("crossing_memory_s") if -self.p("crossing_entry_m") <= signed <= self.p("exit_m")+2.0 and lateral < half_width-1.0 else self.p("detection_max_age_s")
         if now-self.gate_seen > memory:
             return self.status(DiagnosticStatus.ERROR, "tracked gate expired")
         before = self.gate.center-self.p("approach_m")*self.gate.forward

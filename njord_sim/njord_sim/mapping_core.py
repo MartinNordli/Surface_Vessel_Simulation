@@ -35,6 +35,9 @@ class OccupancyMapper:
         self.ttl = float(observation_ttl_s)
         self.values = np.full((self.size, self.size), -1, dtype=np.int8)
         self.observed = np.full(self.values.shape, -np.inf)
+        self.free_observed = np.full(self.values.shape, -np.inf)
+        self.hit_observed = np.full(self.values.shape, -np.inf)
+        self.stream_stamps = {}
         self.last_stamp = None
 
     def cell(self, xy):
@@ -43,14 +46,16 @@ class OccupancyMapper:
     def inside(self, cell):
         return 0 <= cell[0] < self.size and 0 <= cell[1] < self.size
 
-    def update(self, sensor_origin, endpoints, occupied, stamp):
+    def update(self, sensor_origin, endpoints, occupied, stamp, stream="cloud"):
         """Integrate already filtered world-space rays; occupied=False clears to endpoint.
 
-        Endpoint hits win over free rays within a cloud. Out-of-order clouds are
-        rejected. A clock reset must explicitly reset this instance in the adapter.
+        Reject regressions within each input stream, not between scan and cloud.
+        Each cell retains the acquisition time of its free and occupied evidence;
+        hits win over free evidence up to 0.3 seconds newer, independent of arrival
+        order. A clock reset explicitly resets this instance in the adapter.
         """
         stamp = float(stamp)
-        if self.last_stamp is not None and stamp < self.last_stamp:
+        if not math.isfinite(stamp) or stamp < self.stream_stamps.get(stream, -math.inf):
             return False
         start = self.cell(sensor_origin)
         if not self.inside(start):
@@ -68,18 +73,20 @@ class OccupancyMapper:
                     hits.add(cell)
                 else:
                     free.add(cell)
-        for cells, value in ((free-hits, 0), (hits, 100)):
+        for cells, timestamps in ((free-hits, self.free_observed), (hits, self.hit_observed)):
             if cells:
                 xy = np.asarray(list(cells))
-                if value == 0:
-                    # A scan and cloud can arrive in either order. Recent cloud
-                    # hits beat a sparse scan's free ray through the same cell.
-                    keep = ~((self.values[xy[:, 1], xy[:, 0]] == 100) &
-                             (stamp-self.observed[xy[:, 1], xy[:, 0]] <= 0.3))
-                    xy = xy[keep]
-                self.values[xy[:, 1], xy[:, 0]] = value
-                self.observed[xy[:, 1], xy[:, 0]] = stamp
-        self.last_stamp = stamp
+                rows, cols = xy[:, 1], xy[:, 0]
+                timestamps[rows, cols] = np.maximum(timestamps[rows, cols], stamp)
+        if free or hits:
+            xy = np.asarray(list(free | hits))
+            rows, cols = xy[:, 1], xy[:, 0]
+            free_times, hit_times = self.free_observed[rows, cols], self.hit_observed[rows, cols]
+            occupied_now = np.isfinite(hit_times) & (hit_times >= free_times-0.3)
+            self.values[rows, cols] = np.where(occupied_now, 100, 0)
+            self.observed[rows, cols] = np.where(occupied_now, hit_times, free_times)
+        self.stream_stamps[stream] = stamp
+        self.last_stamp = max(self.stream_stamps.values())
         return True
 
     def grid(self, now):

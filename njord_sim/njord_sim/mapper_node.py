@@ -40,13 +40,21 @@ class Mapper(Node):
         self.create_subscription(LaserScan, self.p("scan_topic"), self.on_scan, qos_profile_sensor_data)
         self.create_timer(1.0/self.p("publish_hz"), self.publish_grid)
 
-    def on_cloud(self, msg):
+    def observe_clock(self):
         now = self.get_clock().now().nanoseconds*1e-9
-        stamp = stamp_seconds(msg.header.stamp)
         if self.last_clock is not None and now < self.last_clock:
             self.mapper = OccupancyMapper(**self.config)
             self.last_stamp = None
         self.last_clock = now
+        return now
+
+    def record_stamp(self, stamp):
+        if self.last_stamp is None or stamp_seconds(stamp) > stamp_seconds(self.last_stamp):
+            self.last_stamp = stamp
+
+    def on_cloud(self, msg):
+        now = self.observe_clock()
+        stamp = stamp_seconds(msg.header.stamp)
         if not msg.header.frame_id or not 0 <= now-stamp <= self.p("input_max_age_s"):
             return
         try:
@@ -77,8 +85,8 @@ class Mapper(Node):
         height_valid = world[:, 2] <= self.p("max_height_m")
         world, has_return = world[height_valid], has_return[height_valid]
         hit = (world[:, 2] >= self.p("min_height_m")) & has_return
-        if self.mapper.update(origin, world, hit, stamp):
-            self.last_stamp = msg.header.stamp
+        if self.mapper.update(origin, world, hit, stamp, stream="cloud"):
+            self.record_stamp(msg.header.stamp)
 
     def on_scan(self, msg):
         """Use explicit +inf range evidence; NaN/negative ranges stay unknown.
@@ -87,7 +95,7 @@ class Mapper(Node):
         map, it assumes obstacles intersect the sensing volume; overhanging and
         low objects require the 3D cloud and empirical sensor validation.
         """
-        now = self.get_clock().now().nanoseconds*1e-9
+        now = self.observe_clock()
         stamp = stamp_seconds(msg.header.stamp)
         if not msg.header.frame_id or not 0 <= now-stamp <= self.p("input_max_age_s"):
             return
@@ -110,10 +118,11 @@ class Mapper(Node):
         # Only no-return rays supplement the 3D cloud, which owns obstacle hits
         # and self filtering. Finite planar hits may come from the vessel itself.
         world = world[~hit]
-        if len(world) and self.mapper.update(origin, world, np.zeros(len(world), dtype=bool), stamp):
-            self.last_stamp = msg.header.stamp
+        if len(world) and self.mapper.update(origin, world, np.zeros(len(world), dtype=bool), stamp, stream="scan"):
+            self.record_stamp(msg.header.stamp)
 
     def publish_grid(self):
+        now = self.observe_clock()
         if self.last_stamp is None:
             return
         msg = OccupancyGrid()
@@ -123,7 +132,7 @@ class Mapper(Node):
         msg.info.width = msg.info.height = self.mapper.size
         msg.info.origin.position.x, msg.info.origin.position.y = map(float, self.mapper.origin)
         msg.info.origin.orientation.w = 1.0
-        msg.data = self.mapper.grid(self.get_clock().now().nanoseconds*1e-9).ravel().tolist()
+        msg.data = self.mapper.grid(now).ravel().tolist()
         self.pub.publish(msg)
 
 

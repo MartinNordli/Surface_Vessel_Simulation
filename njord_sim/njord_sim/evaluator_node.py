@@ -31,7 +31,9 @@ class Evaluator(Node):
             ("profile", "conservative"), ("wall_timeout_s", 600.0),
             ("odom_wall_timeout_s", 30.0),
             ("wait_for_ready", True),
-            ("git_commit", os.environ.get("GIT_COMMIT", "unknown")),
+            ("git_commit", os.environ.get("NJORD_IMAGE_SOURCE_COMMIT", "unknown")),
+            ("image_source_digest", os.environ.get("NJORD_IMAGE_SOURCE_DIGEST", "unknown")),
+            ("runner_git_commit", os.environ.get("RUNNER_GIT_COMMIT", "unknown")),
             ("image_identity", os.environ.get("IMAGE_ID", "unknown")),
         ])
         p = lambda name: self.get_parameter(name).value
@@ -43,7 +45,7 @@ class Evaluator(Node):
         self.output = FilePath(p("output"))
         self.done = False
         self.exit_code = 2
-        self.replans = 0
+        self.path_messages = 0
         self.latencies = []
         self.started = not p("wait_for_ready")
         self.readiness = {}
@@ -69,17 +71,24 @@ class Evaluator(Node):
         for status in message.status:
             self.readiness[status.name] = (status.level == DiagnosticStatus.OK, stamp, time.monotonic())
 
+    def contact_fresh(self):
+        """Require both acquisition freshness and a live advancing stream."""
+        if self.contact_last_stamp is None or self.contact_last_wall is None:
+            return False
+        age = self.get_clock().now().nanoseconds * 1e-9 - self.contact_last_stamp
+        return 0 <= age <= 0.5 and time.monotonic() - self.contact_last_wall <= 0.5
+
     def ready(self):
         now_sim = self.get_clock().now().nanoseconds * 1e-9
         now_wall = time.monotonic()
-        return self.latest_ground_truth is not None and self.last_odom_wall is not None and now_wall - self.last_odom_wall <= 0.5 and self.contact_last_wall is not None and now_wall - self.contact_last_wall <= 0.5 and all(
+        return self.latest_ground_truth is not None and self.last_odom_wall is not None and now_wall - self.last_odom_wall <= 0.5 and self.contact_fresh() and all(
             name in self.readiness and self.readiness[name][0]
             and 0 <= now_sim - self.readiness[name][1] <= 0.5
             and now_wall - self.readiness[name][2] <= 0.5
             for name in ("njord/planner", "mission", "navigation"))
 
     def on_path(self, _):
-        self.replans += 1
+        self.path_messages += 1
 
     def on_latency(self, message):
         if math.isfinite(message.data) and message.data >= 0:
@@ -89,8 +98,11 @@ class Evaluator(Node):
         if self.done:
             return
         stamp = message.header.stamp.sec + message.header.stamp.nanosec * 1e-9
-        if self.contact_last_stamp is None or stamp > self.contact_last_stamp:
-            self.contact_last_stamp, self.contact_last_wall = stamp, time.monotonic()
+        age = self.get_clock().now().nanoseconds * 1e-9 - stamp
+        if (not 0 <= age <= 0.5
+                or (self.contact_last_stamp is not None and stamp <= self.contact_last_stamp)):
+            return  # Delayed, future and replayed messages cannot freshen evidence.
+        self.contact_last_stamp, self.contact_last_wall = stamp, time.monotonic()
         def name(collision):
             return getattr(collision, "name", str(collision))
         involved = any("wamv" in name(c.collision1) or "wamv" in name(c.collision2)
@@ -132,7 +144,7 @@ class Evaluator(Node):
             self.scorer.status = "wall_timeout"
         elif self.last_odom_wall is not None and now - self.last_odom_wall >= self.get_parameter("odom_wall_timeout_s").value:
             self.scorer.status = "odometry_timeout"
-        elif self.started and self.contact_last_wall is not None and now - self.contact_last_wall > 0.5:
+        elif self.started and not self.contact_fresh():
             self.scorer.status = "contact_monitor_timeout"
         elif self.scorer.start_time is not None:
             elapsed = self.get_clock().now().nanoseconds * 1e-9 - self.scorer.start_time
@@ -145,6 +157,9 @@ class Evaluator(Node):
     def finish(self):
         if self.done:
             return
+        # Completion may arrive on odometry between watchdog timer ticks.
+        if self.scorer.status == "completed" and not self.contact_fresh():
+            self.scorer.status = "contact_monitor_timeout"
         metrics = self.scorer.metrics()
         elapsed_wall = time.monotonic() - self.wall_start
         simulation_wall = time.monotonic() - self.first_odom_wall if self.first_odom_wall else 0
@@ -154,10 +169,13 @@ class Evaluator(Node):
             "seed": self.scenario["seed"], "environment": self.scenario["environment_name"],
             "scenario": self.scenario, "scenario_sha256": scenario_digest(self.scenario),
             "git_commit": self.get_parameter("git_commit").value,
+            "image_source_digest": self.get_parameter("image_source_digest").value,
+            "runner_git_commit": self.get_parameter("runner_git_commit").value,
             "image_identity": self.get_parameter("image_identity").value,
             "wall_time_s": elapsed_wall,
             "real_time_factor": self.scorer.elapsed / simulation_wall if simulation_wall > 0 else None,
-            "replans": self.replans, "plan_samples": len(self.latencies),
+            "path_messages": self.path_messages,
+            "replans": len(self.latencies), "plan_samples": len(self.latencies),
             "max_plan_ms": max(self.latencies) if self.latencies else None,
             "mean_plan_ms": sum(self.latencies) / len(self.latencies) if self.latencies else None,
         })

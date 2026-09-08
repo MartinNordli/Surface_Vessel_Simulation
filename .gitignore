@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+build/
+install/
+log/
+outputs/
+*.db3
+*.mcap
+run_metrics.json
+.env

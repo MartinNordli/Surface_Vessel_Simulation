@@ -2,12 +2,15 @@
 
     python3 sandbox/make_gif.py
 
+The GIF is written to outputs/sandbox/, leaving the committed copy untouched.
+
 Shows what the boat knows, not what the world looks like: the discovered
 occupancy grid grows as the lidar sweeps, the plan snaps to a new route each
 time a buoy is found, and the track lags the plan because the boat cannot turn
 on the spot. That lag is the interesting part of the picture.
 """
 
+import argparse
 import os
 import sys
 
@@ -25,7 +28,10 @@ RECORD_EVERY = 12          # control steps between frames (0.05 s each)
 FPS = 20
 
 
-def main(seed=0):
+DEFAULT_OUTPUT = os.path.join(os.path.dirname(__file__), "..", "outputs", "sandbox")
+
+
+def main(seed=0, output_dir=DEFAULT_OUTPUT):
     metrics, trajectory, _, _, frames = run(seed, verbose=False, record_every=RECORD_EVERY)
     print(f"{len(frames)} frames, {metrics['time_s']}s simulated, {metrics['replans']} replans")
 
@@ -67,10 +73,13 @@ def main(seed=0):
         )
 
     animation = FuncAnimation(fig, draw, frames=len(frames), interval=1000 / FPS)
-    out = os.path.join(os.path.dirname(__file__), "headless_demo.gif")
+    os.makedirs(os.path.abspath(output_dir), exist_ok=True)
+    out = os.path.join(os.path.abspath(output_dir), "headless_demo.gif")
     animation.save(out, writer=PillowWriter(fps=FPS), dpi=100)
     print(f"wrote {out} ({os.path.getsize(out) / 1e6:.1f} MB)")
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Animate the sandbox closed-loop run")
+    parser.add_argument("--output-dir", default=DEFAULT_OUTPUT)
+    main(output_dir=parser.parse_args().output_dir)

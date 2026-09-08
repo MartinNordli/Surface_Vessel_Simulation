@@ -1,0 +1,12 @@
+services:
+  simulator:
+    environment:
+      HEADLESS: 'false'
+      DISPLAY: ${DISPLAY:-:0}
+      XAUTHORITY: /tmp/xauthority
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:ro
+      - ${XAUTHORITY:-/dev/null}:/tmp/xauthority:ro
+  rviz:
+    environment:
+      XAUTHORITY: /tmp/xauthority

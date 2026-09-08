@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+export RUNNER_GIT_COMMIT="$(git rev-parse HEAD)"
+export NJORD_UID="$(id -u)"
+export NJORD_GID="$(id -g)"
+if grep -qi microsoft /proc/sys/kernel/osrelease; then
+  export COMPOSE_FILE="${COMPOSE_FILE:-compose.yaml:compose.wsl.yaml}"
+else
+  export COMPOSE_FILE="${COMPOSE_FILE:-compose.yaml}"
+fi
+action="${1:-demo}"
+shift || true
+case "$action" in
+  build)
+    source_digest="$(python3 scripts/build_metadata.py --field source_digest)"
+    docker compose build \
+      --build-arg "NJORD_IMAGE_SOURCE_COMMIT=$RUNNER_GIT_COMMIT" \
+      --build-arg "NJORD_IMAGE_SOURCE_DIGEST=$source_digest" "$@"
+    ;;
+  test) docker compose run --rm tests "$@" ;;
+  demo|gui)
+    if [ "$action" = gui ]; then export COMPOSE_FILE="$COMPOSE_FILE:compose.gui.yaml"; fi
+    export NJORD_IMAGE="$(docker image inspect "${NJORD_IMAGE:-njord-sim:local}" --format '{{.Id}}')"
+    export IMAGE_ID="$NJORD_IMAGE"
+    export RUN_ID="$(python3 -c 'import uuid; print(uuid.uuid4().hex)')"
+    export OUTPUT_HOST="${OUTPUT_HOST:-$PWD/outputs/run-$(date -u +%Y%m%dT%H%M%S)}"
+    if [ -e "$OUTPUT_HOST/run_ready.json" ]; then
+      echo "Select a fresh OUTPUT_HOST; this directory contains a previous run" >&2
+      exit 2
+    fi
+    mkdir -p "$OUTPUT_HOST"
+    trap 'docker compose down --timeout 10' EXIT INT TERM
+    docker compose up --abort-on-container-exit --exit-code-from evaluator simulator autonomy evaluator "$@"
+    ;;
+  benchmark) exec python3 scripts/benchmark.py "$@" ;;
+  smoke) docker compose run --rm autonomy python3 /opt/njord/validation/check_runtime.py "$@" ;;
+  doctor)
+    docker version
+    docker compose version
+    nvidia-smi
+    docker compose run --rm simulator nvidia-smi
+    ;;
+  *) echo 'Usage: scripts/njord {build|test|demo|gui|benchmark|smoke|doctor}' >&2; exit 2 ;;
+esac

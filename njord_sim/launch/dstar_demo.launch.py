@@ -1,97 +1,53 @@
-"""Launch the D* Lite stack against an already running VRX simulation.
-
-    ros2 launch vrx_gz competition.launch.py world:=sydney_regatta
-    ros2 launch njord_sim dstar_demo.launch.py
-
-Every topic name is an argument because they are the single thing most likely
-to differ between VRX releases and thruster configurations. Check them against
-`ros2 topic list` before blaming the code.
-"""
-
+"""Sensor-based Njord reference autonomy against the simulator service."""
+from pathlib import Path
+import os
+import yaml
+from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
-# Ground truth positions of the obstacles you spawned, as [x, y, radius, ...].
-# Keep in sync with the world file, the evaluator has no other way to know.
-OBSTACLES = [
-    -480.0, 200.0, 3.0,
-    -450.0, 230.0, 3.0,
-    -420.0, 190.0, 3.0,
-]
-GOAL = [-380.0, 250.0]
+
+def launch(context):
+    p = lambda name: LaunchConfiguration(name).perform(context)
+    share = Path(get_package_share_directory('njord_sim'))
+    if p('profile') not in ('fast', 'conservative'):
+        raise ValueError('profile must be fast or conservative')
+    config = yaml.safe_load(Path(p('vessel_config')).read_text())
+    common = {'use_sim_time': True}
+    nodes = []
+    def node(executable, params=None):
+        return Node(package='njord_sim', executable=executable, output='screen',
+                    parameters=[common, params or {}])
+    nodes.append(node('sensor_adapter', {'seed': int(p('seed')),
+                 'orientation_noise_rad': config['imu_orientation_noise_rad'],
+                 'gps_xy_std_m': config['gps_horizontal_noise_m'], 'gps_z_std_m': config['gps_vertical_noise_m']}))
+    localization = str(share/'config/localization.yaml')
+    for name, output in [('ekf_local', '/njord/local/odometry'), ('ekf_global', '/njord/odometry')]:
+        nodes.append(Node(package='robot_localization', executable='ekf_node', name=name, output='screen',
+                          parameters=[localization, common], remappings=[('odometry/filtered', output)]))
+    nodes.append(Node(package='robot_localization', executable='navsat_transform_node', name='navsat',
+                      output='screen', parameters=[localization, common], remappings=[
+                          ('imu', '/wamv/sensors/imu/imu/data'), ('gps/fix', '/wamv/sensors/gps/gps/fix'),
+                          ('odometry/filtered', '/njord/odometry'), ('odometry/gps', '/njord/gps/odometry')]))
+    if p('autonomy') == 'reference':
+        nodes += [node('mapper'), node('perception'), node('mission', {'expected_gates': int(p('expected_gates'))}),
+                  node('planner'), node('guidance', {
+                      'max_speed': 2.0 if p('profile') == 'fast' else 1.0,
+                      'thruster_separation_m': config['thruster_separation_m'], 'max_thrust': config['max_thrust_n']})]
+    elif p('autonomy') != 'external':
+        raise ValueError('autonomy must be reference or external')
+    nodes += [node('command_guard', {'max_thrust': config['max_thrust_n']})]
+    return nodes
 
 
 def generate_launch_description():
-    args = [
-        DeclareLaunchArgument("odom_topic", default_value="/wamv/ground_truth/odometry"),
-        DeclareLaunchArgument("points_topic", default_value="/wamv/sensors/lidars/lidar_wamv_sensor/points"),
-        DeclareLaunchArgument("left_topic", default_value="/wamv/thrusters/left/thrust"),
-        DeclareLaunchArgument("right_topic", default_value="/wamv/thrusters/right/thrust"),
-        DeclareLaunchArgument("output", default_value="run_metrics.json"),
-        DeclareLaunchArgument("run_label", default_value="run"),
-    ]
-    odom = LaunchConfiguration("odom_topic")
-
-    common = {"use_sim_time": True}
-
-    nodes = [
-        Node(
-            package="njord_sim",
-            executable="mapper",
-            name="mapper",
-            output="screen",
-            parameters=[
-                common,
-                {
-                    "odom_topic": odom,
-                    "points_topic": LaunchConfiguration("points_topic"),
-                    "resolution": 2.0,
-                    "size_m": 600.0,
-                    "origin_x": -600.0,
-                    "origin_y": 0.0,
-                    "inflation_m": 8.0,
-                    "footprint_m": 6.0,
-                },
-            ],
-        ),
-        Node(
-            package="njord_sim",
-            executable="planner",
-            name="planner",
-            output="screen",
-            parameters=[common, {"odom_topic": odom}],
-        ),
-        Node(
-            package="njord_sim",
-            executable="guidance",
-            name="guidance",
-            output="screen",
-            parameters=[
-                common,
-                {
-                    "odom_topic": odom,
-                    "left_topic": LaunchConfiguration("left_topic"),
-                    "right_topic": LaunchConfiguration("right_topic"),
-                },
-            ],
-        ),
-        Node(
-            package="njord_sim",
-            executable="evaluator",
-            name="evaluator",
-            output="screen",
-            parameters=[
-                common,
-                {
-                    "odom_topic": odom,
-                    "goal": GOAL,
-                    "obstacles": OBSTACLES,
-                    "output": LaunchConfiguration("output"),
-                    "run_label": LaunchConfiguration("run_label"),
-                },
-            ],
-        ),
-    ]
-    return LaunchDescription(args + nodes)
+    share = Path(get_package_share_directory('njord_sim'))
+    return LaunchDescription([
+        DeclareLaunchArgument('profile', default_value=os.environ.get('PROFILE', 'fast')),
+        DeclareLaunchArgument('seed', default_value=os.environ.get('SEED', '1')),
+        DeclareLaunchArgument('expected_gates', default_value='3'),
+        DeclareLaunchArgument('autonomy', default_value='reference'),
+        DeclareLaunchArgument('vessel_config', default_value=str(share/'config/vessel.yaml')),
+        OpaqueFunction(function=launch)])

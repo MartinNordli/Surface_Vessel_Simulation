@@ -1,0 +1,26 @@
+# WSLg graphics uses Mesa D3D12 and the Windows host driver.
+services:
+  simulator:
+    devices:
+      - /dev/dxg:/dev/dxg
+    volumes:
+      - /usr/lib/wsl:/usr/lib/wsl:ro
+      - /mnt/wslg:/mnt/wslg
+      - /tmp/.X11-unix:/tmp/.X11-unix:ro
+    environment:
+      DISPLAY: ${DISPLAY:-:0}
+      WAYLAND_DISPLAY: ${WAYLAND_DISPLAY:-wayland-0}
+      XDG_RUNTIME_DIR: /mnt/wslg/runtime-dir
+      LD_LIBRARY_PATH: /usr/lib/wsl/lib
+      MESA_D3D12_DEFAULT_ADAPTER_NAME: NVIDIA
+      GALLIUM_DRIVER: d3d12
+  rviz:
+    devices:
+      - /dev/dxg:/dev/dxg
+    volumes:
+      - /usr/lib/wsl:/usr/lib/wsl:ro
+      - /mnt/wslg:/mnt/wslg
+    environment:
+      LD_LIBRARY_PATH: /usr/lib/wsl/lib
+      MESA_D3D12_DEFAULT_ADAPTER_NAME: NVIDIA
+      GALLIUM_DRIVER: d3d12

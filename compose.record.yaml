@@ -1,0 +1,10 @@
+# Opt in with COMPOSE_FILE=compose.yaml:compose.record.yaml ./scripts/njord demo recorder
+services:
+  recorder:
+    extends:
+      file: compose.yaml
+      service: autonomy
+    profiles: [record]
+    command: [python3, /opt/njord/scripts/run_recorder.py]
+    stop_signal: SIGINT
+    stop_grace_period: 30s

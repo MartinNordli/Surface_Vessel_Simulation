@@ -1,0 +1,15 @@
+# WAM-V reference parameters; actuator geometry comes from VRX v3.1.0.
+camera_width: 640
+camera_height: 360
+camera_rate: 15.0
+camera_noise_stddev: 0.007
+lidar_range: 80.0
+lidar_samples: 720
+lidar_vertical_samples: 16
+lidar_rate: 10.0
+lidar_noise_stddev: 0.01
+gps_horizontal_noise_m: 0.3
+gps_vertical_noise_m: 0.5
+imu_orientation_noise_rad: 0.005
+max_thrust_n: 500.0
+thruster_separation_m: 2.05427

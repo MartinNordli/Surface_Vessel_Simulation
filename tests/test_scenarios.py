@@ -201,6 +201,7 @@ class ScenarioTests(unittest.TestCase):
             report = json.loads((output / "summary.json").read_text())
             self.assertEqual(len(report["runs"]), 4)
             self.assertEqual(report["manifest"]["jobs"], 2)
+            self.assertEqual(set(report["manifest"]["ros_domain_ids"]), {domain for _, domain in observed})
             self.assertEqual(len(observed), 4)
             self.assertEqual(len({domain for _, domain in observed}), 2)
             self.assertFalse(collisions)

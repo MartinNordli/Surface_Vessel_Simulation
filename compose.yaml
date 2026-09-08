@@ -6,8 +6,10 @@ x-common: &common
   user: ${NJORD_UID:-1000}:${NJORD_GID:-1000}
   network_mode: host
   ipc: host
+  pid: host
   environment: &environment
     HOME: /tmp/njord-home
+    FASTDDS_BUILTIN_TRANSPORTS: UDPv4
     ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-42}
     SCENARIO: ${SCENARIO:-/opt/njord/scenarios/reference.yaml}
     SEED: ${SEED:-1}

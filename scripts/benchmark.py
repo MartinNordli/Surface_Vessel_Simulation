@@ -9,6 +9,7 @@ COMPOSE_FILE supports additional platform overlays, e.g. compose.wsl.yaml.
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -20,6 +21,68 @@ import sys
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+class DomainUnavailable(RuntimeError):
+    pass
+
+
+class DomainLeases:
+    """Keep ROS domains exclusive across benchmark processes for this user.
+
+    Lock files remain in place; deleting them could create two independently
+    locked inodes for the same domain. The kernel releases locks on exit.
+    """
+    def __init__(self, count, directory=None, pool=range(60, 160)):
+        self.count = count
+        self.directory = Path(directory or f'/tmp/njord-ros-domains-{os.getuid()}')
+        self.pool = tuple(pool)
+        self.domains = []
+        self.descriptors = []
+        if not 1 <= count <= len(self.pool):
+            raise ValueError('Requested domain count exceeds the lease pool')
+
+    def acquire(self):
+        if self.descriptors:
+            raise RuntimeError('Domain leases are already held')
+        self.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        try:
+            for domain in self.pool:
+                descriptor = os.open(self.directory / f'domain-{domain}.lock',
+                                     os.O_CREAT | os.O_RDWR | os.O_CLOEXEC, 0o600)
+                try:
+                    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    os.close(descriptor)
+                    continue
+                except BaseException:
+                    os.close(descriptor)
+                    raise
+                self.descriptors.append(descriptor)
+                self.domains.append(domain)
+                os.ftruncate(descriptor, 0)
+                os.write(descriptor, f'pid={os.getpid()} domain={domain}\n'.encode())
+                if len(self.domains) == self.count:
+                    return self
+            raise DomainUnavailable(
+                f'Need {self.count} free ROS domains; only {len(self.domains)} available '
+                f'in {self.pool[0]}..{self.pool[-1]}. '
+                'Wait for another benchmark to finish or reduce --jobs.')
+        except BaseException:
+            self.close()
+            raise
+
+    def close(self):
+        for descriptor in self.descriptors:
+            os.close(descriptor)
+        self.descriptors.clear()
+        self.domains.clear()
+
+    def __enter__(self):
+        return self.acquire()
+
+    def __exit__(self, *_):
+        self.close()
 
 
 def safe_run(metrics):
@@ -102,6 +165,8 @@ def run_one(index, item, total, output, base_env, wall_timeout, domain_id, cance
     reason = None
     print(f"[{index + 1}/{total}] {label}", flush=True)
     try:
+        configuration = json.loads(command_output(command + ['config', '--format', 'json'], env))
+        (run_dir / 'compose.resolved.json').write_text(json.dumps(configuration, indent=2, allow_nan=False) + '\n')
         with (run_dir / "compose.log").open("w") as log:
             process = subprocess.Popen(command + ["up", "--abort-on-container-exit", "--exit-code-from",
                                                    "evaluator", "simulator", "autonomy", "evaluator"],
@@ -129,6 +194,11 @@ def run_one(index, item, total, output, base_env, wall_timeout, domain_id, cance
                     process.wait(timeout=5)
     except subprocess.TimeoutExpired:
         reason = "infrastructure_wall_timeout"
+    except subprocess.CalledProcessError as error:
+        reason = f"compose_config_exit_{error.returncode}"
+        (run_dir / 'compose_config_error.log').write_text(str(error.output or error))
+    except ValueError as error:
+        reason = f"invalid_compose_config: {error}"
     except OSError as error:
         reason = f"infrastructure_error: {error}"
     finally:
@@ -187,6 +257,18 @@ def main():
                           "command": ["docker", "compose", "up", "--abort-on-container-exit",
                                       "--exit-code-from", "evaluator", "simulator", "autonomy", "evaluator"]}, indent=2))
         return 0
+    try:
+        leases = DomainLeases(args.jobs).acquire()
+    except DomainUnavailable as error:
+        parser.exit(2, f"benchmark: {error}\n")
+    try:
+        return run_benchmark(args, matrix, output, stamp, leases.domains)
+    finally:
+        # Workers finish their Compose cleanup before run_benchmark returns.
+        leases.close()
+
+
+def run_benchmark(args, matrix, output, stamp, leased_domains):
     output.mkdir(parents=True, exist_ok=False)
     base_env = os.environ.copy()
     base_env.setdefault("COMPOSE_FILE", str(ROOT / "compose.yaml"))
@@ -195,12 +277,13 @@ def main():
     manifest = {"runner_git_commit": base_env["RUNNER_GIT_COMMIT"],
                 "runner_git_dirty": bool(command_output(["git", "status", "--porcelain"])),
                 **image_metadata, "matrix": matrix, "wall_timeout_s": args.wall_timeout, "jobs": args.jobs,
-                "compose_file": base_env["COMPOSE_FILE"], "created_utc": stamp}
+                "compose_file": base_env["COMPOSE_FILE"], "created_utc": stamp,
+                "ros_domain_ids": list(leased_domains)}
     (output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     runs = []
     cancelled = threading.Event()
     domains = queue.Queue()
-    for domain_id in range(60, 60 + args.jobs):
+    for domain_id in leased_domains:
         domains.put(domain_id)
 
     def execute(index, item):

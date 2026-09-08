@@ -227,6 +227,8 @@ class DStarLite:
 
     def path(self, max_steps=100000):
         """Greedy descent of g from start to goal. Empty list if unreachable."""
+        if not self.grid.is_free(self.start) or not self.grid.is_free(self.goal):
+            return []
         if self.g(self.start) == INF and self.rhs(self.start) == INF:
             return []
         cell = self.start
@@ -246,6 +248,8 @@ class DStarLite:
         return []
 
     def path_cost(self):
+        if not self.grid.is_free(self.start) or not self.grid.is_free(self.goal):
+            return INF
         return self.g(self.start) if self.g(self.start) != INF else self.rhs(self.start)
 
 

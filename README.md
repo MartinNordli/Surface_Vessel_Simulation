@@ -41,6 +41,9 @@ ENVIRONMENT=moderate PROFILE=fast ./scripts/njord demo
 ```
 
 An optional moderate slalom course adds five alternating gates and five obstacles.
+It is a shared test environment for the control/autonomy and perception teams to
+compare algorithms and sensor configurations. The reference autonomy is a baseline;
+the course does not require that baseline to complete every run successfully.
 Build once after adding or changing a scenario: scenarios are copied into the image.
 Select the course for one invocation with `SCENARIO` (the path is inside the container):
 
@@ -186,6 +189,12 @@ slalom races with both speed profiles using:
 ```bash
 SCENARIO=/opt/njord/scenarios/slalom.yaml ./scripts/njord benchmark --seeds 1 2 3 --environments calm
 ```
+
+Initial live checks in calm conditions completed all five slalom gates with the
+fast profile on seeds 1 and 2, with measured contact monitoring and no collisions.
+The conservative baseline can stop when a slow gate approach or crossing exhausts
+the 45 s remembered-gate window. Retain these failures when comparing algorithms;
+completion across all profiles, seeds and sensor configurations is not established.
 
 `sandbox/headless_demo.py` runs the planner core closed loop against a 3-DOF
 vessel and a simulated 2D lidar, with no ROS and no Gazebo. Five seeds take about

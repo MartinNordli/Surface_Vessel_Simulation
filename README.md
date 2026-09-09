@@ -40,6 +40,22 @@ configuration, resolved scenario and metrics are kept in the output directory.
 ENVIRONMENT=moderate PROFILE=fast ./scripts/njord demo
 ```
 
+An optional moderate slalom course adds five alternating gates and five obstacles.
+Build once after adding or changing a scenario: scenarios are copied into the image.
+Select the course for one invocation with `SCENARIO` (the path is inside the container):
+
+```bash
+./scripts/njord build simulator
+SCENARIO=/opt/njord/scenarios/slalom.yaml ./scripts/njord demo
+SCENARIO=/opt/njord/scenarios/slalom.yaml ./scripts/njord gui
+./scripts/njord demo                       # original reference course remains the default
+```
+
+Both courses support the existing `SEED`, `ENVIRONMENT` and `PROFILE` options.
+Building just `simulator` updates the shared image used by all three race services.
+If `SCENARIO` was exported in your shell, explicitly select
+`SCENARIO=/opt/njord/scenarios/reference.yaml` to return to the reference course.
+
 The default simulator uses OGRE2 with headless EGL rendering. NVIDIA graphics
 capabilities are supplied to the container. On WSL2, `scripts/njord` automatically
 adds `compose.wsl.yaml`, mounting WSLg/DXG and selecting Mesa D3D12 on the NVIDIA
@@ -113,6 +129,11 @@ an observed-free corridor.
   starting pose, seed, timeout and calm/moderate wind/wave presets. JSON syntax is
   valid YAML; general YAML is accepted too. Scenario generation saves resolved
   geometry and a SHA256 digest per run.
+- `scenarios/slalom.yaml`: five 14 m-wide east-facing gates with centres alternating
+  between y=+2 m and y=-2 m after the first gate at y=0, five 0.8 m-radius
+  obstacles requiring detours, ±0.5 m seeded gate
+  offsets and a 480 s simulation timeout. It uses the reference start pose,
+  vessel and calm/moderate environments and fits within the existing map.
 - `njord_sim/config/vessel.yaml` and `sensors.xacro`: sensor geometry, rates,
   resolution and noise, thruster limits. Defaults: 640×360 RGB at 15 Hz, 720×16
   lidar at 10 Hz/80 m, GPS 10 Hz, IMU 100 Hz. WAM-V thruster separation 2.05427 m.
@@ -153,6 +174,16 @@ full 3D sensor transforms, camera color detection, lidar association, ordered ga
 collision scoring, strict metrics and benchmark comparisons. ROS/model tests
 explicitly skip when their dependencies are absent on the host; run the container
 suite for the full check. Transport tests run in isolated ROS domains.
+
+Slalom regressions check seeds 1–10 for unambiguous ordered gate selection,
+camera-to-buoy sightlines at start and gate exits, obstacle-induced detours and traversable routes
+with the existing 4 m inflation. The offline checks use complete scenario geometry;
+they do not establish live perception or physical completion. Run the six calm-water
+slalom races with both speed profiles using:
+
+```bash
+SCENARIO=/opt/njord/scenarios/slalom.yaml ./scripts/njord benchmark --seeds 1 2 3 --environments calm
+```
 
 `sandbox/headless_demo.py` runs the planner core closed loop against a 3-DOF
 vessel and a simulated 2D lidar, with no ROS and no Gazebo. Five seeds take about

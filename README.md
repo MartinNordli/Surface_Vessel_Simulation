@@ -45,19 +45,23 @@ It is a shared test environment for the control/autonomy and perception teams to
 compare algorithms and sensor configurations. The reference autonomy is a baseline;
 the course does not require that baseline to complete every run successfully.
 Build once after adding or changing a scenario: scenarios are copied into the image.
-Select the course for one invocation with `SCENARIO` (the path is inside the container):
+Select the course by name after `demo`, `gui` or `benchmark`:
 
 ```bash
 ./scripts/njord build simulator
-SCENARIO=/opt/njord/scenarios/slalom.yaml ./scripts/njord demo
-SCENARIO=/opt/njord/scenarios/slalom.yaml ./scripts/njord gui
+./scripts/njord demo slalom
+./scripts/njord gui slalom
+./scripts/njord gui reference              # switch back to the original course
 ./scripts/njord demo                       # original reference course remains the default
 ```
 
 Both courses support the existing `SEED`, `ENVIRONMENT` and `PROFILE` options.
 Building just `simulator` updates the shared image used by all three race services.
-If `SCENARIO` was exported in your shell, explicitly select
-`SCENARIO=/opt/njord/scenarios/reference.yaml` to return to the reference course.
+An explicit course name overrides `SCENARIO` for that invocation. Without a course
+name, the existing `SCENARIO` environment variable still works (using a path inside
+the container), with the reference course as the default. Additional arguments follow
+the course name, for example `./scripts/njord demo slalom recorder` or
+`./scripts/njord benchmark slalom --dry-run`. Use `./scripts/njord --help` for usage.
 
 The default simulator uses OGRE2 with headless EGL rendering. NVIDIA graphics
 capabilities are supplied to the container. On WSL2, `scripts/njord` automatically
@@ -187,7 +191,7 @@ they do not establish live perception or physical completion. Run the six calm-w
 slalom races with both speed profiles using:
 
 ```bash
-SCENARIO=/opt/njord/scenarios/slalom.yaml ./scripts/njord benchmark --seeds 1 2 3 --environments calm
+./scripts/njord benchmark slalom --seeds 1 2 3 --environments calm
 ```
 
 Initial live checks in calm conditions completed all five slalom gates with the

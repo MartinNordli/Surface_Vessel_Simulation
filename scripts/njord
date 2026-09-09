@@ -11,7 +11,24 @@ else
 fi
 action="${1:-demo}"
 shift || true
+usage() {
+  echo 'Usage: scripts/njord {build|test|demo|gui|benchmark|smoke|doctor}'
+  echo '       scripts/njord {demo|gui|benchmark} [reference|slalom] [additional arguments]'
+  echo 'Examples: scripts/njord gui slalom; scripts/njord gui reference'
+  echo 'An explicit course overrides SCENARIO; otherwise SCENARIO or the reference default is used.'
+}
 case "$action" in
+  demo|gui|benchmark)
+    case "${1:-}" in
+      reference|slalom)
+        export SCENARIO="/opt/njord/scenarios/$1.yaml"
+        shift
+        ;;
+    esac
+    ;;
+esac
+case "$action" in
+  help|-h|--help) usage ;;
   build)
     source_digest="$(python3 scripts/build_metadata.py --field source_digest)"
     docker compose build \
@@ -41,5 +58,5 @@ case "$action" in
     nvidia-smi
     docker compose run --rm simulator nvidia-smi
     ;;
-  *) echo 'Usage: scripts/njord {build|test|demo|gui|benchmark|smoke|doctor}' >&2; exit 2 ;;
+  *) usage >&2; exit 2 ;;
 esac

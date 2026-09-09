@@ -129,11 +129,13 @@ an observed-free corridor.
   starting pose, seed, timeout and calm/moderate wind/wave presets. JSON syntax is
   valid YAML; general YAML is accepted too. Scenario generation saves resolved
   geometry and a SHA256 digest per run.
-- `scenarios/slalom.yaml`: five 14 m-wide east-facing gates with centres alternating
-  between y=+2 m and y=-2 m after the first gate at y=0, five 0.8 m-radius
-  obstacles requiring detours, ±0.5 m seeded gate
-  offsets and a 480 s simulation timeout. It uses the reference start pose,
-  vessel and calm/moderate environments and fits within the existing map.
+- `scenarios/slalom.yaml`: five 14 m-wide gates with centres alternating between
+  y=0 and y=5 m and forward normals alternating ±10° from east. Five 0.8 m-radius
+  obstacles flank the route, with room for the existing clearance-limited controller.
+  Seeded gate offsets are ±0.5 m; the simulation timeout is 480 s. It uses the
+  reference start pose, vessel and calm/moderate environments and fits within the
+  existing map. The ordered gates create the slalom; obstacles do not all force
+  additional detours on the nominal route.
 - `njord_sim/config/vessel.yaml` and `sensors.xacro`: sensor geometry, rates,
   resolution and noise, thruster limits. Defaults: 640×360 RGB at 15 Hz, 720×16
   lidar at 10 Hz/80 m, GPS 10 Hz, IMU 100 Hz. WAM-V thruster separation 2.05427 m.
@@ -176,7 +178,7 @@ explicitly skip when their dependencies are absent on the host; run the containe
 suite for the full check. Transport tests run in isolated ROS domains.
 
 Slalom regressions check seeds 1–10 for unambiguous ordered gate selection,
-camera-to-buoy sightlines at start and gate exits, obstacle-induced detours and traversable routes
+camera-to-buoy sightlines at start and gate exits, alternating turns and traversable routes
 with the existing 4 m inflation. The offline checks use complete scenario geometry;
 they do not establish live perception or physical completion. Run the six calm-water
 slalom races with both speed profiles using:

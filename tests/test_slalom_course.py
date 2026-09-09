@@ -15,7 +15,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "njord_sim"))
 
-from njord_sim.control_core import observed_free, segment_is_free
+from njord_sim.control_core import clearance, observed_free, segment_is_free
 from njord_sim.dstar_lite import astar
 from njord_sim.perception_core import choose_gate
 from njord_sim.planner_core import Geometry, IncrementalPlanner
@@ -140,20 +140,36 @@ class SlalomCourseTests(unittest.TestCase):
                 forward = position - center
                 yaw = math.atan2(forward[1], forward[0])
 
-    def test_each_extra_obstacle_requires_a_detour_between_mission_targets(self):
+    def test_ordered_slalom_has_clearance_along_the_nominal_mission_route(self):
+        # Ordered, offset gates with alternating normals create the slalom.
+        # Extra obstacles flank the route; each need not force a D* Lite detour.
+        # This samples the nominal mission route, not the planner's chosen path
+        # or the vessel's physical trajectory through its successive targets.
         for seed in range(1, 11):
-            scenario = load_scenario(SCENARIO, seed=seed)
-            previous = scenario["start"][:2]
-            for gate, obstacle in zip(scenario["gates"], scenario["obstacles"]):
-                with self.subTest(seed=seed, obstacle=obstacle["name"]):
-                    before, _, after = gate_points(gate)
-                    # Test this obstacle alone, so a gate buoy cannot satisfy
-                    # the assertion that the extra obstacle causes an evasion.
-                    data = inflated_grid([obstacle])
-                    self.assertTrue(observed_free(GEOMETRY, data, GEOMETRY.cell(previous)))
-                    self.assertTrue(observed_free(GEOMETRY, data, GEOMETRY.cell(before)))
-                    self.assertFalse(segment_is_free(GEOMETRY, data, previous, before))
-                    previous = after
+            with self.subTest(seed=seed):
+                scenario = load_scenario(SCENARIO, seed=seed)
+                data = inflated_grid(obstacles(scenario))
+                previous = np.asarray(scenario["start"][:2])
+                previous_center = previous_heading = None
+                for gate in scenario["gates"]:
+                    before, center, after = gate_points(gate)
+                    heading = math.atan2(after[1] - center[1], after[0] - center[0])
+                    if previous_heading is None:
+                        self.assertGreater(heading, 0)
+                    else:
+                        self.assertLess(heading * previous_heading, 0)
+                        self.assertAlmostEqual(math.degrees(abs(heading - previous_heading)),
+                                               20.0, places=5)
+                        self.assertGreater((center[1] - previous_center[1]) * previous_heading, 0)
+                    for target in (before, center, after):
+                        self.assertTrue(segment_is_free(GEOMETRY, data, previous, target))
+                        steps = max(1, math.ceil(math.dist(previous, target) / 0.5))
+                        for fraction in np.linspace(0, 1, steps + 1):
+                            point = previous + fraction * (target - previous)
+                            self.assertGreaterEqual(clearance(GEOMETRY, data, point), 1.5,
+                                                    f"seed {seed}, {gate['name']}: tight nominal corridor")
+                        previous = target
+                    previous_center, previous_heading = center, heading
 
     def test_inflated_routes_match_astar_and_score_all_five_gates_in_order(self):
         for seed in range(1, 11):

@@ -6,18 +6,18 @@
   "hull": {"length_m": 6.0, "beam_m": 3.3},
   "gate_y_jitter_m": 0.5,
   "gates": [
-    {"name": "gate_1", "red": [20.0, 7.0], "green": [20.0, -7.0], "radius_m": 0.5},
-    {"name": "gate_2", "red": [42.0, 9.0], "green": [42.0, -5.0], "radius_m": 0.5},
-    {"name": "gate_3", "red": [64.0, 5.0], "green": [64.0, -9.0], "radius_m": 0.5},
-    {"name": "gate_4", "red": [86.0, 9.0], "green": [86.0, -5.0], "radius_m": 0.5},
-    {"name": "gate_5", "red": [108.0, 5.0], "green": [108.0, -9.0], "radius_m": 0.5}
+    {"name": "gate_1", "red": [13.784462756, 6.893654271], "green": [16.215537244, -6.893654271], "radius_m": 0.5},
+    {"name": "gate_2", "red": [39.215537244, 11.893654271], "green": [36.784462756, -1.893654271], "radius_m": 0.5},
+    {"name": "gate_3", "red": [59.784462756, 6.893654271], "green": [62.215537244, -6.893654271], "radius_m": 0.5},
+    {"name": "gate_4", "red": [85.215537244, 11.893654271], "green": [82.784462756, -1.893654271], "radius_m": 0.5},
+    {"name": "gate_5", "red": [105.784462756, 6.893654271], "green": [108.215537244, -6.893654271], "radius_m": 0.5}
   ],
   "obstacles": [
-    {"name": "obstacle_1", "position": [9.0, 4.5], "radius_m": 0.8},
-    {"name": "obstacle_2", "position": [30.5, -3.5], "radius_m": 0.8},
-    {"name": "obstacle_3", "position": [53.0, 4.7], "radius_m": 0.8},
-    {"name": "obstacle_4", "position": [75.0, -4.7], "radius_m": 0.8},
-    {"name": "obstacle_5", "position": [97.0, 4.7], "radius_m": 0.8}
+    {"name": "obstacle_1", "position": [7.0, -8.5], "radius_m": 0.8},
+    {"name": "obstacle_2", "position": [29.7578204, -3.5164823], "radius_m": 0.8},
+    {"name": "obstacle_3", "position": [52.7578204, 8.5164823], "radius_m": 0.8},
+    {"name": "obstacle_4", "position": [75.7578204, -3.5164823], "radius_m": 0.8},
+    {"name": "obstacle_5", "position": [98.7578204, 8.5164823], "radius_m": 0.8}
   ],
   "environments": {
     "calm": {"wind_speed_mps": 0.0, "wind_direction_deg": 45.0, "wind_variance_gain": 0.0, "wave_gain": 0.0, "wave_period_s": 5.0, "wave_direction_rad": 0.0, "wave_steepness": 0.0},

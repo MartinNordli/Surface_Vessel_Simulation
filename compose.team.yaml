@@ -1,0 +1,17 @@
+# Optional source workspace shared by team nodes. Build inside this Jazzy image.
+services:
+  team:
+    image: ${NJORD_IMAGE:-njord-sim:local}
+    init: true
+    user: ${NJORD_UID:-1000}:${NJORD_GID:-1000}
+    network_mode: host
+    ipc: host
+    environment:
+      HOME: /tmp/njord-team-home
+      ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-42}
+      FASTDDS_BUILTIN_TRANSPORTS: UDPv4
+    volumes:
+      - ${TEAM_WS_HOST:?Set TEAM_WS_HOST to your ROS 2 source workspace}:/team_ws
+      - ${CONFIG_HOST:-./njord_sim/config}:/config:ro
+    working_dir: /team_ws
+    command: [bash]

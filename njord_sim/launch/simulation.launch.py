@@ -56,5 +56,5 @@ def generate_launch_description():
         DeclareLaunchArgument('environment', default_value=os.environ.get('ENVIRONMENT', 'calm')),
         DeclareLaunchArgument('output_dir', default_value=os.environ.get('OUTPUT_DIR', '/outputs')),
         DeclareLaunchArgument('headless', default_value=os.environ.get('HEADLESS', 'true')),
-        DeclareLaunchArgument('vessel_config', default_value=str(share/'config/vessel.yaml')),
+        DeclareLaunchArgument('vessel_config', default_value=os.environ.get('VESSEL_CONFIG', str(share/'config/vessel.yaml'))),
         OpaqueFunction(function=launch)])

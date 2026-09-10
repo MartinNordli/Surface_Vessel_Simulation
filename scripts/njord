@@ -12,13 +12,14 @@ fi
 action="${1:-demo}"
 shift || true
 usage() {
-  echo 'Usage: scripts/njord {build|test|demo|gui|benchmark|smoke|doctor}'
-  echo '       scripts/njord {demo|gui|benchmark} [reference|slalom] [additional arguments]'
+  echo 'Usage: scripts/njord {build|test|demo|gui|lab|benchmark|smoke|doctor}'
+  echo '       scripts/njord {demo|gui|lab|benchmark} [reference|slalom] [additional arguments]'
+  echo 'lab keeps simulator and sensor/autonomy nodes running without starting an evaluator.'
   echo 'Examples: scripts/njord gui slalom; scripts/njord gui reference'
   echo 'An explicit course overrides SCENARIO; otherwise SCENARIO or the reference default is used.'
 }
 case "$action" in
-  demo|gui|benchmark)
+  demo|gui|lab|benchmark)
     case "${1:-}" in
       reference|slalom)
         export SCENARIO="/opt/njord/scenarios/$1.yaml"
@@ -36,7 +37,7 @@ case "$action" in
       --build-arg "NJORD_IMAGE_SOURCE_DIGEST=$source_digest" "$@"
     ;;
   test) docker compose run --rm tests "$@" ;;
-  demo|gui)
+  demo|gui|lab)
     if [ "$action" = gui ]; then export COMPOSE_FILE="$COMPOSE_FILE:compose.gui.yaml"; fi
     export NJORD_IMAGE="$(docker image inspect "${NJORD_IMAGE:-njord-sim:local}" --format '{{.Id}}')"
     export IMAGE_ID="$NJORD_IMAGE"
@@ -48,7 +49,13 @@ case "$action" in
     fi
     mkdir -p "$OUTPUT_HOST"
     trap 'docker compose down --timeout 10' EXIT INT TERM
-    docker compose up --abort-on-container-exit --exit-code-from evaluator simulator autonomy evaluator "$@"
+    if [ "$action" = lab ]; then
+      # Interactive inspection uses short-lived compose run containers. Their
+      # exit must not tear down the ongoing sensor session.
+      docker compose up simulator autonomy "$@"
+    else
+      docker compose up --abort-on-container-exit --exit-code-from evaluator simulator autonomy evaluator "$@"
+    fi
     ;;
   benchmark) exec python3 scripts/benchmark.py "$@" ;;
   smoke) docker compose run --rm autonomy python3 /opt/njord/validation/check_runtime.py "$@" ;;

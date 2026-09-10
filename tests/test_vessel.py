@@ -124,6 +124,36 @@ class VesselGenerationTests(unittest.TestCase):
         self.assertEqual(commands[0]["ros_type_name"], "geometry_msgs/msg/Twist")
         self.assertFalse(any(bridge["ros_topic_name"] in ("/tf", "/tf_static") for bridge in self.bridges))
 
+    def test_custom_configuration_changes_generated_sensors_and_snapshot(self):
+        import yaml
+        from njord_sim.vessel import generate
+        override = dict(camera_width=800, camera_height=450, camera_rate=12.,
+                        camera_horizontal_fov_rad=1.2, lidar_samples=400,
+                        lidar_vertical_samples=8, lidar_rate=7., lidar_range=55.,
+                        gps_rate=4., imu_rate=40.)
+        with tempfile.TemporaryDirectory(prefix='njord-custom-vessel-') as directory:
+            output = Path(directory)
+            path = output/'override.yaml'
+            path.write_text(yaml.safe_dump(override))
+            _, resolved = generate(output, path)
+            self.assertEqual(yaml.safe_load((output/'vessel_config.yaml').read_text()), resolved)
+            sensors = ET.parse(output/'wamv.sdf').findall('.//sensor')
+            for sensor in sensors:
+                kind = sensor.get('type')
+                if kind == 'camera':
+                    self.assertEqual(int(sensor.findtext('camera/image/width')), 800)
+                    self.assertEqual(int(sensor.findtext('camera/image/height')), 450)
+                    self.assertAlmostEqual(float(sensor.findtext('camera/horizontal_fov')), 1.2)
+                    self.assertAlmostEqual(float(sensor.findtext('update_rate')), 12.)
+                elif kind in ('gpu_lidar', 'gpu_ray'):
+                    ray = 'lidar' if sensor.find('lidar') is not None else 'ray'
+                    self.assertEqual(int(sensor.findtext(ray+'/scan/horizontal/samples')), 400)
+                    self.assertEqual(int(sensor.findtext(ray+'/scan/vertical/samples')), 8)
+                    self.assertAlmostEqual(float(sensor.findtext(ray+'/range/max')), 55.)
+                    self.assertAlmostEqual(float(sensor.findtext('update_rate')), 7.)
+                elif kind in ('imu', 'navsat'):
+                    self.assertAlmostEqual(float(sensor.findtext('update_rate')), 40. if kind == 'imu' else 4.)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,9 @@
+# Optional algorithm tuning: ROS_PARAMS_FILE=/config/team_example.yaml
+guidance:
+  ros__parameters:
+    kp_surge: 180.0
+    kp_yaw: 350.0
+    max_speed: 1.0
+perception:
+  ros__parameters:
+    min_blob_area: 15

@@ -1,9 +1,43 @@
 """Generate a local WAM-V model and explicit one-way ROS/Gazebo bridges."""
 from pathlib import Path
+import math
 import subprocess
 import xml.etree.ElementTree as ET
 import yaml
-from ament_index_python.packages import get_package_share_directory
+
+
+def load_config(config_file=None, defaults_file=None):
+    """Merge a partial YAML override with defaults and reject invalid experiments.
+
+    ``defaults_file`` permits validation without a ROS installation. Unknown keys
+    fail explicitly so misspelled sensor settings never silently do nothing.
+    """
+    if defaults_file is None:
+        from ament_index_python.packages import get_package_share_directory
+        defaults_file = Path(get_package_share_directory('njord_sim'))/'config/vessel.yaml'
+    config = yaml.safe_load(Path(defaults_file).read_text())
+    if config_file is not None:
+        override = yaml.safe_load(Path(config_file).read_text())
+        if not isinstance(override, dict):
+            raise ValueError('vessel configuration must be a YAML mapping')
+        unknown = set(override) - set(config)
+        if unknown:
+            raise ValueError(f'unknown vessel configuration keys: {sorted(unknown, key=str)}')
+        config.update(override)
+    counts = ('camera_width', 'camera_height', 'lidar_samples', 'lidar_vertical_samples')
+    for key, value in config.items():
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            raise ValueError(f'{key} must be a finite number')
+        if key in counts and not isinstance(value, int):
+            raise ValueError(f'{key} must be an integer')
+        allow_zero = 'noise' in key
+        if value < 0 or (value == 0 and not allow_zero):
+            raise ValueError(f'{key} must be {"nonnegative" if allow_zero else "positive"}')
+        if key not in counts:
+            config[key] = float(value)
+    if not 0 < config['camera_horizontal_fov_rad'] < math.pi:
+        raise ValueError('camera_horizontal_fov_rad must be between 0 and pi radians')
+    return config
 
 
 def set_text(parent, path, value):
@@ -16,10 +50,11 @@ def set_text(parent, path, value):
 
 
 def generate(output_dir, config_file=None):
+    from ament_index_python.packages import get_package_share_directory
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
     share = Path(get_package_share_directory('njord_sim'))
-    config = yaml.safe_load(Path(config_file or share/'config/vessel.yaml').read_text())
+    config = load_config(config_file, share/'config/vessel.yaml')
     urdf = subprocess.check_output([
         'xacro', str(Path(get_package_share_directory('wamv_gazebo'))/'urdf/wamv_gazebo.urdf.xacro'),
         'namespace:=wamv', 'locked:=false', 'thruster_config:=H',
@@ -47,6 +82,7 @@ def generate(output_dir, config_file=None):
             for key, field in [('width', 'camera_width'), ('height', 'camera_height')]:
                 set_text(sensor, 'camera/image/'+key, config[field])
             set_text(sensor, 'update_rate', config['camera_rate'])
+            set_text(sensor, 'camera/horizontal_fov', config['camera_horizontal_fov_rad'])
             set_text(sensor, 'camera/noise/stddev', config['camera_noise_stddev'])
             bridge(prefix+'/image_raw', prefix+'/image_raw', 'sensor_msgs/msg/Image', 'gz.msgs.Image')
             bridge(prefix+'/camera_info', prefix+'/camera_info', 'sensor_msgs/msg/CameraInfo', 'gz.msgs.CameraInfo')
@@ -55,6 +91,8 @@ def generate(output_dir, config_file=None):
             set_text(sensor, 'topic', prefix+'/scan')
             set_text(sensor, 'gz_frame_id', 'wamv/lidar_wamv_link')
             ray = 'lidar' if sensor.find('lidar') is not None else 'ray'
+            if config['lidar_range'] <= float(sensor.findtext(ray+'/range/min', '0')):
+                raise ValueError('lidar_range must exceed the upstream lidar minimum range')
             set_text(sensor, ray+'/range/max', config['lidar_range'])
             set_text(sensor, ray+'/scan/horizontal/samples', config['lidar_samples'])
             set_text(sensor, ray+'/scan/vertical/samples', config['lidar_vertical_samples'])
@@ -66,11 +104,13 @@ def generate(output_dir, config_file=None):
             topic = '/wamv/sensors/imu/imu/data_raw'
             set_text(sensor, 'topic', topic)
             set_text(sensor, 'gz_frame_id', 'wamv/imu_wamv_link')
+            set_text(sensor, 'update_rate', config['imu_rate'])
             bridge(topic, topic, 'sensor_msgs/msg/Imu', 'gz.msgs.IMU')
         elif kind == 'navsat':
             topic = '/wamv/sensors/gps/gps/fix_raw'
             set_text(sensor, 'topic', topic)
             set_text(sensor, 'gz_frame_id', 'wamv/gps_wamv_link')
+            set_text(sensor, 'update_rate', config['gps_rate'])
             # Harmonic applies horizontal NavSat noise to degrees, not metres.
             # The sensor adapter applies metric ENU noise to GPS measurements.
             for axis, std in [('horizontal', 0.0), ('vertical', 0.0)]:
@@ -99,4 +139,5 @@ def generate(output_dir, config_file=None):
     ET.indent(root)
     (out/'wamv.sdf').write_text(ET.tostring(root, encoding='unicode'))
     (out/'bridges.yaml').write_text(yaml.safe_dump(bridges))
+    (out/'vessel_config.yaml').write_text(yaml.safe_dump(config, sort_keys=True))
     return urdf, config

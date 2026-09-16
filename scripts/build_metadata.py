@@ -3,6 +3,8 @@
 
 Includes Dockerfile and .dockerignore. Ignores timestamps, Git internals and
 files outside COPY inputs; applies the repository's Docker ignore patterns.
+Permissions are reduced to the executable bit Git tracks, so a clone made under
+any umask yields the digest that CI stamped into the published image.
 The digest identifies source inputs, while the immutable image ID identifies
 built binaries (including package versions resolved during the build).
 """
@@ -76,7 +78,7 @@ def source_digest(root=ROOT):
             if candidate.is_dir() and not candidate.is_symlink():
                 for directory, dirs, files in os.walk(candidate, followlinks=False):
                     selected.update((Path(directory) / name).relative_to(root) for name in dirs + files)
-    digest = hashlib.sha256(b'njord-docker-source-v1\0')
+    digest = hashlib.sha256(b'njord-docker-source-v2\0')
     for relative in sorted(selected, key=lambda value: value.as_posix()):
         if relative.as_posix() not in ('Dockerfile', '.dockerignore') and ignored(relative, patterns):
             continue
@@ -90,7 +92,8 @@ def source_digest(root=ROOT):
             kind, content = 'directory', b''
         else:
             raise ValueError('Unsupported build input type: ' + str(relative))
-        header = json.dumps([relative.as_posix(), kind, stat.S_IMODE(info.st_mode), len(content)],
+        mode = 0o755 if kind != 'file' or info.st_mode & 0o111 else 0o644
+        header = json.dumps([relative.as_posix(), kind, mode, len(content)],
                             ensure_ascii=True, separators=(',', ':')).encode()
         digest.update(header + b'\0' + content + b'\0')
     return digest.hexdigest()

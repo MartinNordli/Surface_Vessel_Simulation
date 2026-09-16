@@ -53,6 +53,15 @@ class BuildMetadataTests(unittest.TestCase):
             (root / 'scripts/run.py').chmod(0o755)
             self.assertNotEqual(added, metadata.source_digest(root))
 
+    def test_umask_dependent_permissions_do_not_change_digest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.fixture(root)
+            before = metadata.source_digest(root)
+            (root / 'scripts/run.py').chmod(0o664)
+            (root / 'scripts').chmod(0o775)
+            self.assertEqual(before, metadata.source_digest(root))
+
     def test_build_recipe_is_part_of_digest(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

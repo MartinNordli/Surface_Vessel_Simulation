@@ -1,0 +1,132 @@
+name: CI
+
+# unit:  fast host suite, no Docker.
+# image: builds the simulator image, runs the container suite and a CPU-rendered
+#        sensor/navigation selftest, then publishes the tested image to GHCR:
+#          sha-<commit>  every pushed commit (scripts/njord pull uses this)
+#          latest        main
+#          <tag>         release tags v*
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    # Same-repository pull requests are already covered by their push run.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install numpy pyyaml opencv-python-headless
+      - run: python tests/test_dstar_lite.py
+      - run: python -m unittest discover -s tests -p 'test_*.py'
+
+  image:
+    needs: unit
+    runs-on: ubuntu-24.04
+    # An uncached build compiles the Gazebo vendor packages and VRX.
+    timeout-minutes: 300
+    permissions:
+      contents: read
+      packages: write
+    env:
+      PUBLISH: ${{ github.event_name != 'pull_request' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          docker image prune --all --force
+          df -h /
+
+      - name: Resolve image name, tags and source digest
+        id: meta
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          tags="$image:sha-$GITHUB_SHA"
+          if [ "$GITHUB_REF" = refs/heads/main ]; then tags="$tags,$image:latest"; fi
+          if [ "$GITHUB_REF_TYPE" = tag ]; then tags="$tags,$image:$GITHUB_REF_NAME"; fi
+          {
+            echo "image=$image"
+            echo "tags=$tags"
+            echo "source_digest=$(python3 scripts/build_metadata.py --field source_digest)"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        if: env.PUBLISH == 'true'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: njord-sim:local
+          build-args: |
+            NJORD_IMAGE_SOURCE_COMMIT=${{ github.sha }}
+            NJORD_IMAGE_SOURCE_DIGEST=${{ steps.meta.outputs.source_digest }}
+          labels: org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          cache-from: type=registry,ref=${{ steps.meta.outputs.image }}:buildcache
+          cache-to: ${{ env.PUBLISH == 'true' && format('type=registry,ref={0}:buildcache,mode=max', steps.meta.outputs.image) || '' }}
+
+      - name: Image matches checkout
+        run: ./scripts/njord check-image
+
+      - name: Container test suite
+        run: ./scripts/njord test
+
+      - name: CPU-rendered sensor and navigation selftest
+        env:
+          NJORD_CPU: '1'
+          NJORD_STRICT_IMAGE: '1'
+          OUTPUT_HOST: ${{ runner.temp }}/selftest
+          SMOKE_TIMEOUT_S: '600'
+        run: ./scripts/njord selftest
+
+      # Same inputs as "Build image": the builder cache supplies every layer, so
+      # the published image is the one tested above.
+      - name: Publish tested image
+        if: env.PUBLISH == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          build-args: |
+            NJORD_IMAGE_SOURCE_COMMIT=${{ github.sha }}
+            NJORD_IMAGE_SOURCE_DIGEST=${{ steps.meta.outputs.source_digest }}
+          labels: org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          cache-from: type=registry,ref=${{ steps.meta.outputs.image }}:buildcache
+
+      - name: Summary
+        if: env.PUBLISH == 'true'
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          {
+            echo '### Published image'
+            echo '```'
+            echo "$TAGS" | tr ',' '\n'
+            echo '```'
+            echo "Check out \`$GITHUB_SHA\` and run \`./scripts/njord pull\`."
+          } >> "$GITHUB_STEP_SUMMARY"

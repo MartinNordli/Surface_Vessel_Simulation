@@ -1,0 +1,10 @@
+# Partial vessel configuration: inherit all other defaults from vessel.yaml.
+# Use VESSEL_CONFIG to select this before starting a new run.
+camera_width: 320
+camera_height: 180
+camera_rate: 10.0
+lidar_samples: 360
+lidar_vertical_samples: 8
+lidar_rate: 5.0
+gps_rate: 5.0
+imu_rate: 50.0

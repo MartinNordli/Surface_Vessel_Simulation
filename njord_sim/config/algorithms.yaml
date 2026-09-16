@@ -1,0 +1,19 @@
+schema_version: 1
+guidance:
+  lookahead_m: 8.0
+  kp_yaw: 400.0
+  kd_yaw: 300.0
+  kp_surge: 200.0
+  max_speed: 2.0
+  max_thrust: 500.0
+  goal_tolerance_m: 1.5
+  control_hz: 20.0
+  stale_after_s: 1.0
+  braking_deceleration_mps2: 0.25
+  reaction_time_s: 1.0
+  stopping_margin_m: 3.0
+planner:
+  stale_after_s: 1.0
+  publish_hz: 5.0
+mapping:
+  safety_margin_m: 0.5761863368460016

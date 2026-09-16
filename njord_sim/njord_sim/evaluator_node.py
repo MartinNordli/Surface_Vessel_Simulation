@@ -179,6 +179,11 @@ class Evaluator(Node):
             "max_plan_ms": max(self.latencies) if self.latencies else None,
             "mean_plan_ms": sum(self.latencies) / len(self.latencies) if self.latencies else None,
         })
+        manifest = self.output.parent / 'run_manifest.json'
+        if manifest.is_file():
+            from njord_sim.run_manifest import sha256
+            metrics['manifest_sha256'] = sha256(manifest)
+            metrics['run_id'] = json.loads(manifest.read_text())['run_id']
         self.output.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.output.with_suffix(self.output.suffix + ".tmp")
         temporary.write_text(json.dumps(metrics, indent=2, allow_nan=False) + "\n")

@@ -1,110 +1,148 @@
-"""Validation step 2: is the vessel model behaving like a boat?
+"""One isolated open-loop experiment per fresh simulator process.
 
-Runs three open-loop manoeuvres and prints what the simulator actually did:
-
-  straight   equal thrust on both sides   -> top speed and time to reach 95% of it
-  turn       differential thrust          -> steady yaw rate and turning radius
-  coast      thrust cut to zero           -> stopping distance
-
-These are the same three numbers you can measure on the water in an afternoon.
-Until simulated and measured agree, every result downstream of this is a
-result about a simulator, not about your boat. Run it before the closed loop,
-and re-run it after any change to the hull or thruster configuration.
-
-Start the simulator service alone, then run this script on its ROS network.
-The reference autonomy must be stopped so only this check commands thrusters.
-The atomic force envelope is converted into newtons by the Gazebo watchdog.
+Start simulator alone in the dynamics scenario, without autonomy. Invoke this
+node before simulation time 5 s (or use a paused startup). Each repetition and
+each experiment needs a new simulator process; this tool never resets poses.
+Use --ros-args -p experiment:=coast -p manifest_path:=... -p output_path:=...
 """
-
-import math
+import hashlib
 import json
+import math
+from pathlib import Path
 import time
 
 import rclpy
-from nav_msgs.msg import Odometry
-from rclpy.node import Node
-from rclpy.clock import Clock, ClockType
-from rclpy.qos import qos_profile_sensor_data
 from geometry_msgs.msg import Twist
+from nav_msgs.msg import Odometry
+from rclpy.clock import Clock, ClockType
+from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
 
-from dynamics_metrics import summarize
-
-STRAIGHT_S = 40.0
-TURN_S = 60.0
-COAST_S = 40.0
-THRUST = 300.0
+from dynamics_metrics import stationary, summarize_experiment
 
 
 class DynamicsCheck(Node):
     def __init__(self):
         super().__init__("dynamics_check")
-        self.declare_parameter("odom_topic", "/wamv/ground_truth/odometry")
-        self.declare_parameter("forces_topic", "/njord/actuator_forces")
+        defaults = {"odom_topic": "/wamv/ground_truth/odometry", "forces_topic": "/njord/actuator_forces",
+                    "experiment": "straight", "thrust_n": 300.0, "duration_s": 60.0,
+                    "stabilization_timeout_s": 60.0, "window_s": 10.0,
+                    "fresh_start_limit_s": 5.0, "manifest_path": "", "output_path": "",
+                    "repetition": 0}
+        for key, value in defaults.items():
+            self.declare_parameter(key, value)
         if not self.has_parameter("use_sim_time"):
             self.declare_parameter("use_sim_time", True)
-
-        self.forces = self.create_publisher(Twist, self.get_parameter("forces_topic").value, 1)
-        self.create_subscription(Odometry, self.get_parameter("odom_topic").value, self.on_odom, qos_profile_sensor_data)
-
-        self.samples = []
-        self.t0 = None
-        self.wall_start = time.monotonic()
-        self.last_odom_wall = self.wall_start
+        self.settings = {key: self.get_parameter(key).value for key in defaults}
+        self.experiment = self.settings["experiment"]
+        if self.experiment not in {"straight", "reverse", "turn_left", "turn_right", "coast", "drift", "hydrostatic"}:
+            raise ValueError("unknown experiment")
+        for key in ("thrust_n", "duration_s", "stabilization_timeout_s", "window_s", "fresh_start_limit_s"):
+            if not math.isfinite(self.settings[key]) or self.settings[key] <= 0:
+                raise ValueError(f"{key} must be finite and positive")
+        self.manifest = None
+        self.forces = self.create_publisher(Twist, self.settings["forces_topic"], 1)
+        self.create_subscription(Odometry, self.settings["odom_topic"], self.on_odom, qos_profile_sensor_data)
+        self.samples, self.preparation = [], []
+        self.t0 = self.phase_start = None
+        self.phase = "measure" if self.experiment == "hydrostatic" else "settle"
+        self.trajectory = []
+        self.wall_start = self.last_odom_wall = time.monotonic()
+        self.done = False
         self.create_timer(0.05, self.step)
         self.create_timer(0.2, self.watchdog, clock=Clock(clock_type=ClockType.STEADY_TIME))
 
     def on_odom(self, msg):
         t = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
-        if self.samples and t - self.t0 <= self.samples[-1][0]:
+        if self.t0 is None:
+            path = self.settings["manifest_path"]
+            if path:
+                data = Path(path).read_bytes()
+                self.manifest = {"sha256": hashlib.sha256(data).hexdigest(), "content": json.loads(data)}
+            if t > self.settings["fresh_start_limit_s"]:
+                self.finish("fresh simulator startup was not observed")
+                return
+            self.t0 = self.phase_start = t
+        q = msg.pose.pose.orientation
+        roll = math.atan2(2 * (q.w*q.x + q.y*q.z), 1 - 2 * (q.x*q.x + q.y*q.y))
+        pitch = math.asin(max(-1.0, min(1.0, 2 * (q.w*q.y - q.z*q.x))))
+        row = (t, msg.pose.pose.position.x, msg.pose.pose.position.y,
+               math.hypot(msg.twist.twist.linear.x, msg.twist.twist.linear.y), msg.twist.twist.angular.z,
+               msg.pose.pose.position.z, roll, pitch, msg.twist.twist.linear.x,
+               msg.twist.twist.linear.z, msg.twist.twist.angular.x, msg.twist.twist.angular.y)
+        if not all(math.isfinite(v) for v in row):
+            self.finish("nonfinite odometry")
+            return
+        target = self.samples if self.phase == "measure" else self.preparation
+        if target and t <= target[-1][0]:
+            self.finish("nonadvancing odometry or clock reset")
             return
         self.last_odom_wall = time.monotonic()
-        if self.t0 is None:
-            self.t0 = t
-        self.samples.append(
-            (
-                t - self.t0,
-                msg.pose.pose.position.x,
-                msg.pose.pose.position.y,
-                math.hypot(msg.twist.twist.linear.x, msg.twist.twist.linear.y),
-                msg.twist.twist.angular.z,
-            )
-        )
+        target.append(row)
+        self.trajectory.append(row)
 
     def watchdog(self):
-        if time.monotonic() - self.last_odom_wall > 10 or time.monotonic() - self.wall_start > 600:
-            self.command(0.0, 0.0)
-            self.get_logger().error("Dynamics check timed out waiting for advancing odometry")
-            raise SystemExit(2)
+        odom_timeout = 120 if self.t0 is None else 10
+        if time.monotonic() - self.last_odom_wall > odom_timeout or time.monotonic() - self.wall_start > 600:
+            self.finish("wall-time watchdog expired")
 
     def command(self, left, right):
-        # Transport envelope only: these fields are physical thrust in newtons,
-        # consumed atomically by the simulator-side actuator watchdog.
         message = Twist()
         message.linear.x, message.linear.y = float(left), float(right)
         self.forces.publish(message)
 
     def step(self):
-        if self.t0 is None:
+        if self.t0 is None or self.done:
             return
-        t = self.samples[-1][0]
-        if t < STRAIGHT_S:
-            self.command(THRUST, THRUST)
-        elif t < STRAIGHT_S + TURN_S:
-            self.command(THRUST * 0.2, THRUST)
-        elif t < STRAIGHT_S + TURN_S + COAST_S:
-            self.command(0.0, 0.0)
-        else:
-            self.command(0.0, 0.0)
-            self.report()
-            raise SystemExit(0)
+        rows = self.samples if self.phase == "measure" else self.preparation
+        if not rows:
+            return
+        t = rows[-1][0]
+        thrust = self.settings["thrust_n"]
+        if self.phase != "measure":
+            self.command(thrust, thrust) if self.phase == "accelerate" else self.command(0, 0)
+            stable = stationary(rows, self.settings["window_s"])
+            tail = [r for r in rows if r[0] >= t - self.settings["window_s"]]
+            # Coasting must start with stable straight motion, never after a turn.
+            straight = all(abs(r[4]) <= 0.001 for r in tail)
+            ready = stable and (self.experiment == "drift" or straight)
+            if self.phase == "settle" and self.experiment != "drift":
+                ready = ready and all(r[3] <= 0.01 for r in tail)
+            if self.phase == "accelerate":
+                ready = ready and rows[-1][3] > 0.05
+            if ready:
+                self.phase = "accelerate" if self.phase == "settle" and self.experiment == "coast" else "measure"
+                self.phase_start = t
+                self.preparation = []
+                if self.phase == "measure" and self.experiment == "coast":
+                    self.command(0, 0)
+            elif t - self.phase_start >= self.settings["stabilization_timeout_s"]:
+                self.finish("initial stabilization or straight coast entry not established")
+            return
+        commands = {"straight": (thrust, thrust), "reverse": (-thrust, -thrust),
+                    "turn_left": (0.2 * thrust, thrust), "turn_right": (thrust, 0.2 * thrust),
+                    "coast": (0, 0), "drift": (0, 0), "hydrostatic": (0, 0)}
+        self.command(*commands[self.experiment])
+        if t - self.phase_start >= self.settings["duration_s"]:
+            self.finish()
 
-    def report(self):
-        metrics = summarize(self.samples, STRAIGHT_S, TURN_S)
-        metrics["thrust_per_side_n"] = THRUST
-        print(json.dumps(metrics, indent=2, allow_nan=False))
-        print("Compare with measured boat manoeuvres; these are simulator observations.")
-        if not metrics["stopped_within_observation"]:
-            print("Coast distance is a lower bound: the boat was still moving at the end.")
+    def finish(self, reason=None):
+        self.done = True
+        self.command(0, 0)
+        report = summarize_experiment(self.samples, self.experiment, self.settings["window_s"])
+        if reason:
+            report.update(complete=False, reason=reason)
+        report.update(experiment=self.experiment, settings=self.settings, manifest=self.manifest,
+                      samples=self.samples, trajectory=self.trajectory,
+                      sample_columns=["time_s", "x_m", "y_m", "speed_mps", "yaw_rate_radps", "z_m", "roll_rad", "pitch_rad", "surge_mps", "body_heave_mps", "body_roll_rate_radps", "body_pitch_rate_radps"], evidence_level="running_simulator_observation")
+        serialized = json.dumps(report, indent=2, allow_nan=False)
+        if self.settings["output_path"]:
+            path = Path(self.settings["output_path"])
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("x") as stream:
+                stream.write(serialized + "\n")
+        print(serialized)
+        raise SystemExit(0 if report["complete"] else 2)
 
 
 def main():
@@ -113,9 +151,9 @@ def main():
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
-        pass
+        node.finish("interrupted")
     finally:
-        node.command(0.0, 0.0)
+        node.command(0, 0)
         node.destroy_node()
         rclpy.try_shutdown()
 

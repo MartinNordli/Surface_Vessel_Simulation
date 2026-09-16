@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <package format="3">
   <name>njord_gz_plugins</name><version>0.2.0</version>
-  <description>Simulator-side actuator timeout for Njord</description>
+  <description>Njord physical force adapters, flat-water hydrostatics and safety monitors</description>
   <maintainer email="simulation@njord.no">Njord simulation</maintainer>
   <license>MIT</license>
   <buildtool_depend>ament_cmake</buildtool_depend>

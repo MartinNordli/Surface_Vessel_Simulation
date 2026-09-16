@@ -46,6 +46,7 @@ def prepare(output, run_id, environment=None):
     qos_file.write_text(json.dumps(qos, indent=2)+'\n')  # JSON is valid YAML.
     provenance = {
         'run_id': metadata['run_id'],
+        'manifest_sha256': metadata.get('manifest_sha256', 'legacy-unavailable'),
         'image_identity': environment.get('IMAGE_ID', 'unknown'),
         'image_source_commit': environment.get('NJORD_IMAGE_SOURCE_COMMIT', 'unknown'),
         'image_source_digest': environment.get('NJORD_IMAGE_SOURCE_DIGEST', 'unknown'),

@@ -9,7 +9,7 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from std_msgs.msg import Float64
 
-from njord_sim.control_core import clearance, mix_thrusters, segment_is_free, speed_limit, tracking_corridor, wrap
+from njord_sim.control_core import allocate_thrusters, clearance, mix_thrusters, segment_is_free, speed_limit, tracking_corridor, wrap
 from njord_sim.planner_core import Geometry, fresh
 
 
@@ -27,6 +27,9 @@ class Guidance(Node):
             ('map_frame', 'map'), ('base_frame', 'wamv/base_link'), ('lookahead_m', 8.0),
             ('kp_yaw', 400.0), ('kd_yaw', 300.0), ('kp_surge', 200.0),
             ('max_speed', 1.5), ('max_thrust', 500.0), ('thruster_separation_m', 2.05427),
+            ('thruster_positions', [0.0] * 6), ('thruster_axes', [1.0, 0.0, 0.0] * 2),
+            ('thruster_forward_limits', [500.0, 500.0]), ('thruster_reverse_limits', [500.0, 500.0]),
+            ('physical_allocation', False),
             ('goal_tolerance_m', 1.5), ('control_hz', 20.0), ('stale_after_s', 1.0),
             ('braking_deceleration_mps2', 0.25), ('reaction_time_s', 1.0), ('stopping_margin_m', 3.0),
         ])
@@ -117,7 +120,13 @@ class Guidance(Node):
                             margin)
         force = self.p('kp_surge') * (speed - surge)
         moment = self.p('kp_yaw') * error - self.p('kd_yaw') * yaw_rate
-        left, right = mix_thrusters(force, moment, self.p('thruster_separation_m'), self.p('max_thrust'))
+        if self.p('physical_allocation'):
+            left, right = allocate_thrusters(force, moment, self.p('thruster_positions'),
+                self.p('thruster_axes'),
+                [min(v, self.p('max_thrust')) for v in self.p('thruster_forward_limits')],
+                [min(v, self.p('max_thrust')) for v in self.p('thruster_reverse_limits')])
+        else:
+            left, right = mix_thrusters(force, moment, self.p('thruster_separation_m'), self.p('max_thrust'))
         self.left.publish(Float64(data=left))
         self.right.publish(Float64(data=right))
 

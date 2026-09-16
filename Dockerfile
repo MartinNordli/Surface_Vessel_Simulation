@@ -63,6 +63,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends git python3-col
 RUN git clone https://github.com/osrf/vrx.git src/vrx && cd src/vrx && git checkout 03eae362bb544f630595acd53b931e4a7060dffd
 RUN . /opt/ros_gz_ws/install/setup.sh && apt-get update && rosdep install --from-paths src --ignore-src --rosdistro jazzy -y && colcon build --merge-install --parallel-workers 2 --cmake-args -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF && rm -rf /var/lib/apt/lists/*
 RUN . /opt/ros_gz_ws/install/setup.sh && python3 -c 'import sdformat14'
+# The Njord current / native-added-mass path requires this verified pair.
+# Fail a rebuild against a drifting apt repository instead of silently changing
+# the force model. Updating these pins requires the dynamics regressions.
+RUN test "$(dpkg-query -W -f='${Version}' libgz-sim8)" = '8.15.0-1~noble' && \
+    test "$(dpkg-query -W -f='${Version}' libgz-physics7)" = '7.8.0-1~noble'
 WORKDIR /opt/njord
 COPY njord_sim njord_sim
 COPY njord_gz_plugins njord_gz_plugins

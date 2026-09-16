@@ -22,5 +22,11 @@
       "url": "https://github.com/gazebo-release/sdformat_vendor.git",
       "commit": "19d78ba3dd51e3d47c3c6501b9e1480bcb54d1f4"
     }
+  },
+  "physics_runtime": {
+    "libgz-sim8": "8.15.0-1~noble",
+    "libgz-physics7": "7.8.0-1~noble",
+    "hydrodynamics_sha256": "ecbf3c4740420e6f772e8d67098e03e1ce5a6ca4b0aaf8cb41dd941b6c83e51f",
+    "source": "https://github.com/gazebosim/gz-sim/blob/gz-sim8_8.15.0/src/systems/hydrodynamics/Hydrodynamics.cc"
   }
 }

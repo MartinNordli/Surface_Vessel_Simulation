@@ -19,11 +19,18 @@ x-common: &common
     RUN_LABEL: ${RUN_LABEL:-demo}
     RUN_ID: ${RUN_ID:-}
     AUTONOMY: ${AUTONOMY:-reference}
+    CONTROLLER: ${CONTROLLER:-reference}
+    PERCEPTION: ${PERCEPTION:-reference}
+    MAPPING: ${MAPPING:-reference}
+    VESSEL_CONFIG: ${VESSEL_CONFIG:-/opt/njord/install/share/njord_sim/config/vessel.yaml}
+    ALGORITHMS_CONFIG: ${ALGORITHMS_CONFIG:-/opt/njord/install/share/njord_sim/config/algorithms.yaml}
+    ROS_PARAMS_FILE: ${ROS_PARAMS_FILE:-}
     OUTPUT_DIR: /outputs
     RUNNER_GIT_COMMIT: ${RUNNER_GIT_COMMIT:-unknown}
     IMAGE_ID: ${IMAGE_ID:-unknown}
   volumes:
     - ${OUTPUT_HOST:-./outputs/demo}:/outputs
+    - ${CONFIG_HOST:-./njord_sim/config}:/config:ro
   stop_grace_period: 10s
 services:
   simulator:

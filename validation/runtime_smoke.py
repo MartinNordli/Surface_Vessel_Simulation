@@ -45,6 +45,7 @@ class RosCase(unittest.TestCase):
         self.nodes = []
         self.driver = self.add(Node('runtime_smoke_driver'))
         self.outputs = []
+        self.clock_tick = None
         self.driver.create_subscription(Twist, '/njord/actuator_forces',
                                         lambda msg: self.outputs.append((msg.linear.x, msg.linear.y)), 10)
         self.mission = self.driver.create_publisher(DiagnosticArray, '/njord/mission_status', 1)
@@ -67,6 +68,8 @@ class RosCase(unittest.TestCase):
     def pump(self, duration, publish=None):
         end = time.monotonic() + duration
         while time.monotonic() < end:
+            if self.clock_tick:
+                self.clock_tick()
             if publish:
                 publish()
             self.executor.spin_once(timeout_sec=0.01)
@@ -79,7 +82,19 @@ class RosCase(unittest.TestCase):
         deadline = time.monotonic() + timeout
         while not predicate() and time.monotonic() < deadline:
             self.pump(0.05, publish)
-        self.assertTrue(predicate(), 'ROS condition was not met before timeout')
+        details = ''
+        if not predicate() and hasattr(self, 'planner'):
+            details = repr({'planner_error': self.planner.error, 'goal': self.planner.goal,
+                            'position': self.planner.position, 'points': len(self.planner.points),
+                            'goal_cell': self.planner.geometry.cell(self.planner.goal) if self.planner.geometry and self.planner.goal else None,
+                            'goal_occupancy': self.planner.data[425] if self.planner.data else None,
+                            'map_stamp': self.planner.map_stamp, 'odom_stamp': self.planner.odom_stamp,
+                            'clock': self.planner.get_clock().now().nanoseconds * 1e-9,
+                            'guidance_stamps': [self.guidance.path_stamp, self.guidance.odom_stamp, self.guidance.grid_stamp, self.guidance.status_stamp],
+                            'guard_values': self.guard.values,
+                            'paths': [len(p.poses) for p in getattr(self, 'paths', [])[-5:]],
+                            'statuses': [(m.status[0].level,m.status[0].message) for m in getattr(self, 'statuses', [])[-5:]]})
+        self.assertTrue(predicate(), 'ROS condition was not met before timeout: ' + details)
 
     def status(self, publisher, name, stamp=None):
         msg = DiagnosticArray()
@@ -106,6 +121,30 @@ class PlannerGuidanceTransportTests(RosCase):
         self.planner = self.add(Planner())
         self.guidance = self.add(Guidance())
         self.guard = self.add(CommandGuard())
+        # Exercise production's simulation-time contract. WSL wall-clock
+        # corrections must not manufacture stale/future sensor acquisitions.
+        # The guard still enforces its independent steady-clock watchdog.
+        for node in (self.driver, self.planner, self.guidance, self.guard):
+            result = node.set_parameters([Parameter('use_sim_time', value=True)])
+            self.assertTrue(result[0].successful)
+        self.clock_pub = self.driver.create_publisher(Clock, '/clock', 1)
+        self.clock_origin = time.monotonic()
+
+        def tick_clock():
+            elapsed_ns = int((time.monotonic() - self.clock_origin) * 1e9)
+            clock = Clock()
+            clock.clock.sec = 1000 + elapsed_ns // 1000000000
+            clock.clock.nanosec = elapsed_ns % 1000000000
+            self.clock_pub.publish(clock)
+            # /clock reaches each node through a separate DDS subscription.
+            # Synchronize the test acquisition batch to one delivered instant.
+            target_ns = clock.clock.sec * 1000000000 + clock.clock.nanosec
+            deadline = time.monotonic() + 1.0
+            while any(node.get_clock().now().nanoseconds < target_ns for node in self.nodes):
+                self.assertLess(time.monotonic(), deadline, '/clock delivery timed out')
+                self.executor.spin_once(timeout_sec=0.001)
+
+        self.clock_tick = tick_clock
         self.grid_pub = self.driver.create_publisher(OccupancyGrid, '/njord/occupancy', 1)
         self.odom_pub = self.driver.create_publisher(Odometry, '/njord/odometry', 1)
         self.goal_pub = self.driver.create_publisher(PoseStamped, '/njord/goal', 1)
@@ -114,7 +153,10 @@ class PlannerGuidanceTransportTests(RosCase):
         self.driver.create_subscription(DiagnosticArray, '/njord/planner_status', self.statuses.append, 10)
         self.blocked = False
         self.odom_age = 0.0
-        self.until(lambda: self.grid_pub.get_subscription_count() >= 2 and self.goal_pub.get_subscription_count() >= 1)
+        self.until(lambda: self.grid_pub.get_subscription_count() >= 2
+                   and self.goal_pub.get_subscription_count() >= 1
+                   and all(node.get_clock().now().nanoseconds >= 1000000000000
+                           for node in (self.driver, self.planner, self.guidance, self.guard)))
         goal = PoseStamped()
         goal.header.frame_id = 'map'
         goal.header.stamp = self.driver.get_clock().now().to_msg()
@@ -149,7 +191,12 @@ class PlannerGuidanceTransportTests(RosCase):
         self.until(self.moving, self.inputs)
         self.assertTrue(self.paths[-1].poses)
         self.blocked = True
-        self.pump(0.5, self.inputs)
+        # Path and diagnostic messages arrive on separate DDS subscriptions;
+        # observing one does not establish delivery of the other under load.
+        self.until(lambda: self.paths and not self.paths[-1].poses and self.statuses
+                   and self.statuses[-1].status[0].level == DiagnosticStatus.ERROR,
+                   self.inputs)
+        self.pump(0.2, self.inputs)
         self.assertFalse(self.paths[-1].poses)
         self.assertEqual(self.statuses[-1].status[0].level, DiagnosticStatus.ERROR)
         self.assert_zero()
@@ -177,7 +224,7 @@ class PlannerGuidanceTransportTests(RosCase):
         self.pump(0.6, heartbeat)
         self.assertTrue(self.paths)
         self.assertTrue(self.statuses)
-        self.assertTrue(all(path.poses for path in self.paths))
+        self.assertTrue(all(path.poses for path in self.paths), [(m.status[0].level,m.status[0].message) for m in self.statuses])
         self.assertTrue(all(message.status[0].level == DiagnosticStatus.OK for message in self.statuses))
         self.assertTrue(self.moving())
 

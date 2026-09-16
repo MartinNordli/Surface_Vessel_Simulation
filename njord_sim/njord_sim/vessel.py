@@ -49,12 +49,12 @@ def set_text(parent, path, value):
     parent.text = str(value)
 
 
-def generate(output_dir, config_file=None):
+def generate(output_dir, config_file=None, resolved_config=None):
     from ament_index_python.packages import get_package_share_directory
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
     share = Path(get_package_share_directory('njord_sim'))
-    config = load_config(config_file, share/'config/vessel.yaml')
+    config = resolved_config if resolved_config is not None else load_config(config_file, share/'config/vessel.yaml')
     urdf = subprocess.check_output([
         'xacro', str(Path(get_package_share_directory('wamv_gazebo'))/'urdf/wamv_gazebo.urdf.xacro'),
         'namespace:=wamv', 'locked:=false', 'thruster_config:=H',

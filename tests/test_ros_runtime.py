@@ -15,7 +15,7 @@ class RosRuntimeIntegration(unittest.TestCase):
             self.skipTest('ROS Python dependencies unavailable; run inside the Jazzy container')
         repo = Path(__file__).resolve().parents[1]
         env = os.environ.copy()
-        env['ROS_DOMAIN_ID'] = str(100 + os.getpid() % 100)
+        env['ROS_DOMAIN_ID'] = env.get('NJORD_TEST_ROS_DOMAIN', str(100 + os.getpid() % 100))
         env['ROS_LOCALHOST_ONLY'] = '1'
         with tempfile.TemporaryDirectory(prefix='njord-ros-test-') as logs:
             env['ROS_LOG_DIR'] = logs

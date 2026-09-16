@@ -23,6 +23,7 @@ x-common: &common
     PERCEPTION: ${PERCEPTION:-reference}
     MAPPING: ${MAPPING:-reference}
     VESSEL_CONFIG: ${VESSEL_CONFIG:-/opt/njord/install/share/njord_sim/config/vessel.yaml}
+    ALGORITHMS_CONFIG: ${ALGORITHMS_CONFIG:-/opt/njord/install/share/njord_sim/config/algorithms.yaml}
     ROS_PARAMS_FILE: ${ROS_PARAMS_FILE:-}
     OUTPUT_DIR: /outputs
     RUNNER_GIT_COMMIT: ${RUNNER_GIT_COMMIT:-unknown}

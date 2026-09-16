@@ -1,0 +1,184 @@
+# Analytical infrastructure fixture. NOT measured or calibrated Njord geometry.
+schema_version: 1
+profile: njord
+name: njord_analytic
+revision: analytic-box-v1
+calibration:
+  status: uncalibrated
+  valid_speed_mps:
+  - 0.0
+  - 3.0
+mass_kg: 180.0
+center_of_mass_m:
+- 0.0
+- 0.0
+- 0.0
+inertia_kg_m2:
+  ixx: 35.0
+  iyy: 140.0
+  izz: 160.0
+  ixy: 0.0
+  ixz: 0.0
+  iyz: 0.0
+geometry:
+  visual:
+    type: box
+    size_m:
+    - 3.0
+    - 1.5
+    - 0.6
+    pose:
+    - 0.0
+    - 0.0
+    - 0.0
+    - 0.0
+    - 0.0
+    - 0.0
+  collision:
+    type: box
+    size_m:
+    - 3.0
+    - 1.5
+    - 0.6
+    pose:
+    - 0.0
+    - 0.0
+    - 0.0
+    - 0.0
+    - 0.0
+    - 0.0
+  buoyancy:
+    type: box
+    size_m:
+    - 3.0
+    - 1.5
+    - 0.6
+    pose:
+    - 0.0
+    - 0.0
+    - 0.0
+    - 0.0
+    - 0.0
+    - 0.0
+hydrodynamics:
+  linear_damping:
+  - 40.0
+  - 100.0
+  - 100.0
+  - 20.0
+  - 40.0
+  - 50.0
+  quadratic_damping:
+  - 30.0
+  - 100.0
+  - 100.0
+  - 20.0
+  - 40.0
+  - 50.0
+  added_mass:
+  - 20.0
+  - 80.0
+  - 100.0
+  - 10.0
+  - 40.0
+  - 50.0
+wind:
+  reference_area_m2:
+  - 0.9
+  - 1.8
+  reference_length_m: 3.0
+  coefficients:
+  - angle_deg: 0
+    cx: 1.0
+    cy: 0.0
+    cn: 0.0
+  - angle_deg: 90
+    cx: 0.0
+    cy: 1.0
+    cn: 0.0
+  - angle_deg: 180
+    cx: -1.0
+    cy: 0.0
+    cn: 0.0
+  - angle_deg: 270
+    cx: 0.0
+    cy: -1.0
+    cn: 0.0
+thrusters:
+- name: left
+  position_m:
+  - -1.2
+  - 0.6
+  - -0.1
+  axis:
+  - 1.0
+  - 0.0
+  - 0.0
+  forward_limit_n: 500.0
+  reverse_limit_n: 500.0
+  response_time_s: 0.1
+- name: right
+  position_m:
+  - -1.2
+  - -0.6
+  - -0.1
+  axis:
+  - 1.0
+  - 0.0
+  - 0.0
+  forward_limit_n: 500.0
+  reverse_limit_n: 500.0
+  response_time_s: 0.1
+sensors:
+  settings:
+    camera_width: 640
+    camera_height: 360
+    camera_rate: 15.0
+    camera_horizontal_fov_rad: 1.3962634
+    camera_noise_stddev: 0.007
+    lidar_range: 80.0
+    lidar_samples: 720
+    lidar_vertical_samples: 16
+    lidar_rate: 10.0
+    lidar_noise_stddev: 0.01
+    gps_rate: 10.0
+    imu_rate: 100.0
+    gps_horizontal_noise_m: 0.3
+    gps_vertical_noise_m: 0.5
+    imu_orientation_noise_rad: 0.005
+  poses:
+    camera:
+    - 0.75
+    - 0.15
+    - 0.7
+    - 0.0
+    - 0.05
+    - 0.0
+    lidar:
+    - 0.0
+    - 0.0
+    - 0.8
+    - 0.0
+    - 0.0
+    - 0.0
+    gps:
+    - -0.85
+    - 0.0
+    - 0.7
+    - 0.0
+    - 0.0
+    - 0.0
+    imu:
+    - 0.0
+    - -0.2
+    - 0.0
+    - 0.0
+    - 0.0
+    - 0.0
+    camera_right:
+    - 0.75
+    - -0.15
+    - 0.7
+    - 0.0
+    - 0.05
+    - 0.0

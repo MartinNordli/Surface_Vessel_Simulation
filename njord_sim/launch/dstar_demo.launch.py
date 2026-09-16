@@ -1,6 +1,7 @@
 """Sensor-based Njord reference autonomy against the simulator service."""
 from pathlib import Path
 import os
+import json
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
@@ -18,6 +19,8 @@ def launch(context):
         if p(component) not in ('reference', 'external'):
             raise ValueError(f'{component} must be reference or external')
     config = load_config(p('vessel_config'), share/'config/vessel.yaml')
+    public_path = context.launch_configurations.get('public_parameters', '')
+    public = json.loads(Path(public_path).read_text()) if public_path else {}
     params_file = p('params_file')
     if params_file and not Path(params_file).is_file():
         raise ValueError(f'params_file does not exist: {params_file}')
@@ -26,7 +29,7 @@ def launch(context):
     nodes = []
     def node(executable, params=None):
         return Node(package='njord_sim', executable=executable, output='screen',
-                    parameters=[params or {}, *overrides, common])
+                    parameters=[params or {}, *overrides, public.get(executable, {}), common])
     nodes.append(node('sensor_adapter', {'seed': int(p('seed')),
                  'orientation_noise_rad': config['imu_orientation_noise_rad'],
                  'gps_xy_std_m': config['gps_horizontal_noise_m'], 'gps_z_std_m': config['gps_vertical_noise_m']}))
@@ -62,5 +65,6 @@ def generate_launch_description():
         *[DeclareLaunchArgument(name, default_value=os.environ.get(name.upper(), 'reference'))
           for name in ('controller', 'perception', 'mapping')],
         DeclareLaunchArgument('params_file', default_value=os.environ.get('ROS_PARAMS_FILE', '')),
+        DeclareLaunchArgument('public_parameters', default_value=''),
         DeclareLaunchArgument('vessel_config', default_value=os.environ.get('VESSEL_CONFIG', str(share/'config/vessel.yaml'))),
         OpaqueFunction(function=launch)])

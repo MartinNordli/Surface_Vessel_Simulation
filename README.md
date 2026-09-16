@@ -9,6 +9,13 @@ This is a WAM-V reference simulator, not a calibrated digital twin of Njord's
 hull. Read [interfaces](docs/interfaces.md) for integration contracts and
 [AGENTS.md](AGENTS.md) for engineering and agent collaboration instructions.
 
+A separate, uncalibrated Njord test model is configured through versioned vessel,
+scenario and algorithm YAML. See [physical configuration](docs/physical-configuration.md)
+for the schema, mesh restrictions, forces and run manifests, and the
+[calibration protocol](docs/njord-calibration.md) for isolated dynamics trials.
+The [implementation evidence and remaining acceptance](docs/plan-status.md)
+distinguish tested behavior from calibration and unsupported extensions.
+
 ## Run
 
 Requirements: Ubuntu 24.04, Docker Engine with Compose v2, NVIDIA Container

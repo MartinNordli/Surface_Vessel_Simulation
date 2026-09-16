@@ -20,11 +20,16 @@ def element(parent, tag, text=None, **attrs):
     return node
 
 
-def world_xml(scenario):
+def world_xml(scenario, vessel_profile='wamv_reference'):
     sdf = ET.Element("sdf", version="1.9")
     world = element(sdf, "world", name="njord_course")
-    physics = element(world, "physics", name="4ms", type="dart")
-    element(physics, "max_step_size", 0.004)
+    if vessel_profile == 'njord':
+        # Match the hydrostatics adapter's gravity constant. SDF otherwise
+        # defaults to 9.8, producing a systematic displacement error.
+        element(world, 'gravity', '0 0 -9.81')
+    step = scenario['environment'].get('physics_step_s', 0.004)
+    physics = element(world, "physics", name=f"{step * 1000:g}ms", type="dart")
+    element(physics, "max_step_size", step)
     element(physics, "real_time_factor", 1.0)
     for library, name in [("physics", "Physics"), ("user-commands", "UserCommands"),
                           ("scene-broadcaster", "SceneBroadcaster"), ("sensors", "Sensors"),
@@ -51,13 +56,14 @@ def world_xml(scenario):
     ocean = element(world, "include")
     element(ocean, "uri", "coast_waves")
     element(ocean, "name", "coast_waves")
-    element(ocean, "pose", "0 0 0 0 0 0")
+    water_level = scenario['environment'].get('water_level_m', 0.0)
+    element(ocean, "pose", f"0 0 {water_level} 0 0 0")
     colors = {"red": "1 0.02 0.02 1", "green": "0.02 1 0.02 1", "black": "0.05 0.05 0.05 1"}
     for obstacle in obstacles(scenario):
         model = element(world, "model", name=obstacle["name"])
         element(model, "static", "true")
         x, y = obstacle["position"]
-        element(model, "pose", f"{x:.9f} {y:.9f} 0.5 0 0 0")
+        element(model, "pose", f"{x:.9f} {y:.9f} {water_level + 0.5} 0 0 0")
         link = element(model, "link", name="link")
         for tag in ("collision", "visual"):
             shape = element(link, tag, name=tag)
@@ -79,6 +85,11 @@ def world_xml(scenario):
     for obstacle in obstacles(scenario):
         element(monitor, "marker", obstacle["name"])
     env = scenario["environment"]
+    if vessel_profile == 'njord':
+        # Flat-water Njord forces live exclusively on its model plugin. The
+        # upstream wind / wave plugins must not apply a second vessel wrench.
+        ET.indent(sdf)
+        return ET.tostring(sdf, encoding="unicode", xml_declaration=True)
     wind = element(world, "plugin", filename="libUSVWind.so", name="vrx::USVWind")
     obj = element(wind, "wind_obj")
     element(obj, "name", "wamv")

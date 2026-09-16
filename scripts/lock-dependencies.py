@@ -50,6 +50,10 @@ def main():
         'Accept': 'application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json'})
     lock = {'ros_image': 'ros:jazzy-ros-base@' + headers['Docker-Content-Digest'],
             'vrx_commit': '03eae362bb544f630595acd53b931e4a7060dffd', 'vendors': {}}
+    previous = json.loads((ROOT/'docker/dependencies.lock.json').read_text())
+    if 'physics_runtime' in previous:
+        # Physical-library updates require measured regressions, not ref refresh.
+        lock['physics_runtime'] = previous['physics_runtime']
     for name in VENDORS:
         url = f'https://github.com/gazebo-release/{name}.git'
         sha = subprocess.check_output(['git', 'ls-remote', url, 'refs/heads/jazzy'], text=True).split()[0]

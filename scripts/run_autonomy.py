@@ -22,10 +22,14 @@ def prepare(output, run_id, environment=None, args=()):
                     seed=environment.get('SEED', '1'),
                     params_file=environment.get('ROS_PARAMS_FILE', ''))
     extra_args = list(args)
+    public_file = output / 'public_parameters.json'
     for argument in extra_args:
         name, separator, value = argument.partition(':=')
         if separator and name in settings:
             settings[name] = value
+    if public_file.is_file():
+        public = json.loads(public_file.read_text())
+        settings['seed'] = str(public.get('sensor_adapter', {}).get('seed', settings['seed']))
     for name in ('autonomy', 'controller', 'perception', 'mapping'):
         if settings[name] not in ('reference', 'external'):
             raise ValueError(f'{name} must be reference or external')
@@ -45,10 +49,12 @@ def prepare(output, run_id, environment=None, args=()):
                *[f'{name}:={value}' for name, value in settings.items() if name != 'params_file'],
                *extra_args,
                'expected_gates:=' + str(metadata['expected_gates']),
+               *(['public_parameters:=' + str(public_file)] if public_file.is_file() else []),
                *(['params_file:=' + settings['params_file']] if settings['params_file'] else []),
                'vessel_config:=' + str(vessel)]
     provenance = {
         **settings, 'seed': seed, 'run_id': metadata['run_id'],
+        'manifest_sha256': metadata.get('manifest_sha256'),
         'expected_gates': metadata['expected_gates'],
         'environment': environment.get('ENVIRONMENT', 'calm'),
         'image_identity': environment.get('IMAGE_ID', 'unknown'),

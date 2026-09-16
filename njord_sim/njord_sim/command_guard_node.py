@@ -14,6 +14,8 @@ class CommandGuard(Node):
     def __init__(self):
         super().__init__('command_guard')
         self.declare_parameters('', [('timeout_s', 0.5), ('max_thrust', 500.0),
+                                     ('forward_limits', [500.0, 500.0]),
+                                     ('reverse_limits', [500.0, 500.0]),
                                      ('require_mission', True)])
         self.values = {}
         self.race_active = False
@@ -56,8 +58,10 @@ class CommandGuard(Node):
         msg = Twist()
         if valid:
             limit = self.get_parameter('max_thrust').value
-            msg.linear.x = max(-limit, min(limit, self.values['left'][1]))
-            msg.linear.y = max(-limit, min(limit, self.values['right'][1]))
+            forward = self.get_parameter('forward_limits').value
+            reverse = self.get_parameter('reverse_limits').value
+            msg.linear.x = max(-min(limit, reverse[0]), min(limit, forward[0], self.values['left'][1]))
+            msg.linear.y = max(-min(limit, reverse[1]), min(limit, forward[1], self.values['right'][1]))
         self.pub.publish(msg)
 
 

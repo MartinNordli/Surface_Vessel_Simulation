@@ -111,3 +111,28 @@ def mix_thrusters(force, moment, separation, max_thrust):
     left, right = force / 2 - moment / separation, force / 2 + moment / separation
     scale = max(1.0, abs(left) / max_thrust, abs(right) / max_thrust)
     return left / scale, right / scale
+
+
+def allocate_thrusters(force, moment, positions, axes, forward_limits, reverse_limits):
+    """Solve the physical surge/yaw allocation, then uniformly saturate in N.
+
+    Positions and axes are two flattened xyz vectors in the body frame, referred
+    to the same origin as the controller wrench. Reverse limits are magnitudes.
+    Any uncommanded sway from canted fixed thrusters remains physical.
+    """
+    if len(positions) != 6 or len(axes) != 6 or len(forward_limits) != 2 or len(reverse_limits) != 2:
+        raise ValueError('allocation requires two physical thrusters')
+    if not all(math.isfinite(v) for v in (force, moment, *positions, *axes, *forward_limits, *reverse_limits)):
+        raise ValueError('nonfinite thruster allocation')
+    if min(*forward_limits, *reverse_limits) <= 0:
+        raise ValueError('thruster limits must be positive')
+    a, b = axes[0], axes[3]
+    c = positions[0] * axes[1] - positions[1] * axes[0]
+    d = positions[3] * axes[4] - positions[4] * axes[3]
+    determinant = a * d - b * c
+    if abs(determinant) < 1e-9:
+        raise ValueError('thruster geometry cannot independently control surge and yaw')
+    forces = [(d * force - b * moment) / determinant, (a * moment - c * force) / determinant]
+    scale = max(1.0, *(abs(value) / (forward_limits[i] if value >= 0 else reverse_limits[i])
+                       for i, value in enumerate(forces)))
+    return tuple(value / scale for value in forces)

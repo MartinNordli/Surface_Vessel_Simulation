@@ -86,3 +86,24 @@ names. Sensor geometry and models are in `njord_sim/config`; scenario truth goes
 only to world generation and scoring. A mission knows the number of gates, not
 their locations. Red-left/green-right is this demo's rule, not an assertion about
 the official competition rules.
+# Versioned physical configuration
+
+The versioned Njord model retains the `wamv` model/topic/frame namespace for
+compatibility with these interfaces. `njord::Physics` consumes the same atomic
+`/njord/actuator_forces` envelope as the WAM-V watchdog; exactly one of these
+plugins is loaded. Forces are newtons, applied at configured physical locations.
+The Njord watchdog targets zero on invalid/expired commands; configured actuator
+response decays force in simulation time while expiration uses steady wall time.
+Gazebo-only `/njord/actuator_applied` (`gz.msgs.Twist`) reports applied newtons in
+`linear.x/y`, target newtons in `angular.x/y`, and command validity (1/0) in
+`angular.z`, at up to 50 Hz. Its header is simulation time at the end of the
+response integration step. It is evaluation telemetry and has no autonomy bridge.
+
+Launch resolves all three YAML files before Gazebo starts. It publishes
+`public_parameters.json` (guidance, planner, mapper and guard settings, no course
+coordinates), `vessel_config.yaml` (sensor compatibility settings), and an atomic
+`run_ready.json` with run ID, gate count and manifest SHA-256. Consumers verify
+the public artifacts against `run_manifest.json`. Reference node parameters from
+this projection take precedence over team ROS overrides. Evaluator, autonomy and
+recorder results carry the same manifest digest. Full configuration and scenario
+artifacts are evaluation data; they are not autonomy inputs.

@@ -14,13 +14,17 @@ linked guides, not here.
 ```
 .
 ├── AGENTS.md                 This file: rules that apply to all work
-├── README.md                 User-facing run, configuration and validation guide
+├── README.md                 Project overview and quick start
 ├── Dockerfile                ROS 2 Jazzy + Gazebo Harmonic + VRX image
 ├── compose*.yaml             Base stack plus gui / wsl / cpu / record / team overlays
 ├── .codex/agents/            Sub-agent role definitions (see docs/agent-workflows.md)
 ├── .github/workflows/        CI/CD: unit suite, image build, container tests, GHCR publish
 ├── docker/                   Image dependencies, lock file, entrypoint, VRX license
 ├── docs/                     Design and reference documents
+│   ├── running.md            Commands, rendering, recording and CI/CD
+│   ├── team-integration.md   Step-by-step guide for external team nodes
+│   ├── architecture.md       Data flow, configuration, limits, reproducibility
+│   ├── validation.md         Test coverage, benchmarks and dynamics measurements
 │   ├── interfaces.md         ROS topics, types, frames and ownership per node
 │   └── agent-workflows.md    How to build, verify, delegate and commit
 ├── njord_sim/                ROS 2 Python package (main simulator logic)
@@ -100,4 +104,7 @@ carries irrelevant detail. A small or single-area task is cheaper to do directly
 | --- | --- |
 | Build and run commands, verification per change area, subagent roles | [docs/agent-workflows.md](docs/agent-workflows.md) |
 | ROS topics, message types, frames, node ownership | [docs/interfaces.md](docs/interfaces.md) |
-| Running the simulator, configuration, team workflows, validation | [README.md](README.md) |
+| Running the simulator, rendering, recording, CI/CD | [docs/running.md](docs/running.md) |
+| Team workflows, sensor and parameter overrides, replay | [docs/team-integration.md](docs/team-integration.md) |
+| Data flow, configuration, safety, limits, reproducibility | [docs/architecture.md](docs/architecture.md) |
+| Test coverage, benchmarks, dynamics measurements | [docs/validation.md](docs/validation.md) |

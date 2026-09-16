@@ -79,7 +79,7 @@ sensor YAML override; `CONFIG_HOST` mounts a host directory at `/config` read-on
 The runner passes the simulator's resolved `vessel_config.yaml` to autonomy,
 snapshots any ROS parameter file and saves settings/digests in
 `autonomy_config.json`. Direct separate launches must use the same vessel file.
-See the README team walkthrough for exact commands, recording and replay.
+See [team-integration.md](team-integration.md) for exact commands, recording and replay.
 
 Use topic remapping/ROS parameters on the individual nodes for different sensor
 names. Sensor geometry and models are in `njord_sim/config`; scenario truth goes

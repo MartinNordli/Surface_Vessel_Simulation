@@ -1,6 +1,10 @@
-"""Check live GPU sensor data and sensor-based navigation; exits nonzero on timeout."""
+"""Check live GPU sensor data and sensor-based navigation; exits nonzero on timeout.
+
+SMOKE_TIMEOUT_S (default 90) bounds the wall-time wait, e.g. for slow CPU rendering.
+"""
 import json
 import math
+import os
 import time
 import numpy as np
 import rclpy
@@ -45,7 +49,7 @@ class Check(Node):
 def main():
     rclpy.init()
     node=Check()
-    end=time.monotonic()+90
+    end=time.monotonic()+float(os.environ.get('SMOKE_TIMEOUT_S', '90'))
     passed=False
     try:
         while rclpy.ok() and time.monotonic()<end:

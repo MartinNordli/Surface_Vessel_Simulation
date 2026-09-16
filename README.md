@@ -18,16 +18,64 @@ distinguish tested behavior from calibration and unsupported extensions.
 
 ## Run
 
-Requirements: Ubuntu 24.04, Docker Engine with Compose v2, NVIDIA Container
-Toolkit, and a working NVIDIA host driver. The setup script installs Docker and
-the toolkit, **never a GPU kernel driver**:
+Requirements: an x86-64 Ubuntu 24.04 host (or WSL2), Docker Engine with Compose
+v2.24 or newer, Git and Python 3. GPU rendering additionally needs the NVIDIA
+Container Toolkit and a working NVIDIA host driver. The setup script installs
+Docker and the toolkit, **never a GPU kernel driver**.
+
+### New machine
+
+CI publishes a tested image for every commit pushed to GitHub, so a new machine
+downloads the image instead of compiling Gazebo and VRX:
 
 ```bash
-sudo bash scripts/setup-host.sh
-./scripts/njord build
-./scripts/njord doctor
+git clone https://github.com/MartinNordli/Surface_Vessel_Simulation.git
+cd Surface_Vessel_Simulation
+sudo bash scripts/setup-host.sh   # once per machine
+./scripts/njord pull              # image CI built and tested for this exact commit
+./scripts/njord doctor            # Docker, NVIDIA and image checks
+./scripts/njord test              # full test suite in the container
+./scripts/njord selftest          # live cameras, lidar and navigation, then stops
 ./scripts/njord demo
 ```
+
+`pull` downloads `ghcr.io/martinnordli/surface_vessel_simulation:sha-<commit>`
+and tags it `njord-sim:local`; every other command uses that tag. Pull again after
+`git pull` or `git checkout`. Commands that use the image compare its baked-in
+source digest with the checkout and warn when they differ, for example when an
+image is older than the checkout or after local edits to files copied into the
+image. `./scripts/njord check-image` performs the same check and fails on a
+mismatch. Use `./scripts/njord pull latest` for the newest `main` image, or a
+release tag such as `./scripts/njord pull v1.0.0`.
+
+An image exists only after the CI run for that commit has passed. For unpushed
+commits or local changes, build instead: `./scripts/njord build`. An uncached
+build compiles the Gazebo vendor packages and VRX and takes a long time.
+
+Without a usable GPU, `NJORD_CPU=1` selects Mesa software rendering
+(`compose.cpu.yaml`) and skips the NVIDIA checks. It renders the real sensors,
+slowly, and is what CI uses; it does not replace a GPU for rendering-performance
+or benchmark claims:
+
+```bash
+NJORD_CPU=1 ./scripts/njord doctor
+NJORD_CPU=1 ./scripts/njord selftest
+```
+
+### Continuous integration and delivery
+
+`.github/workflows/ci.yml` runs on every push, tag and fork pull request:
+
+1. `unit` runs the host unit suite without Docker.
+2. `image` builds the image with a layer cache in GHCR, confirms that its source
+   digest matches the commit, runs `./scripts/njord test` and a CPU-rendered
+   `./scripts/njord selftest`, then publishes the image. The tags are
+   `sha-<commit>` for every push, `latest` for `main` and the tag name for `v*`
+   tags. Pull requests from forks are tested but not published.
+
+Images are only published after the tests pass. CI proves that the image builds,
+that the container suite passes and that live sensors and navigation start with
+software rendering. CI does not test GPU rendering, race completion or benchmarks.
 
 Docker commands require access to the Docker socket. Use `sudo` or your chosen
 Docker group configuration. If group membership was just added, start a fresh
@@ -436,6 +484,7 @@ momentum and wind drift; it is not an instant stop or a collision guarantee.
 python3 tests/test_dstar_lite.py
 python3 -m unittest discover -s tests -p 'test_*.py'
 ./scripts/njord test
+./scripts/njord selftest    # NJORD_CPU=1 without a usable GPU
 ```
 
 CPU tests cover independent A* comparisons, incremental obstacle repair, invalid
@@ -524,7 +573,9 @@ commits in `docker/dependencies.lock.json`. `scripts/lock-dependencies.py` is an
 explicit maintenance command, not part of normal builds. Ubuntu/ROS apt package
 repositories still receive updates; preserve the built image ID for exact binary
 reproduction. Builds through `scripts/njord build` bake the source commit and a SHA256 of Docker
-source inputs into the image, including dirty source changes. Benchmarks pin the
+source inputs into the image, including dirty source changes; CI-published images
+carry the same metadata. The digest counts only the executable bit of each file,
+as Git does, so clones made with different umasks agree. Benchmarks pin the
 immutable image ID and record its source metadata separately from the runner Git
 commit and dirty state. Direct Docker builds without these arguments report unknown
 source provenance.

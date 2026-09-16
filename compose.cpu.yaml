@@ -1,0 +1,13 @@
+# Software rendering (Mesa llvmpipe) for hosts without a usable GPU, including CI.
+# Opt in with NJORD_CPU=1 ./scripts/njord ...; sensors render correctly but slowly.
+services:
+  simulator:
+    deploy: !reset {}
+    environment:
+      LIBGL_ALWAYS_SOFTWARE: 'true'
+      GALLIUM_DRIVER: llvmpipe
+  rviz:
+    deploy: !reset {}
+    environment:
+      LIBGL_ALWAYS_SOFTWARE: 'true'
+      GALLIUM_DRIVER: llvmpipe

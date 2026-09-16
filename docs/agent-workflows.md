@@ -2,7 +2,8 @@
 
 Procedures for common tasks. [AGENTS.md](../AGENTS.md) holds the rules that apply
 regardless of task; this file holds the how-to. User-facing detail on running and
-configuring the simulator stays in [README.md](../README.md).
+configuring the simulator stays in [running.md](running.md) and
+[team-integration.md](team-integration.md).
 
 ## Build and run
 
@@ -54,7 +55,7 @@ container suite is a complete pass. A CPU test result never substantiates GPU
 rendering, marine fidelity, ROS integration or collision-free completion.
 
 Detailed coverage, measured baselines and known failure modes are described under
-[README.md § Validation](../README.md#validation).
+[docs/validation.md](validation.md).
 
 ## Continuous integration
 

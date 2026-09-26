@@ -7,6 +7,22 @@ Permissions are reduced to the executable bit Git tracks, so a clone made under
 any umask yields the digest that CI stamped into the published image.
 The digest identifies source inputs, while the immutable image ID identifies
 built binaries (including package versions resolved during the build).
+
+Where it runs: on the host (or in CI), from the repository root. It needs only
+Python 3 and, for the commit, git. ``scripts/njord build`` and CI pass the
+digest to ``docker build`` as NJORD_IMAGE_SOURCE_DIGEST, which the Dockerfile
+stores in the image label ``io.njord.source.digest``;
+``scripts/njord check-image`` recomputes it here and compares the two to tell
+whether the local image was built from this checkout.
+
+Output (stdout): JSON {"source_commit": ..., "source_digest": ...}, or a single
+value with ``--field``. Exits nonzero (traceback) if a COPY source is missing
+or not a plain file, directory or symlink inside the build context.
+
+Digest rules, in short: any byte change to the Dockerfile (comments included),
+.dockerignore or a copied file changes the digest, as does adding, removing or
+renaming a file or toggling its executable bit. Files matched by .dockerignore,
+timestamps, owners and non-executable permission bits do not.
 """
 import argparse
 import fnmatch
@@ -22,8 +38,16 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def copy_sources(dockerfile):
+    """Return the sorted local source paths named by the Dockerfile's COPY lines.
+
+    Handles line continuations, flags such as --chown, and the JSON array
+    form. ``COPY --from=<stage>`` is skipped because it copies from another
+    build stage, not from the build context. Raises ValueError for a COPY
+    source that could escape the context or depends on a build variable,
+    since its content could then not be fingerprinted from the checkout.
+    """
     result = set()
-    text = dockerfile.replace('\\\n', ' ')
+    text = dockerfile.replace('\\\n', ' ')  # Join backslash-continued lines.
     for line in text.splitlines():
         stripped = line.strip()
         if not stripped.upper().startswith('COPY '):
@@ -40,7 +64,7 @@ def copy_sources(dockerfile):
             tokens = [token for token in tokens if not token.startswith('--')]
         if len(tokens) < 2:
             raise ValueError('Cannot determine COPY sources: ' + line)
-        for token in tokens[:-1]:
+        for token in tokens[:-1]:  # The last token is the destination.
             if '$' in token or Path(token).is_absolute() or '..' in Path(token).parts:
                 raise ValueError('COPY source must resolve within the build context: ' + token)
             result.add(token)
@@ -48,6 +72,13 @@ def copy_sources(dockerfile):
 
 
 def ignored(relative, patterns):
+    """Return True if ``relative`` is excluded by the .dockerignore ``patterns``.
+
+    A simplified .dockerignore matcher: a pattern excludes a path when it
+    matches the path or any parent directory of it, later patterns override
+    earlier ones, and a leading ``!`` re-includes. Comments and blank lines
+    are skipped.
+    """
     parts = relative.parts
     prefixes = [Path(*parts[:i]).as_posix() for i in range(1, len(parts) + 1)]
     excluded = False
@@ -63,6 +94,14 @@ def ignored(relative, patterns):
 
 
 def source_digest(root=ROOT):
+    """Return the SHA-256 hex digest of every Docker build input under ``root``.
+
+    Inputs are the Dockerfile, .dockerignore and everything (recursively) that
+    a COPY line names, minus .dockerignore matches. Each entry is hashed in
+    sorted path order as a JSON header [path, kind, mode, length] followed by
+    its content (file bytes, or the target of a symlink), so the result does
+    not depend on filesystem order, timestamps or ownership.
+    """
     root = Path(root)
     dockerfile = (root / 'Dockerfile').read_text()
     patterns = (root / '.dockerignore').read_text().splitlines() if (root / '.dockerignore').exists() else []
@@ -78,6 +117,7 @@ def source_digest(root=ROOT):
             if candidate.is_dir() and not candidate.is_symlink():
                 for directory, dirs, files in os.walk(candidate, followlinks=False):
                     selected.update((Path(directory) / name).relative_to(root) for name in dirs + files)
+    # The version prefix changes the digest if this hashing scheme ever changes.
     digest = hashlib.sha256(b'njord-docker-source-v2\0')
     for relative in sorted(selected, key=lambda value: value.as_posix()):
         if relative.as_posix() not in ('Dockerfile', '.dockerignore') and ignored(relative, patterns):
@@ -92,6 +132,8 @@ def source_digest(root=ROOT):
             kind, content = 'directory', b''
         else:
             raise ValueError('Unsupported build input type: ' + str(relative))
+        # Only the executable bit Git tracks matters: 0o755 or 0o644, so the
+        # local umask cannot change the digest.
         mode = 0o755 if kind != 'file' or info.st_mode & 0o111 else 0o644
         header = json.dumps([relative.as_posix(), kind, mode, len(content)],
                             ensure_ascii=True, separators=(',', ':')).encode()
@@ -100,6 +142,10 @@ def source_digest(root=ROOT):
 
 
 def build_metadata(root=ROOT):
+    """Return {"source_commit": HEAD or "unknown", "source_digest": ...}.
+
+    The commit alone does not describe uncommitted edits; the digest does.
+    """
     try:
         commit = subprocess.check_output(['git', '-C', str(root), 'rev-parse', 'HEAD'], text=True,
                                          stderr=subprocess.DEVNULL).strip()

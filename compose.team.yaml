@@ -1,16 +1,25 @@
 # Optional source workspace shared by team nodes. Build inside this Jazzy image.
+# Usage (see docs/team-integration.md):
+#   export TEAM_WS_HOST=/absolute/path/to/team_ws   # workspace containing src/
+#   docker compose -f compose.yaml -f compose.team.yaml run --rm team bash
+# The container joins the same host network and ROS domain as the simulator,
+# so team nodes talk to it over ordinary ROS 2 topics.
 services:
   team:
     image: ${NJORD_IMAGE:-njord-sim:local}
     init: true
+    # Run as the host user so build/, install/ and log/ in the workspace stay
+    # owned by that user.
     user: ${NJORD_UID:-1000}:${NJORD_GID:-1000}
     network_mode: host
     ipc: host
     environment:
       HOME: /tmp/njord-team-home
+      # Must match the simulator's domain (default 42) to see its topics.
       ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-42}
       FASTDDS_BUILTIN_TRANSPORTS: UDPv4
     volumes:
+      # Required: Compose refuses to start with this message if it is unset.
       - ${TEAM_WS_HOST:?Set TEAM_WS_HOST to your ROS 2 source workspace}:/team_ws
       - ${CONFIG_HOST:-./njord_sim/config}:/config:ro
     working_dir: /team_ws

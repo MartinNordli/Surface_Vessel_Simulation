@@ -5,6 +5,38 @@ No guard/controller/other force publisher may run during this check. Applied
 force is simulation evidence, never an autonomy input. This checks actual plugin
 response, invalid-input behavior and steady-wall expiry; it does not establish
 vessel inertia, hydrodynamic fidelity, or calibrated propeller response.
+
+Scope: the NjordPhysics Gazebo plugin (njord_gz_plugins) of the Njord vessel
+profile. It reads commands from /njord/actuator_forces and publishes
+evaluation-only telemetry on /njord/actuator_applied (Twist: linear.x/y =
+applied left/right force in N, angular.x/y = current targets, angular.z = 1
+while the command is live). This tool uses Gazebo transport directly (no
+ROS), so run it in the container on the host network of a running Njord
+simulator, in that simulator's partition (--partition or GZ_PARTITION).
+
+Example:
+  python3 validation/check_njord_actuator.py --partition <partition> \
+      --resolved /outputs/resolved_configuration.json \
+      --output /outputs/njord_actuator.json
+
+Checks, in order:
+    configured_response                applied force follows the first-order
+                                       lag of each thruster's response_time_s
+                                       towards a modest target (<= 25 % of the
+                                       forward limit), error <= 0.02 N
+    nonfinite_invalidates_both_targets NaN in one command zeroes both targets
+                                       within min(0.25 s, timeout/2) wall time
+    invalid_command_residual_decay     after that, the force decays to zero
+                                       with the same lag (inertia, not a jump)
+    steady_wall_timeout                silence zeroes both targets after the
+                                       configured timeout (--timeout-s, steady
+                                       wall time), not before, within --slack-s
+    all_observed_forces_finite         no NaN/Inf in any telemetry
+
+Output: strict JSON in --output and on stdout, including the SHA-256 of the
+resolved configuration and of run_manifest.json next to it (if present).
+Exit code 0 if all checks passed, 1 otherwise. Zero forces are published on
+exit.
 """
 
 import argparse
@@ -21,6 +53,12 @@ import yaml
 
 
 class Probe:
+    """Force publisher and telemetry recorder for the NjordPhysics plugin.
+
+    ``samples`` holds dicts with the steady wall arrival time ("wall"), the
+    simulation stamp ("sim", s), applied "forces" and "targets" (N) and the
+    "live" flag. Callbacks run on Gazebo transport threads, hence ``condition``.
+    """
     def __init__(self, args):
         from gz.transport13 import Node
         from gz.msgs10.twist_pb2 import Twist
@@ -62,6 +100,7 @@ class Probe:
             return list(self.samples)
 
     def connect(self):
+        """Wait (--discovery-s) for telemetry and a subscriber to our commands."""
         deadline = time.monotonic() + self.args.discovery_s
         while time.monotonic() < deadline:
             if self.samples and self.publisher.has_connections():
@@ -70,6 +109,12 @@ class Probe:
         raise RuntimeError("No Njord force telemetry / command subscriber in partition")
 
     def hold(self, values, duration):
+        """Publish ``values`` at 25 Hz until ``duration`` simulation seconds pass.
+
+        Uses simulation time from the telemetry, so a slow simulator still gets
+        the full response; gives up after max(10, 10 x duration) wall seconds.
+        Returns (wall start, wall time of the last publication).
+        """
         start = time.monotonic()
         deadline = start + max(10, duration * 10)
         initial_sim = self.snapshot()[-1]["sim"]
@@ -84,6 +129,10 @@ class Probe:
         raise RuntimeError("Simulation time did not advance enough to measure response")
 
     def wait_invalid(self, since, limit):
+        """Return the first sample after ``since`` with live off and zero targets.
+
+        Raises AssertionError if none arrives within ``limit`` wall seconds.
+        """
         deadline = since + limit
         while time.monotonic() < deadline:
             for sample in self.snapshot():
@@ -99,6 +148,14 @@ class Probe:
         )
 
     def response_errors(self, since, taus, target):
+        """Compare consecutive telemetry samples with the first-order lag model.
+
+        For each pair with 0 < dt < 0.2 s of simulation time the expected
+        force is target + (previous - target) * exp(-dt / tau) (or the target
+        itself for tau = 0). Requires at least two pairs that are still in
+        transient (> 0.1 N from the target) so the lag is actually exercised.
+        Returns sample counts and the maximum error in N.
+        """
         samples = [
             s for s in self.snapshot() if s["wall"] >= since and s["targets"] == target
         ]
@@ -173,6 +230,8 @@ def main():
         if manifest.is_file():
             result["manifest_sha256"] = hashlib.sha256(manifest.read_bytes()).hexdigest()
         taus = [t["response_time_s"] for t in vessel["thrusters"]]
+        # Distinct small targets per thruster (80 N, 100 N, ...), capped at a
+        # quarter of the forward limit.
         targets = [
             min(80.0 + i * 20.0, t["forward_limit_n"] * 0.25)
             for i, t in enumerate(vessel["thrusters"])
@@ -180,6 +239,8 @@ def main():
         result["response_time_s"], result["requested_force_n"] = taus, targets
         probe = Probe(args)
         probe.connect()
+        # Settle at zero first, then step to the targets (holds last several
+        # time constants so the response is fully observed).
         probe.hold([0.0, 0.0], max(0.3, 8 * max(taus)))
         start, _ = probe.hold(targets, max(0.4, 6 * max(taus)))
         result["checks"]["configured_response"] = probe.response_errors(
@@ -198,6 +259,8 @@ def main():
         _, stopped = probe.hold(targets, max(0.4, 6 * max(taus)))
         expired = probe.wait_invalid(stopped, args.timeout_s + args.slack_s)
         delay = expired["wall"] - stopped
+        # Expiring clearly before the timeout means another publisher or a
+        # different configured timeout; 80 ms allows for scheduling jitter.
         if delay < args.timeout_s - 0.08:
             raise AssertionError(
                 "Premature expiry: competing command source or configured timeout mismatch"

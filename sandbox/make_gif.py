@@ -8,6 +8,10 @@ Shows what the boat knows, not what the world looks like: the discovered
 occupancy grid grows as the lidar sweeps, the plan snaps to a new route each
 time a buoy is found, and the track lags the plan because the boat cannot turn
 on the spot. That lag is the interesting part of the picture.
+
+Where to run: on the host with Python 3, numpy, matplotlib and Pillow; no
+Docker, ROS or Gazebo. It reruns seed 0 of sandbox/headless_demo.py and
+writes headless_demo.gif into --output-dir (default outputs/sandbox/).
 """
 
 import argparse
@@ -25,13 +29,14 @@ sys.path.insert(0, os.path.dirname(__file__))
 from headless_demo import GOAL, OBSTACLES, START, WORLD, run, to_world
 
 RECORD_EVERY = 12          # control steps between frames (0.05 s each)
-FPS = 20
+FPS = 20                   # playback rate, so the GIF runs at 12 x real time
 
 
 DEFAULT_OUTPUT = os.path.join(os.path.dirname(__file__), "..", "outputs", "sandbox")
 
 
 def main(seed=0, output_dir=DEFAULT_OUTPUT):
+    """Run one sandbox seed with frame recording and save the animated GIF."""
     metrics, trajectory, _, _, frames = run(seed, verbose=False, record_every=RECORD_EVERY)
     print(f"{len(frames)} frames, {metrics['time_s']}s simulated, {metrics['replans']} replans")
 
@@ -39,6 +44,7 @@ def main(seed=0, output_dir=DEFAULT_OUTPUT):
     fig.subplots_adjust(left=0.1, right=0.97, top=0.93, bottom=0.09)
 
     def draw(i):
+        """Redraw the axes for frame ``i`` (FuncAnimation callback)."""
         frame = frames[i]
         ax.clear()
         ax.set_xlim(0, WORLD)

@@ -3,6 +3,25 @@
 
 Use the Compose record overlay. SIGINT is delivered directly to rosbag2 via
 exec so it can flush metadata. Bags are never overwritten or resumed implicitly.
+
+Entry point of the ``recorder`` service in compose.record.yaml (runs inside
+the container), e.g.
+``COMPOSE_FILE=compose.yaml:compose.record.yaml ./scripts/njord demo recorder``
+(naming the service starts it despite its ``record`` profile). The ``simulator`` service must be running
+with the same OUTPUT_DIR and RUN_ID; the recorder waits up to 120 s of steady
+wall time for its run_ready.json.
+
+Inputs (environment): OUTPUT_DIR (default /outputs), RUN_ID (required), and
+IMAGE_ID, NJORD_IMAGE_SOURCE_COMMIT, NJORD_IMAGE_SOURCE_DIGEST,
+RUNNER_GIT_COMMIT, PROFILE, SEED and ENVIRONMENT, which are stored as
+provenance in the bag's custom data and in recording.json.
+
+Writes to OUTPUT_DIR: bag/ (MCAP, zstd, split at 2 GiB), recorder_qos.yaml
+(QoS overrides) and recording.json (topics, command and provenance).
+Fails with FileExistsError if OUTPUT_DIR/bag already exists.
+
+The bag includes ground truth (/wamv/ground_truth/odometry) for offline
+evaluation only; keep it out of autonomy inputs when replaying.
 """
 import json
 import os
@@ -11,6 +30,8 @@ from pathlib import Path
 from njord_sim.run_manifest import wait_ready
 
 
+# Recorded topics: clock/TF, raw and processed sensors, the reference
+# autonomy's outputs, thrust commands and evaluation-only truth/contacts.
 CAMERAS = ('front_left_camera_sensor', 'front_right_camera_sensor')
 TOPICS = (
     '/clock', '/tf', '/tf_static', '/robot_description', '/wamv/joint_states',
@@ -30,7 +51,16 @@ TOPICS = (
 
 
 def prepare(output, run_id, environment=None):
-    """Resolve the handoff and save reviewable recording settings before exec."""
+    """Resolve the handoff and save reviewable recording settings before exec.
+
+    Args:
+        output: run output directory shared with the simulator.
+        run_id: identifier the simulator's run_ready.json must carry.
+        environment: mapping to read provenance from (default os.environ).
+
+    Returns the ``ros2 bag record`` command as an argument list. Side effects:
+    writes recorder_qos.yaml and recording.json into ``output``.
+    """
     environment = os.environ if environment is None else environment
     metadata = wait_ready(output, run_id)
     output = Path(output)
@@ -55,6 +85,8 @@ def prepare(output, run_id, environment=None):
         'seed': environment.get('SEED', '1'),
         'environment': environment.get('ENVIRONMENT', 'calm'),
     }
+    # --use-sim-time stamps the bag with /clock. Cache 64 MiB, split bag files
+    # at 2 GiB, poll for new topics every 100 ms.
     args = [
         'ros2', 'bag', 'record', '--output', str(bag), '--storage', 'mcap',
         '--storage-preset-profile', 'zstd_fast', '--use-sim-time',
@@ -73,6 +105,7 @@ def prepare(output, run_id, environment=None):
 
 
 def main():
+    """Prepare the recording and exec rosbag2 (this process is replaced)."""
     args = prepare(os.environ.get('OUTPUT_DIR', '/outputs'), os.environ.get('RUN_ID', ''))
     os.execvp(args[0], args)
 

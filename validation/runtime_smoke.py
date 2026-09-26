@@ -3,6 +3,17 @@
 
 These checks establish ROS message interoperability and fail-safe command flow,
 not GPU sensor rendering, vehicle dynamics, or successful course completion.
+
+How it runs: tests/test_ros_runtime.py starts this file in a subprocess as part
+of the unit suite (``./scripts/njord test`` in the container); outside the
+Jazzy image it is skipped. It can also be run directly in the container with
+``python3 validation/runtime_smoke.py``. No simulator is needed: the real
+planner, guidance, command guard and mapper nodes are created in-process and
+fed synthetic messages by a driver node, with a synthetic /clock where needed.
+
+Isolation: ROS_DOMAIN_ID defaults to 100 + pid % 100 and ROS_LOCALHOST_ONLY
+to 1, so a smoke run does not see or disturb a live simulator on domain 42.
+ROS logs go to a temporary directory. Exit code: unittest's (0 = all passed).
 """
 import math
 import os
@@ -12,10 +23,12 @@ import tempfile
 import time
 import unittest
 
+# Set before rclpy is imported so the isolation applies to every node.
 os.environ.setdefault('ROS_DOMAIN_ID', str(100 + os.getpid() % 100))
 os.environ.setdefault('ROS_LOCALHOST_ONLY', '1')
 _ros_logs = tempfile.TemporaryDirectory(prefix='njord-ros-smoke-')
 os.environ.setdefault('ROS_LOG_DIR', _ros_logs.name)
+# Import the node classes from the source tree (njord_sim/njord_sim/...).
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'njord_sim'))
 
 import rclpy
@@ -39,6 +52,13 @@ from njord_sim.planner_node import Planner
 
 
 class RosCase(unittest.TestCase):
+    """Base case: one executor, a driver node and a record of actuator output.
+
+    ``outputs`` collects every (left N, right N) published on
+    /njord/actuator_forces. ``authority`` publishes the mission, navigation
+    and race-active signals the command guard requires before it passes
+    thrust through.
+    """
     def setUp(self):
         rclpy.init()
         self.executor = SingleThreadedExecutor()
@@ -66,6 +86,7 @@ class RosCase(unittest.TestCase):
         rclpy.shutdown()
 
     def pump(self, duration, publish=None):
+        """Spin all nodes for ``duration`` wall seconds, calling ``publish`` each cycle."""
         end = time.monotonic() + duration
         while time.monotonic() < end:
             if self.clock_tick:
@@ -79,6 +100,7 @@ class RosCase(unittest.TestCase):
             time.sleep(0.01)
 
     def until(self, predicate, publish=None, timeout=4.0):
+        """Pump until ``predicate()`` is true; fail with planner state after ``timeout`` s."""
         deadline = time.monotonic() + timeout
         while not predicate() and time.monotonic() < deadline:
             self.pump(0.05, publish)
@@ -97,6 +119,7 @@ class RosCase(unittest.TestCase):
         self.assertTrue(predicate(), 'ROS condition was not met before timeout: ' + details)
 
     def status(self, publisher, name, stamp=None):
+        """Publish an OK DiagnosticArray heartbeat named ``name``."""
         msg = DiagnosticArray()
         msg.header.frame_id = 'map'
         msg.header.stamp = stamp or self.driver.get_clock().now().to_msg()
@@ -111,11 +134,17 @@ class RosCase(unittest.TestCase):
         self.race.publish(Bool(data=True))
 
     def assert_zero(self):
+        """Assert the last three actuator commands were exactly zero thrust."""
         self.assertGreaterEqual(len(self.outputs), 3)
         self.assertTrue(all(values == (0.0, 0.0) for values in self.outputs[-3:]), self.outputs[-5:])
 
 
 class PlannerGuidanceTransportTests(RosCase):
+    """Planner -> guidance -> command guard over real DDS on simulation time.
+
+    The boat sits at (10.5, 10.5) in an empty 40 x 40 m map with a goal at
+    (25.5, 10.5); ``blocked`` puts an obstacle on the goal cell.
+    """
     def setUp(self):
         super().setUp()
         self.planner = self.add(Planner())
@@ -166,6 +195,7 @@ class PlannerGuidanceTransportTests(RosCase):
         self.goal_pub.publish(goal)
 
     def inputs(self):
+        """Publish one fresh map, odometry (aged by ``odom_age`` s) and authority."""
         stamp = self.driver.get_clock().now().to_msg()
         grid = OccupancyGrid()
         grid.header.frame_id, grid.header.stamp = 'map', stamp
@@ -185,6 +215,7 @@ class PlannerGuidanceTransportTests(RosCase):
         self.authority()
 
     def moving(self):
+        """True when the newest command drives both thrusters forward (> 1 N)."""
         return bool(self.outputs) and self.outputs[-1][0] > 1 and self.outputs[-1][1] > 1
 
     def test_blocked_goal_publishes_empty_path_zeroes_actuators_and_recovers(self):
@@ -238,6 +269,7 @@ class PlannerGuidanceTransportTests(RosCase):
 
 
 class GuardSteadyClockTests(RosCase):
+    """The guard's watchdog must use steady time, not the (frozen) ROS clock."""
     def test_source_timeout_with_frozen_ros_clock(self):
         guard = self.add(CommandGuard())
         result = guard.set_parameters([Parameter('use_sim_time', value=True)])
@@ -267,6 +299,7 @@ class GuardSteadyClockTests(RosCase):
 
 
 class MapperTransportTests(RosCase):
+    """Mapper turns a timestamped lidar cloud into occupied, free and unknown cells."""
     def test_timestamped_tf_cloud_obstacle_and_map_heartbeat(self):
         mapper = self.add(Mapper())
         publisher = self.driver.create_publisher(PointCloud2,
@@ -298,6 +331,8 @@ class MapperTransportTests(RosCase):
             row = math.floor((y - grid.info.origin.position.y) / grid.info.resolution)
             return grid.data[row * grid.info.width + col]
 
+        # The return 10 m ahead is occupied, the ray to it is observed free,
+        # and cells the lidar never saw stay unknown (-1).
         self.assertEqual(at(20.5, 10.5), 100)
         self.assertEqual(at(12.5, 10.5), 0)
         self.assertEqual(at(12.5, 25.5), -1)

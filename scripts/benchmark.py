@@ -5,6 +5,33 @@ Defaults: 10 seeds x 2 environments x 2 profiles (40 races), one job at a time.
 Use --jobs 4 to run four races concurrently. Each race uses a
 fresh Compose project, Gazebo partition, ROS domain and output directory.
 COMPOSE_FILE supports additional platform overlays, e.g. compose.wsl.yaml.
+
+Where to run: on the host, from a Git checkout, normally through
+``./scripts/njord benchmark [course] [options]`` (which selects the platform
+overlay and the course). It needs Docker Compose and a built simulator image;
+it starts and stops its own ``simulator``, ``autonomy`` and ``evaluator``
+services, so no stack has to be running beforehand.
+
+Isolation per race: the Compose project, GZ_PARTITION and RUN_ID are all
+``njord-bench-<pid>-<index>``, and ROS_DOMAIN_ID is a domain leased
+exclusively from 60..159 (see DomainLeases), so concurrent races and other
+benchmark processes never see each other's topics or containers.
+
+Inputs: the options below plus the caller's environment (COMPOSE_FILE,
+SCENARIO, NJORD_IMAGE, VESSEL_CONFIG, ...), which is passed to every race.
+
+Outputs, under --output-dir (default outputs/benchmark-<UTC stamp>-<pid>/):
+    manifest.json               runner commit, dirty flag, pinned image, matrix
+    summary.json                all run metrics plus the summarize() report;
+                                rewritten after every finished race
+    <env>-<seed>-<profile>/     per-race directory mounted as /outputs:
+        compose.resolved.json   exact Compose configuration used
+        compose.log, cleanup.log
+        run_metrics.json        written by the evaluator (if the race got that far)
+
+Exit codes: 0 when every run is a verified safe completion and, if both
+profiles ran, "fast" has a lower median time than "conservative" in every
+environment; 2 otherwise (also when no ROS domains are free); 130 on Ctrl-C.
 """
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -24,15 +51,25 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class DomainUnavailable(RuntimeError):
-    pass
+    """Fewer free ROS domains are left in the lease pool than races requested."""
 
 
 class DomainLeases:
     """Keep ROS domains exclusive across benchmark processes for this user.
 
+    Each domain in ``pool`` has a lock file ``domain-<id>.lock`` in
+    ``directory`` (default /tmp/njord-ros-domains-<uid>). A domain is leased by
+    holding a non-blocking exclusive flock on its file, so two benchmark
+    processes running at the same time never pick the same ROS_DOMAIN_ID.
+    ``acquire`` takes the first ``count`` free domains, or raises
+    DomainUnavailable and releases everything it took. Use as a context
+    manager; the leased IDs are in ``domains``.
+
     Lock files remain in place; deleting them could create two independently
     locked inodes for the same domain. The kernel releases locks on exit.
     """
+    # The pool 60..159 stays clear of the image default ROS_DOMAIN_ID (42) used
+    # by interactive runs. dynamics_campaign.py does not take these leases.
     def __init__(self, count, directory=None, pool=range(60, 160)):
         self.count = count
         self.directory = Path(directory or f'/tmp/njord-ros-domains-{os.getuid()}')
@@ -43,6 +80,11 @@ class DomainLeases:
             raise ValueError('Requested domain count exceeds the lease pool')
 
     def acquire(self):
+        """Lock ``count`` free domains from the pool and return self.
+
+        Domains already locked by another process are skipped. Each held lock
+        file is overwritten with ``pid=... domain=...`` to help debugging.
+        """
         if self.descriptors:
             raise RuntimeError('Domain leases are already held')
         self.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -51,6 +93,7 @@ class DomainLeases:
                 descriptor = os.open(self.directory / f'domain-{domain}.lock',
                                      os.O_CREAT | os.O_RDWR | os.O_CLOEXEC, 0o600)
                 try:
+                    # Non-blocking: a held lock means another benchmark owns it.
                     fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 except BlockingIOError:
                     os.close(descriptor)
@@ -73,6 +116,7 @@ class DomainLeases:
             raise
 
     def close(self):
+        """Release every held lease (closing the descriptor drops the flock)."""
         for descriptor in self.descriptors:
             os.close(descriptor)
         self.descriptors.clear()
@@ -86,11 +130,40 @@ class DomainLeases:
 
 
 def safe_run(metrics):
+    """Return True only for a race that is verified complete and contact free.
+
+    All four must hold; a missing field counts as a failure:
+    - status == "completed": the evaluator saw every gate crossed in order in
+      the right direction, and no infrastructure failure overrode the status
+      (see run_one);
+    - collision is False: explicitly no contact (None means unknown);
+    - contact_status == "observed": the contact monitor actually reported, so
+      "no collision" is measured rather than assumed;
+    - geometric_overlap is falsy: the evaluator's independent ground-truth
+      check (hull rectangle swept against scenario obstacles) never reached
+      zero clearance (a missing value defaults to True, i.e. unsafe).
+    """
     return (metrics.get("status") == "completed" and metrics.get("collision") is False
             and metrics.get("contact_status") == "observed" and not metrics.get("geometric_overlap", True))
 
 
 def summarize(runs):
+    """Aggregate run metrics into per-group statistics and profile comparisons.
+
+    Returns a dict with:
+    - groups["<environment>/<profile>"]: runs, verified_completions (safe_run
+      count), completion_rate (fraction 0..1), median_time_s (median course
+      time of safe runs in simulation seconds, first ground-truth sample to
+      last gate; None if none), contacts (runs with a reported
+      collision), contact_unavailable_runs (contact monitor not observed) and
+      failed_labels;
+    - comparisons[<environment>]: pairs (seeds that ran both profiles),
+      verified_pairs (both runs safe), median_paired_time_saving_s (median of
+      conservative minus fast time per seed; positive means fast is quicker)
+      and fast_improves_median_without_failures (every pair safe and the fast
+      median time is lower);
+    - all_runs_verified: at least one run and every run passes safe_run.
+    """
     groups = {}
     for run in runs:
         key = f'{run["environment"]}/{run["profile"]}'
@@ -125,11 +198,26 @@ def summarize(runs):
 
 
 def command_output(args, env=None):
+    """Run a command in the repo root and return its stripped stdout+stderr.
+
+    Raises subprocess.CalledProcessError on a nonzero exit.
+    """
     return subprocess.check_output(args, cwd=ROOT, env=env, text=True, stderr=subprocess.STDOUT).strip()
 
 
 def pin_image(environment):
-    """Resolve once and pin every race service to immutable image contents."""
+    """Resolve once and pin every race service to immutable image contents.
+
+    A tag such as njord-sim:local can be rebuilt or re-pulled while a long
+    benchmark runs. This resolves the tag the race services use to its image
+    ID and writes it into ``environment`` as NJORD_IMAGE and IMAGE_ID, so every
+    race in the matrix runs the exact same image. Raises ValueError if the
+    services disagree on the image or an overlay ignores NJORD_IMAGE.
+
+    Returns image provenance for the manifest: the image ID, and the source
+    commit and source digest labels stamped by ``scripts/njord build`` or CI
+    ("unknown" when the image carries no io.njord.source.digest label).
+    """
     def race_images():
         configuration = json.loads(command_output(['docker', 'compose', 'config', '--format', 'json'], environment))
         return {configuration['services'][service]['image'] for service in ('simulator', 'autonomy', 'evaluator')}
@@ -142,6 +230,7 @@ def pin_image(environment):
     labels = inspection.get('Config', {}).get('Labels') or {}
     environment['NJORD_IMAGE'] = image_id
     environment['IMAGE_ID'] = image_id
+    # Re-resolve with the pinned ID to prove every service now uses it.
     if race_images() != {image_id}:
         raise ValueError('Compose overrides must honor NJORD_IMAGE for all race services')
     return {'image_identity': image_id,
@@ -151,23 +240,47 @@ def pin_image(environment):
 
 
 def run_one(index, item, total, output, base_env, wall_timeout, domain_id, cancelled):
+    """Run one race in its own Compose project and return its metrics dict.
+
+    Args:
+        index: position in the matrix; makes the project name unique.
+        item: (environment, seed, profile) tuple.
+        total: matrix size, for the progress line only.
+        output: benchmark directory; the race writes to output/<label>/.
+        base_env: environment shared by all races (pinned image, commit, ...).
+        wall_timeout: steady wall-clock budget for the race in seconds.
+        domain_id: ROS_DOMAIN_ID leased for this race.
+        cancelled: threading.Event set on Ctrl-C to stop the race early.
+
+    Race and infrastructure failures (timeouts, Compose errors) are recorded in
+    the returned metrics ("status" and "infrastructure_failure") instead of
+    raised, so a failed
+    race is kept in the report instead of disappearing. The project is always
+    torn down with ``docker compose down`` before returning.
+    """
     environment, seed, profile = item
     label = f"{environment}-{seed}-{profile}"
     run_dir = output / label
     run_dir.mkdir()
+    # One unique name isolates the Compose project (containers/networks), the
+    # Gazebo transport partition and the run handoff (RUN_ID); the leased ROS
+    # domain isolates DDS traffic.
     project = f"njord-bench-{os.getpid()}-{index}"
     env = base_env | {"OUTPUT_HOST": str(run_dir), "OUTPUT_DIR": "/outputs", "SEED": str(seed),
                       "ENVIRONMENT": environment, "PROFILE": profile, "RUN_LABEL": label,
                       "COMPOSE_PROJECT_NAME": project, "GZ_PARTITION": project, "RUN_ID": project,
                       "ROS_DOMAIN_ID": str(domain_id)}
     command = ["docker", "compose", "-p", project]
+    # Infrastructure watchdog: steady wall time, independent of /clock.
     wall_start = time.monotonic()
-    reason = None
+    reason = None  # Set when infrastructure (not the autonomy) ends the race.
     print(f"[{index + 1}/{total}] {label}", flush=True)
     try:
+        # Save the fully resolved Compose file so the race can be reproduced.
         configuration = json.loads(command_output(command + ['config', '--format', 'json'], env))
         (run_dir / 'compose.resolved.json').write_text(json.dumps(configuration, indent=2, allow_nan=False) + '\n')
         with (run_dir / "compose.log").open("w") as log:
+            # The evaluator exits when the race ends; its exit code is the result.
             process = subprocess.Popen(command + ["up", "--abort-on-container-exit", "--exit-code-from",
                                                    "evaluator", "simulator", "autonomy", "evaluator"],
                                        cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT)
@@ -215,12 +328,16 @@ def run_one(index, item, total, output, base_env, wall_timeout, domain_id, cance
                 reason = reason or f"cleanup_error: {error}"
     metrics_path = run_dir / "run_metrics.json"
     try:
+        # parse_constant rejects NaN/Infinity so corrupt metrics count as missing.
         metrics = json.loads(metrics_path.read_text(), parse_constant=lambda s: (_ for _ in ()).throw(ValueError(s)))
+        # An infrastructure failure always wins: a "completed" result from a
+        # race that timed out or failed cleanup is not accepted as verified.
         if reason:
             metrics["infrastructure_failure"] = reason
             if metrics.get("status") == "completed":
                 metrics["status"] = reason
     except (OSError, ValueError):
+        # No usable evaluator output: record an explicitly unsafe placeholder.
         metrics = {"status": reason or "missing_metrics", "collision": None,
                    "contact_status": "unavailable", "geometric_overlap": None}
     metrics.update({"label": label, "environment": environment, "seed": seed, "profile": profile,
@@ -231,10 +348,13 @@ def run_one(index, item, total, output, base_env, wall_timeout, domain_id, cance
 
 
 def main():
+    """Parse options, lease ROS domains and run the matrix; return the exit code."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--seeds", type=int, nargs="+", default=list(range(1, 11)))
     parser.add_argument("--environments", choices=["calm", "moderate"], nargs="+", default=["calm", "moderate"])
     parser.add_argument("--profiles", choices=["conservative", "fast"], nargs="+", default=["conservative", "fast"])
+    # Per-race steady wall-clock limit in seconds (the course has its own
+    # simulation-time timeout inside the evaluator).
     parser.add_argument("--wall-timeout", type=float, default=600)
     parser.add_argument("--jobs", type=int, default=1, help="Concurrent races (1-100); each holds a distinct ROS domain")
     parser.add_argument("--output-dir", type=Path)
@@ -252,6 +372,7 @@ def main():
     output = (args.output_dir or ROOT / "outputs" / f"benchmark-{stamp}-{os.getpid()}").resolve()
     matrix = [(environment, seed, profile) for environment in args.environments
               for seed in args.seeds for profile in args.profiles]
+    # --dry-run only prints the plan; it starts nothing and leases nothing.
     if args.dry_run:
         print(json.dumps({"output": str(output), "runs": matrix, "jobs": args.jobs,
                           "command": ["docker", "compose", "up", "--abort-on-container-exit",
@@ -269,11 +390,20 @@ def main():
 
 
 def run_benchmark(args, matrix, output, stamp, leased_domains):
+    """Run every matrix entry on a pool of ``args.jobs`` workers.
+
+    Each worker borrows one leased ROS domain from a queue for the duration of
+    a race, so at most ``jobs`` races run and no two share a domain. Writes
+    manifest.json first and summary.json after every finished race. Returns
+    the process exit code described in the module docstring.
+    """
+    # exist_ok=False: never mix results into an earlier benchmark directory.
     output.mkdir(parents=True, exist_ok=False)
     base_env = os.environ.copy()
     base_env.setdefault("COMPOSE_FILE", str(ROOT / "compose.yaml"))
     base_env["RUNNER_GIT_COMMIT"] = command_output(["git", "rev-parse", "HEAD"])
     image_metadata = pin_image(base_env)
+    # Provenance: which code, image, matrix and domains produced these results.
     manifest = {"runner_git_commit": base_env["RUNNER_GIT_COMMIT"],
                 "runner_git_dirty": bool(command_output(["git", "status", "--porcelain"])),
                 **image_metadata, "matrix": matrix, "wall_timeout_s": args.wall_timeout, "jobs": args.jobs,
@@ -296,6 +426,8 @@ def run_benchmark(args, matrix, output, stamp, leased_domains):
             domains.put(domain_id)
 
     def write_summary():
+        # Stable order regardless of completion order; atomic replace so a
+        # reader never sees a half-written file.
         runs.sort(key=lambda run: (args.environments.index(run["environment"]),
                                   args.seeds.index(run["seed"]), args.profiles.index(run["profile"])))
         temporary = output / "summary.json.tmp"
@@ -319,6 +451,8 @@ def run_benchmark(args, matrix, output, stamp, leased_domains):
         cancelled.set()
         print("Stopping benchmark projects and cancelling queued races...", flush=True)
     finally:
+        # Queued races are cancelled; running ones see `cancelled`, stop and
+        # still tear down their project. Their metrics are collected below.
         cancelled.set()
         executor.shutdown(wait=True, cancel_futures=True)
         for future in futures:
@@ -332,6 +466,7 @@ def run_benchmark(args, matrix, output, stamp, leased_domains):
     report = summarize(runs)
     print(json.dumps(report, indent=2, allow_nan=False))
     print(f"Results: {output / 'summary.json'}")
+    # The fast-vs-conservative requirement only applies when both profiles ran.
     paired = set(args.profiles) == {"conservative", "fast"}
     improvements = all(c["fast_improves_median_without_failures"] for c in report["comparisons"].values())
     return 0 if report["all_runs_verified"] and (not paired or improvements) else 2

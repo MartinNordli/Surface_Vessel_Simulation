@@ -1,9 +1,15 @@
 # WSLg graphics uses Mesa D3D12 and the Windows host driver.
+# Overlay selected automatically by ./scripts/njord when running under WSL 2
+# (it detects "microsoft" in the kernel release). Gives the rendering services
+# the WSL GPU device and libraries so OpenGL goes through Mesa's D3D12 driver
+# to the Windows GPU driver, and WSLg's X11/Wayland sockets for windows.
 services:
   simulator:
     devices:
+      # WSL's paravirtualized GPU device.
       - /dev/dxg:/dev/dxg
     volumes:
+      # WSL GPU user-space libraries (libd3d12, libdxcore) and WSLg sockets.
       - /usr/lib/wsl:/usr/lib/wsl:ro
       - /mnt/wslg:/mnt/wslg
       - /tmp/.X11-unix:/tmp/.X11-unix:ro
@@ -12,6 +18,7 @@ services:
       WAYLAND_DISPLAY: ${WAYLAND_DISPLAY:-wayland-0}
       XDG_RUNTIME_DIR: /mnt/wslg/runtime-dir
       LD_LIBRARY_PATH: /usr/lib/wsl/lib
+      # Select the NVIDIA adapter if the machine also has another GPU.
       MESA_D3D12_DEFAULT_ADAPTER_NAME: NVIDIA
       GALLIUM_DRIVER: d3d12
   rviz:

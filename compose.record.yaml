@@ -1,10 +1,15 @@
 # Opt in with COMPOSE_FILE=compose.yaml:compose.record.yaml ./scripts/njord demo recorder
+# Overlay adding an MCAP rosbag recorder (scripts/run_recorder.py). Naming the
+# service on the command line starts it despite its profile. Bags go to
+# <run output>/bag and are never overwritten.
 services:
   recorder:
+    # Same image, user, network, environment and volumes as the autonomy service.
     extends:
       file: compose.yaml
       service: autonomy
     profiles: [record]
     command: [python3, /opt/njord/scripts/run_recorder.py]
+    # rosbag2 finalizes the bag on SIGINT; allow time to flush before a kill.
     stop_signal: SIGINT
     stop_grace_period: 30s

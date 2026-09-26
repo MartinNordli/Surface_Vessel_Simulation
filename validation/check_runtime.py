@@ -1,6 +1,23 @@
 """Check live GPU sensor data and sensor-based navigation; exits nonzero on timeout.
 
 SMOKE_TIMEOUT_S (default 90) bounds the wall-time wait, e.g. for slow CPU rendering.
+
+Where to run: inside the container against a running ``simulator`` and
+``autonomy`` stack on the same ROS domain. ``./scripts/njord smoke`` runs it
+against a stack that is already up; ``./scripts/njord selftest`` starts the
+stack, runs it with SMOKE_TIMEOUT_S=240 and stops the stack.
+
+Passes once all of these have been received:
+    left and right camera   image_raw with nonzero size, at least 3 bytes per
+                            pixel and pixel standard deviation > 1 (i.e. an
+                            actually rendered, non-uniform image)
+    lidar                   a point cloud with at least one finite point
+    navigation              /njord/odometry in frame "map" with a finite pose
+                            (the sensor-based estimate, not ground truth)
+    TF                      map -> wamv/front_left_camera_link_optical
+
+Output: JSON {"passed": ..., "received": {...}} on stdout. Exit code 0 on
+pass, 2 on timeout. This proves live data flow, not rendering quality.
 """
 import json
 import math
@@ -18,6 +35,7 @@ from rclpy.time import Time
 
 
 class Check(Node):
+    """Record in ``seen`` which of the four data sources have produced valid data."""
     def __init__(self):
         super().__init__('njord_runtime_check')
         self.tf = Buffer()
@@ -31,6 +49,7 @@ class Check(Node):
 
     def camera(self, side, m):
         data = np.frombuffer(bytes(m.data), dtype=np.uint8)
+        # A blank (uniform) frame means the camera is not rendering.
         if m.width > 0 and m.height > 0 and data.size >= m.width*m.height*3 and np.std(data) > 1:
             self.seen[side] = {'width':m.width, 'height':m.height, 'frame':m.header.frame_id}
 
@@ -49,6 +68,7 @@ class Check(Node):
 def main():
     rclpy.init()
     node=Check()
+    # Steady wall-time deadline, independent of simulation speed.
     end=time.monotonic()+float(os.environ.get('SMOKE_TIMEOUT_S', '90'))
     passed=False
     try:

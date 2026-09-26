@@ -1,8 +1,19 @@
 """Generate an offline VRX course and the exact evaluator configuration.
 
-No vessel is embedded: launch spawns the pinned VRX WAM-V at the resolved
-start pose. Markers are fixed vertical cylinders (a moored approximation),
-with matching visual/collision/scoring radii. Dynamics remain upstream VRX.
+``world_xml`` builds the Gazebo world (njord_course.sdf) from a resolved
+scenario; simulation.launch.py calls it with the selected vessel profile.
+The command-line ``generate`` writes the world, resolved_scenario.json and its
+digest for the WAM-V reference profile only.
+
+No vessel is embedded: launch spawns the generated vessel model at the
+resolved start pose. Markers are fixed vertical cylinders (a moored
+approximation), with matching visual/collision/scoring radii. With the WAM-V
+reference profile, wind and waves come from the upstream VRX plugins; with the
+Njord profile the world is flat water and the environment forces come only
+from the plugins on the generated Njord model (see njord_model.py).
+
+World frame: ENU, origin at constants.WORLD_ORIGIN_WGS84. Marker positions
+are scenario (evaluation) data and are never published to autonomy.
 """
 import argparse
 import json
@@ -15,6 +26,7 @@ from .run_manifest import atomic_text
 
 
 def element(parent, tag, text=None, **attrs):
+    """Append ``<tag attrs>text</tag>`` to ``parent`` and return it."""
     node = ET.SubElement(parent, tag, attrs)
     if text is not None:
         node.text = str(text)
@@ -22,16 +34,25 @@ def element(parent, tag, text=None, **attrs):
 
 
 def world_xml(scenario, vessel_profile='wamv_reference'):
+    """Return the SDF world text for a resolved ``scenario``.
+
+    ``vessel_profile`` is ``'wamv_reference'`` (VRX wind and wave plugins) or
+    ``'njord'`` (flat water, no upstream environment forces).
+    """
     sdf = ET.Element("sdf", version="1.9")
     world = element(sdf, "world", name="njord_course")
     if vessel_profile == 'njord':
         # Match the hydrostatics adapter's gravity constant. SDF otherwise
         # defaults to 9.8, producing a systematic displacement error.
         element(world, 'gravity', '0 0 -9.81')
+    # Fixed physics step in seconds; real_time_factor 1 is a target, not a
+    # guarantee (slow hosts run slower than real time, sim time stays exact).
     step = scenario['environment'].get('physics_step_s', 0.004)
     physics = element(world, "physics", name=f"{step * 1000:g}ms", type="dart")
     element(physics, "max_step_size", step)
     element(physics, "real_time_factor", 1.0)
+    # World systems: physics, entity spawning, GUI/scene state, rendered and
+    # non-rendered sensors, and contact detection for the markers.
     for library, name in [("physics", "Physics"), ("user-commands", "UserCommands"),
                           ("scene-broadcaster", "SceneBroadcaster"), ("sensors", "Sensors"),
                           ("imu", "Imu"), ("navsat", "NavSat"), ("contact", "Contact")]:
@@ -49,17 +70,22 @@ def world_xml(scenario, vessel_profile='wamv_reference'):
     element(light, "specular", "0.2 0.2 0.2 1")
     element(light, "direction", "-0.5 0.1 -0.9")
     element(light, "cast_shadows", "true")
+    # Geodetic datum for the NavSat sensor; must match navsat_transform.
     spherical = element(world, "spherical_coordinates")
     for key, value in {"surface_model": "EARTH_WGS84", "world_frame_orientation": "ENU",
                        "latitude_deg": WORLD_ORIGIN_WGS84[0], "longitude_deg": WORLD_ORIGIN_WGS84[1],
                        "elevation": WORLD_ORIGIN_WGS84[2], "heading_deg": 0}.items():
         element(spherical, key, value)
+    # VRX ocean surface model, placed at the configured water level.
     ocean = element(world, "include")
     element(ocean, "uri", "coast_waves")
     element(ocean, "name", "coast_waves")
     water_level = scenario['environment'].get('water_level_m', 0.0)
     element(ocean, "pose", f"0 0 {water_level} 0 0 0")
     colors = {"red": "1 0.02 0.02 1", "green": "0.02 1 0.02 1", "black": "0.05 0.05 0.05 1"}
+    # Every gate marker and extra obstacle is a static 2 m tall cylinder
+    # centred 0.5 m above the water level, with a contact sensor whose
+    # collisions are reported through the ContactMonitor below.
     for obstacle in obstacles(scenario):
         model = element(world, "model", name=obstacle["name"])
         element(model, "static", "true")
@@ -82,6 +108,8 @@ def world_xml(scenario, vessel_profile='wamv_reference'):
         contact = element(sensor, "contact")
         element(contact, "collision", "collision")
         element(contact, "topic", "/njord/raw_contacts/" + obstacle["name"])
+    # Publishes /njord/contacts as a heartbeat (also when empty) once every
+    # listed marker has a live contact sensor; see ContactMonitor.cc.
     monitor = element(world, "plugin", filename="libNjordContactMonitor.so", name="njord::ContactMonitor")
     for obstacle in obstacles(scenario):
         element(monitor, "marker", obstacle["name"])
@@ -91,6 +119,9 @@ def world_xml(scenario, vessel_profile='wamv_reference'):
         # upstream wind / wave plugins must not apply a second vessel wrench.
         ET.indent(sdf)
         return ET.tostring(sdf, encoding="unicode", xml_declaration=True)
+    # VRX wind on the WAM-V: mean speed and direction plus seeded gusts
+    # (wind_variance_gain); wind_direction_deg is the ENU "blowing toward"
+    # direction set by configuration.resolve_scenario.
     wind = element(world, "plugin", filename="libUSVWind.so", name="vrx::USVWind")
     obj = element(wind, "wind_obj")
     element(obj, "name", "wamv")
@@ -104,6 +135,8 @@ def world_xml(scenario, vessel_profile='wamv_reference'):
                        "topic_wind_speed": "/vrx/debug/wind/speed",
                        "topic_wind_direction": "/vrx/debug/wind/direction"}.items():
         element(wind, key, value)
+    # VRX wave field parameters, republished every 0.1 s on the topic the
+    # upstream VRX wave consumers read, so they use the configured sea state.
     publisher = element(world, "plugin", filename="libPublisherPlugin.so", name="vrx::PublisherPlugin")
     message = element(publisher, "message", type="gz.msgs.Param",
                       topic="/vrx/wavefield/parameters", every="0.1")
@@ -116,6 +149,11 @@ def world_xml(scenario, vessel_profile='wamv_reference'):
 
 
 def generate(scenario_file, output_dir, seed=None, environment=None):
+    """Resolve ``scenario_file`` and write the WAM-V world and scenario files.
+
+    Writes njord_course.sdf, resolved_scenario.json (atomically) and
+    scenario.sha256 into ``output_dir``; returns the resolved scenario.
+    """
     scenario = load_scenario(scenario_file, seed, environment)
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)

@@ -1,6 +1,24 @@
 // SPDX-License-Identifier: MIT
 // Harmonic's stock contact sensor only emits nonempty messages. Publish a
 // heartbeat from physics ContactSensorData so silence cannot imply no contact.
+//
+// njord::ContactMonitor -- Gazebo world plugin added by njord_sim/scenario.py.
+// Every course marker and obstacle model carries a contact sensor; this
+// plugin gathers their contacts and publishes them together, empty or not.
+//
+// SDF parameters:
+//   <marker>NAME</marker>  repeated; model names whose contacts are monitored
+//
+// Topic (Gazebo transport, bridged to ROS as ros_gz_interfaces/Contacts):
+//   publishes /njord/contacts  gz.msgs.Contacts, at most every 50 ms of
+//             simulation time, header stamp = simulation time
+//
+// Failure behavior: nothing is published until every listed marker has both
+// a contact sensor and a physics-populated ContactSensorData component, so
+// the evaluator's freshness check (evaluator_node.contact_fresh) fails and a
+// run cannot be scored as collision-free without working contact sensing.
+// Nothing is published while paused. A simulation-time reset clears the
+// accumulated contacts.
 #include <chrono>
 #include <algorithm>
 #include <cstdint>
@@ -25,10 +43,16 @@ class ContactMonitor final : public gz::sim::System,
   public gz::sim::ISystemConfigure, public gz::sim::ISystemPostUpdate {
   gz::transport::Node node;
   gz::transport::Node::Publisher publisher;
-  std::set<std::string> expectedModels;
+  std::set<std::string> expectedModels;  // from the <marker> elements
+  // Unordered collision-id pairs already in `pending`, so a contact that
+  // persists across several physics steps is reported once per heartbeat.
   std::set<std::pair<uint64_t, uint64_t>> collectedPairs;
-  gz::msgs::Contacts pending;
+  gz::msgs::Contacts pending;  // contacts accumulated since the last publish
+  // Simulation time of the last publish (UpdateInfo::simTime uses the
+  // steady_clock duration type, but the value is simulation time).
   std::chrono::steady_clock::duration lastPublish{};
+
+  // Name of the model that owns `link` (the link's parent entity), or empty.
 
   std::string ModelName(const gz::sim::Entity link,
                        const gz::sim::EntityComponentManager &ecm) const {
@@ -54,11 +78,14 @@ class ContactMonitor final : public gz::sim::System,
   void PostUpdate(const gz::sim::UpdateInfo &info,
                   const gz::sim::EntityComponentManager &ecm) override {
     if (info.paused || expectedModels.empty()) return;
+    // Simulation time went backwards (world reset): start a new window.
     if (info.simTime < lastPublish) {
       lastPublish = info.simTime;
       pending.Clear();
       collectedPairs.clear();
     }
+    // Which monitored models have a contact sensor entity, and which have
+    // contact data populated by the physics system this step.
     std::set<std::string> sensors, dataModels;
     ecm.Each<gz::sim::components::ContactSensor, gz::sim::components::ParentEntity>(
       [&](const gz::sim::Entity &, const gz::sim::components::ContactSensor *,
@@ -90,6 +117,7 @@ class ContactMonitor final : public gz::sim::System,
       collectedPairs.clear();
       return;
     }
+    // Throttle to 20 Hz of simulation time; contacts keep accumulating.
     if (info.simTime - lastPublish < std::chrono::milliseconds(50)) return;
     const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(info.simTime);
     const auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(info.simTime - seconds);

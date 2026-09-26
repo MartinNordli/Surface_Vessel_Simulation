@@ -8,6 +8,22 @@ appeared.
 Grid convention: cells are (row, col) integer tuples. 8-connected. Diagonal
 moves are not allowed to cut a corner, i.e. both orthogonally adjacent cells
 must be free.
+
+Costs are in cells: 1 for an orthogonal step, sqrt(2) for a diagonal one.
+The grid is binary (a cell is blocked or free); deciding which occupancy
+values count as blocked is the caller's job (see ``planner_core``).
+
+Terminology used below:
+
+* ``g(s)``: current best-known cost from ``s`` to the goal.
+* ``rhs(s)``: one-step lookahead cost, ``min over neighbours n of
+  cost(s, n) + g(n)`` (0 for the goal). A cell is *consistent* when
+  ``g == rhs``; only inconsistent cells sit in the priority queue.
+* ``km``: key modifier that grows with how far the start has moved, so old
+  queue keys stay valid lower bounds without re-sorting the queue.
+
+``astar`` at the bottom is an independent reference used by the tests to
+check the D* Lite path costs.
 """
 
 import heapq
@@ -41,6 +57,7 @@ def _greater(a, b):
 
 
 def _differs(a, b):
+    """a != b, treating a difference below EPS as equality."""
     if a == INF or b == INF:
         return a != b
     return abs(a - b) > EPS
@@ -62,6 +79,7 @@ class Grid:
         return 0 <= r < self.height and 0 <= c < self.width
 
     def is_free(self, cell):
+        """True if the cell is inside the grid and not blocked."""
         return self.in_bounds(cell) and cell not in self.blocked
 
     def set_blocked(self, cell, blocked=True):
@@ -76,6 +94,11 @@ class Grid:
         return False
 
     def neighbors(self, cell):
+        """Yield the free cells reachable from ``cell`` in one move.
+
+        Diagonal neighbours are only yielded when both orthogonal cells beside
+        the move are free (no corner cutting).
+        """
         r, c = cell
         for dr, dc in _ORTHO:
             n = (r + dr, c + dc)
@@ -107,6 +130,15 @@ def heuristic(a, b):
 
 
 class DStarLite:
+    """Incremental shortest-path search on a ``Grid`` (see module docstring).
+
+    Typical use: construct with start and goal, call
+    ``compute_shortest_path()`` and ``path()``. When the robot moves call
+    ``update_start()``; when cells change occupancy, update ``grid`` and call
+    ``apply_changes()`` with the changed cells, then compute again. Only the
+    affected part of the search is repaired.
+    """
+
     def __init__(self, grid, start, goal):
         self.grid = grid
         self.start = start
@@ -116,14 +148,18 @@ class DStarLite:
         self._g = {}
         self._rhs = {}
         self._queue = []
-        self._counter = 0
+        self._counter = 0  # insertion order; tie-breaker so the heap never compares cells
         self._entries = {}  # cell -> [key, counter, cell or None if removed]
+        # The search runs backwards: the goal is the source with rhs = 0.
         self._rhs[goal] = 0.0
         self._insert(goal, self._key(goal))
 
     # ------------------------------------------------------------------ #
     # priority queue with lazy deletion
     # ------------------------------------------------------------------ #
+
+    # heapq cannot remove arbitrary items, so removal only marks an entry dead
+    # (cell set to None) and _top() discards dead entries when they surface.
 
     def _insert(self, cell, key):
         self._counter += 1
@@ -150,18 +186,25 @@ class DStarLite:
     # ------------------------------------------------------------------ #
 
     def g(self, cell):
+        """Best-known cost from ``cell`` to the goal (INF if unknown)."""
         return self._g.get(cell, INF)
 
     def rhs(self, cell):
+        """One-step lookahead cost from ``cell`` to the goal (INF if unknown)."""
         return self._rhs.get(cell, INF)
 
     def _key(self, cell):
+        """Queue priority: (estimated start-to-goal cost via cell, cost to goal).
+
+        Compared lexicographically; rounded as explained at ``EPS``.
+        """
         m = min(self.g(cell), self.rhs(cell))
         if m == INF:
             return (INF, INF)
         return (round(m + heuristic(self.start, cell) + self._km, _DIGITS), round(m, _DIGITS))
 
     def _update_vertex(self, cell):
+        """Recompute rhs(cell) and (re)queue the cell iff it is inconsistent."""
         if cell != self.goal:
             best = INF
             for n in self.grid.neighbors(cell):
@@ -174,6 +217,7 @@ class DStarLite:
             self._insert(cell, self._key(cell))
 
     def compute_shortest_path(self):
+        """Expand queued cells until g(start) is correct (or no path exists)."""
         while True:
             key, cell = self._top()
             if cell is None:
@@ -187,14 +231,20 @@ class DStarLite:
                 break
             new_key = self._key(cell)
             if key < new_key:
+                # Key is outdated (km grew since it was queued): requeue.
                 self._remove(cell)
                 self._insert(cell, new_key)
             elif _greater(self.g(cell), self.rhs(cell)):
+                # Overconsistent: a cheaper route was found. Accept it and let
+                # the neighbours pick it up.
                 self._g[cell] = self.rhs(cell)
                 self._remove(cell)
                 for n in self.grid.neighbors(cell):
                     self._update_vertex(n)
             else:
+                # Underconsistent: the route got more expensive (e.g. a cell
+                # became blocked). Reset g and re-evaluate the cell and its
+                # neighbours.
                 self._g[cell] = INF
                 self._update_vertex(cell)
                 for n in self.grid.neighbors(cell):
@@ -204,6 +254,9 @@ class DStarLite:
         """Tell the planner the robot has moved. Keeps the search tree valid."""
         if start == self.start:
             return
+        # Queued keys used the old start in their heuristic, which can exceed
+        # the new one by at most this distance (triangle inequality). Adding it
+        # to km keeps old keys lower bounds, so the queue need not be re-sorted.
         self._km += heuristic(self._last_start, start)
         self._last_start = start
         self.start = start
@@ -248,6 +301,7 @@ class DStarLite:
         return []
 
     def path_cost(self):
+        """Cost of the current start-to-goal path in cells (INF if none)."""
         if not self.grid.is_free(self.start) or not self.grid.is_free(self.goal):
             return INF
         return self.g(self.start) if self.g(self.start) != INF else self.rhs(self.start)

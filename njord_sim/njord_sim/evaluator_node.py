@@ -2,6 +2,28 @@
 
 A steady-clock timer ends the process if Gazebo never starts, freezes, or loses
 odometry. Missing contact data cannot establish a collision-free run.
+
+Run flow (the node is started by scripts/run_evaluator.py with
+use_sim_time:=true once run_ready.json exists):
+
+1. Wait for readiness: fresh ground-truth odometry, a live contact-monitor
+   heartbeat and OK diagnostics from mission, planner and navigation.
+2. Start the race and publish ``/njord/race_active`` = true; the command guard
+   only forwards thrust while this is true.
+3. Feed every ground-truth pose to scenario_core.RaceScorer, which scores in
+   simulation time.
+4. Stop on the first final status and write the metrics JSON atomically.
+
+Two clocks are used on purpose. Race time, the scenario timeout and data
+freshness against message stamps use the node clock (/clock). Infrastructure
+watchdogs (wall_timeout_s, odom_wall_timeout_s, stream liveness) use the
+steady monotonic clock, so a frozen or never-started simulator still ends
+the run. Ground truth is used here for scoring only; it is never forwarded
+to autonomy.
+
+Final statuses: those of RaceScorer plus ``wall_timeout``,
+``odometry_timeout``, ``contact_monitor_timeout`` and ``interrupted``.
+The process exits 0 only for ``completed``, otherwise 2.
 """
 import json
 import math
@@ -22,6 +44,13 @@ from .scenario_core import RaceScorer, load_scenario, scenario_digest
 
 
 class Evaluator(Node):
+    """ROS wrapper around RaceScorer with readiness gating and watchdogs.
+
+    Subscribes: ground-truth odometry (``odom_topic``), ``contacts_topic``,
+    ``path_topic``, ``/njord/plan_ms`` and the three ``/njord/*_status``
+    diagnostics. Publishes: ``/njord/race_active`` (std_msgs/Bool, latched).
+    """
+
     def __init__(self):
         super().__init__("evaluator")
         self.declare_parameters("", [
@@ -36,6 +65,9 @@ class Evaluator(Node):
             ("runner_git_commit", os.environ.get("RUNNER_GIT_COMMIT", "unknown")),
             ("image_identity", os.environ.get("IMAGE_ID", "unknown")),
         ])
+        # wall_timeout_s: steady-time budget for the whole run, startup included.
+        # odom_wall_timeout_s: steady time without advancing odometry.
+        # wait_for_ready: False starts scoring on the first odometry message.
         p = lambda name: self.get_parameter(name).value
         self.scenario = load_scenario(p("scenario_file"))
         self.scorer = RaceScorer(self.scenario)
@@ -44,14 +76,15 @@ class Evaluator(Node):
         self.last_odom_wall = None
         self.output = FilePath(p("output"))
         self.done = False
-        self.exit_code = 2
+        self.exit_code = 2  # nonzero unless the race completes
         self.path_messages = 0
         self.latencies = []
         self.started = not p("wait_for_ready")
         self.readiness = {}
-        self.latest_ground_truth = None
+        self.latest_ground_truth = None  # (stamp_s, x, y, yaw) of the last odometry
         self.contact_last_wall = None
         self.contact_last_stamp = None
+        # Transient-local so a late-joining command guard still gets the state.
         self.active_pub = self.create_publisher(Bool, "/njord/race_active",
             QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
         for topic in ("mission_status", "planner_status", "navigation_status"):
@@ -64,21 +97,35 @@ class Evaluator(Node):
             self.create_subscription(Contacts, p("contacts_topic"), self.on_contacts, qos_profile_sensor_data)
         except ImportError:
             self.get_logger().warning("Contact message type unavailable; contact result will be null")
+        # 10 Hz watchdog on the steady clock: it keeps running even when
+        # /clock never starts or stops advancing.
         self.create_timer(0.1, self.check_timeout, clock=Clock(clock_type=ClockType.STEADY_TIME))
 
     def on_readiness(self, message):
+        """Store (ok, sim stamp, steady receive time) per diagnostic status name."""
         stamp = message.header.stamp.sec + message.header.stamp.nanosec * 1e-9
         for status in message.status:
             self.readiness[status.name] = (status.level == DiagnosticStatus.OK, stamp, time.monotonic())
 
     def contact_fresh(self):
-        """Require both acquisition freshness and a live advancing stream."""
+        """Require both acquisition freshness and a live advancing stream.
+
+        The last accepted contact message must be at most 0.5 s old in
+        simulation time and have arrived within 0.5 s of steady time.
+        """
         if self.contact_last_stamp is None or self.contact_last_wall is None:
             return False
         age = self.get_clock().now().nanoseconds * 1e-9 - self.contact_last_stamp
         return 0 <= age <= 0.5 and time.monotonic() - self.contact_last_wall <= 0.5
 
     def ready(self):
+        """True when every input needed to score a race is live.
+
+        Odometry must have advanced within 0.5 s of steady time, contacts
+        must be fresh, and the ``njord/planner``, ``mission`` and
+        ``navigation`` diagnostics must be OK and at most 0.5 s old in both
+        simulation and steady time.
+        """
         now_sim = self.get_clock().now().nanoseconds * 1e-9
         now_wall = time.monotonic()
         return self.latest_ground_truth is not None and self.last_odom_wall is not None and now_wall - self.last_odom_wall <= 0.5 and self.contact_fresh() and all(
@@ -95,6 +142,12 @@ class Evaluator(Node):
             self.latencies.append(message.data)
 
     def on_contacts(self, message):
+        """Accept a fresh contact message; end the race if it involves the vessel.
+
+        Empty messages are heartbeats from the ContactMonitor plugin and only
+        refresh liveness. A contact involves the vessel when either collision
+        name contains ``wamv`` (the model name of both vessel profiles).
+        """
         if self.done:
             return
         stamp = message.header.stamp.sec + message.header.stamp.nanosec * 1e-9
@@ -112,13 +165,17 @@ class Evaluator(Node):
             self.finish()
 
     def on_odom(self, message):
+        """Record ground truth and, once the race has started, score it."""
         if self.done:
             return
         wall = time.monotonic()
         stamp = message.header.stamp.sec + message.header.stamp.nanosec * 1e-9
+        # Only an advancing stamp proves the simulation is alive; a repeated
+        # stamp (paused or frozen simulator) must not reset the watchdog.
         if self.latest_ground_truth is None or stamp > self.latest_ground_truth[0]:
             self.last_odom_wall = wall
         q = message.pose.pose.orientation
+        # Yaw (rotation about world z, ENU) from the orientation quaternion.
         yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
         pos = message.pose.pose.position
         self.latest_ground_truth = (stamp, pos.x, pos.y, yaw)
@@ -131,12 +188,20 @@ class Evaluator(Node):
             self.finish()
 
     def check_timeout(self):
+        """Steady-clock tick: start the race when ready and apply the watchdogs.
+
+        Checks in priority order: total wall budget, odometry silence,
+        contact-monitor silence (only after the start), then the scenario's
+        simulation-time limit, read here from /clock so that it does not
+        depend on the next odometry message arriving.
+        """
         if self.done:
             return
         now = time.monotonic()
         if not self.started and self.ready():
             self.started = True
             self.first_odom_wall = now
+            # The latest pose becomes the race start (time zero).
             self.scorer.update(*self.latest_ground_truth)
             self.get_logger().info("Navigation, mission and planner ready; race started")
         self.active_pub.publish(Bool(data=self.started and self.scorer.status == "running"))
@@ -155,6 +220,7 @@ class Evaluator(Node):
             self.finish()
 
     def finish(self):
+        """Write the metrics once, publish race_active = false and set the exit code."""
         if self.done:
             return
         # Completion may arrive on odometry between watchdog timer ticks.
@@ -173,18 +239,21 @@ class Evaluator(Node):
             "runner_git_commit": self.get_parameter("runner_git_commit").value,
             "image_identity": self.get_parameter("image_identity").value,
             "wall_time_s": elapsed_wall,
+            # Simulated race seconds per steady second since the race started.
             "real_time_factor": self.scorer.elapsed / simulation_wall if simulation_wall > 0 else None,
             "path_messages": self.path_messages,
             "replans": len(self.latencies), "plan_samples": len(self.latencies),
             "max_plan_ms": max(self.latencies) if self.latencies else None,
             "mean_plan_ms": sum(self.latencies) / len(self.latencies) if self.latencies else None,
         })
+        # Tie the metrics to the sealed run inputs when a manifest exists.
         manifest = self.output.parent / 'run_manifest.json'
         if manifest.is_file():
             from njord_sim.run_manifest import sha256
             metrics['manifest_sha256'] = sha256(manifest)
             metrics['run_id'] = json.loads(manifest.read_text())['run_id']
         self.output.parent.mkdir(parents=True, exist_ok=True)
+        # Temporary file plus rename: readers never see a partial result.
         temporary = self.output.with_suffix(self.output.suffix + ".tmp")
         temporary.write_text(json.dumps(metrics, indent=2, allow_nan=False) + "\n")
         temporary.replace(self.output)
@@ -195,6 +264,7 @@ class Evaluator(Node):
 
 
 def main():
+    """Spin until the race finishes; exit 0 on ``completed``, otherwise 2."""
     rclpy.init()
     node = Evaluator()
     try:

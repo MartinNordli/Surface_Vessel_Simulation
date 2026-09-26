@@ -8,14 +8,15 @@ import yaml
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'njord_sim'))
 from njord_sim.configuration import (resolve_configuration, validate_vessel,
-    convert_legacy_scenario, autonomy_parameters, legacy_vessel_settings)
+    convert_legacy_scenario, autonomy_parameters, sensor_settings)
 
 ROOT=Path(__file__).resolve().parents[1]
 CONFIG=ROOT/'njord_sim/config'
+VESSELS=CONFIG/'vessels'
 
 class ConfigurationTests(unittest.TestCase):
     def resolve(self, **kwargs):
-        return resolve_configuration(CONFIG/'njord_v1.yaml', ROOT/'scenarios/reference.yaml', CONFIG/'algorithms.yaml',**kwargs)
+        return resolve_configuration(VESSELS/'njord_v1.yaml', ROOT/'scenarios/reference.yaml', CONFIG/'algorithms.yaml',**kwargs)
 
     def test_complete_reproducible_resolution(self):
         a=self.resolve(seed=42); b=self.resolve(seed=42)
@@ -27,10 +28,10 @@ class ConfigurationTests(unittest.TestCase):
         self.assertNotIn('scenario',public)
         self.assertTrue(public['guidance']['physical_allocation'])
         self.assertEqual(public['guidance']['thruster_positions'],[-1.2,.6,-.1,-1.2,-.6,-.1])
-        self.assertEqual(legacy_vessel_settings(a)['max_thrust_n'],500.)
+        self.assertEqual(sensor_settings(a)['max_thrust_n'],500.)
 
     def test_unknown_and_missing_physics(self):
-        original=yaml.safe_load((CONFIG/'njord_v1.yaml').read_text())
+        original=yaml.safe_load((VESSELS/'njord_v1.yaml').read_text())
         for key,value in [('typo',1),('mass_kg',float('nan')),('mass_kg',True),('mass_kg',0.)]:
             bad=copy.deepcopy(original);bad[key]=value
             with self.assertRaises(ValueError): validate_vessel(bad)
@@ -39,12 +40,12 @@ class ConfigurationTests(unittest.TestCase):
 
     def test_inertia_triangle_and_positive_definite(self):
         for values in ([1.,1.,3.],[1.,1.,-1.]):
-            bad=yaml.safe_load((CONFIG/'njord_v1.yaml').read_text())
+            bad=yaml.safe_load((VESSELS/'njord_v1.yaml').read_text())
             bad['inertia_kg_m2'].update(dict(zip(('ixx','iyy','izz'),values)))
             with self.assertRaisesRegex(ValueError,'inertia'):validate_vessel(bad)
 
     def test_negative_damping_invalid_axes_open_mesh_rejected(self):
-        original=yaml.safe_load((CONFIG/'njord_v1.yaml').read_text())
+        original=yaml.safe_load((VESSELS/'njord_v1.yaml').read_text())
         cases=[]
         bad=copy.deepcopy(original);bad['hydrodynamics']['linear_damping'][0]=-1;cases.append(bad)
         bad=copy.deepcopy(original);bad['thrusters'][0]['axis']=[0,0,0];cases.append(bad)
@@ -54,7 +55,7 @@ class ConfigurationTests(unittest.TestCase):
 
     def test_insufficient_displacement_and_operating_limit(self):
         for key,value,message in [('mass_kg',10000.,'displacement'),('thrusters',None,'capacity')]:
-            vessel=yaml.safe_load((CONFIG/'njord_v1.yaml').read_text())
+            vessel=yaml.safe_load((VESSELS/'njord_v1.yaml').read_text())
             if key=='thrusters':vessel[key][0]['forward_limit_n']=100.
             else:vessel[key]=value
             with tempfile.TemporaryDirectory() as d:
@@ -64,23 +65,53 @@ class ConfigurationTests(unittest.TestCase):
     def test_waves_rejected_for_njord(self):
         with self.assertRaisesRegex(ValueError,'waves'):self.resolve(environment='moderate')
 
-    def test_named_wamv_reference_and_legacy_conversion(self):
-        named=resolve_configuration(CONFIG/'wamv_reference.yaml',ROOT/'scenarios/reference.yaml',CONFIG/'algorithms.yaml',environment='moderate')
-        legacy=resolve_configuration(CONFIG/'vessel.yaml',ROOT/'scenarios/reference.yaml',CONFIG/'algorithms.yaml',environment='moderate',legacy_vessel=True)
-        self.assertEqual(named['vessel'],legacy['vessel'])
-        self.assertEqual(named['scenario'],legacy['scenario'])
-        with self.assertRaises(ValueError):resolve_configuration(CONFIG/'vessel.yaml',ROOT/'scenarios/reference.yaml',CONFIG/'algorithms.yaml')
+    def test_partial_wamv_override_matches_named_profile(self):
+        named=resolve_configuration(VESSELS/'wamv.yaml',ROOT/'scenarios/reference.yaml',CONFIG/'algorithms.yaml',environment='moderate')
+        settings=yaml.safe_load((VESSELS/'wamv.yaml').read_text())['settings']
+        with tempfile.TemporaryDirectory() as d:
+            p=Path(d)/'override.yaml'
+            p.write_text(yaml.safe_dump({'camera_rate':settings['camera_rate']}))
+            partial=resolve_configuration(p,ROOT/'scenarios/reference.yaml',CONFIG/'algorithms.yaml',environment='moderate')
+            self.assertEqual(named['vessel'],partial['vessel'])
+            self.assertEqual(named['scenario'],partial['scenario'])
+            self.assertEqual(len(partial['resources']),4)  # override plus the WAM-V defaults
+            # The pinned VRX thruster separation is not a setting.
+            p.write_text(yaml.safe_dump({'thruster_separation_m':3.}))
+            with self.assertRaisesRegex(ValueError,'unknown'):
+                resolve_configuration(p,ROOT/'scenarios/reference.yaml',CONFIG/'algorithms.yaml')
+
+    def test_config_dir_prefers_mounted_copy_and_falls_back(self):
+        from unittest.mock import patch
+        from njord_sim.configuration import config_path
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d)/'vessels').mkdir()
+            (Path(d)/'vessels'/'wamv.yaml').write_text((VESSELS/'wamv.yaml').read_text())
+            with patch.dict('os.environ',{'NJORD_CONFIG_DIR':d}):
+                self.assertEqual(config_path('vessels/wamv.yaml'),Path(d)/'vessels'/'wamv.yaml')
+                # A team directory without the file uses the packaged copy.
+                self.assertEqual(config_path('algorithms.yaml'),CONFIG/'algorithms.yaml')
+
+    def test_speed_profile_selects_guidance_ceiling_for_every_vessel(self):
+        speeds=yaml.safe_load((CONFIG/'algorithms.yaml').read_text())['speed_profiles_mps']
+        for vessel in ('wamv.yaml','njord_v1.yaml'):
+            for profile in ('fast','conservative'):
+                with self.subTest(vessel=vessel,profile=profile):
+                    resolved=resolve_configuration(VESSELS/vessel,ROOT/'scenarios/reference.yaml',CONFIG/'algorithms.yaml',profile=profile)
+                    self.assertEqual(autonomy_parameters(resolved)['guidance']['max_speed'],speeds[profile])
+                    self.assertEqual(resolved['algorithms']['profile'],profile)
+        self.assertEqual(self.resolve()['algorithms']['profile'],'fast')
+        with self.assertRaisesRegex(ValueError,'PROFILE'):self.resolve(profile='typo')
 
     def test_enu_current_and_direction_conflict(self):
-        scenario=convert_legacy_scenario(yaml.safe_load((ROOT/'scenarios/reference.yaml').read_text()))
-        scenario.pop('hull')
+        scenario=yaml.safe_load((ROOT/'scenarios/reference.yaml').read_text())
         scenario['environments']['calm'].update(current_speed_mps=2.,current_direction_to_deg_enu=90.)
         with tempfile.TemporaryDirectory() as d:
             p=Path(d)/'scenario.yaml';p.write_text(yaml.safe_dump(scenario))
-            result=resolve_configuration(CONFIG/'njord_v1.yaml',p,CONFIG/'algorithms.yaml')
+            result=resolve_configuration(VESSELS/'njord_v1.yaml',p,CONFIG/'algorithms.yaml')
             self.assertAlmostEqual(result['scenario']['environment']['current_velocity_enu'][1],2.)
         legacy=yaml.safe_load((ROOT/'scenarios/reference.yaml').read_text())
-        legacy['environments']['calm']['wind_direction_to_deg_enu']=45.
+        legacy.pop('schema_version')
+        legacy['environments']['calm']['wind_direction_deg']=45.
         with self.assertRaises(ValueError):convert_legacy_scenario(legacy)
 
     def test_public_sensor_authority_and_operating_guard(self):
@@ -88,27 +119,28 @@ class ConfigurationTests(unittest.TestCase):
         public=autonomy_parameters(result)
         self.assertEqual(public['sensor_adapter']['seed'],43)
         self.assertEqual(public['sensor_adapter']['gps_xy_std_m'],result['vessel']['sensors']['settings']['gps_horizontal_noise_m'])
-        reference=resolve_configuration(CONFIG/'wamv_reference.yaml',ROOT/'scenarios/reference.yaml',CONFIG/'algorithms.yaml')
+        reference=resolve_configuration(VESSELS/'wamv.yaml',ROOT/'scenarios/reference.yaml',CONFIG/'algorithms.yaml')
         reference['algorithms']['guidance']['max_thrust']=123.
         params=autonomy_parameters(reference)
         self.assertEqual(params['command_guard']['max_thrust'],123.)
         self.assertEqual(params['command_guard']['forward_limits'],[500.,500.])
 
     def test_versioned_hull_conflict_rejected_legacy_replaced(self):
-        scenario=convert_legacy_scenario(yaml.safe_load((ROOT/'scenarios/reference.yaml').read_text()))
+        scenario=yaml.safe_load((ROOT/'scenarios/reference.yaml').read_text())
+        scenario['hull']={'length_m':6.,'beam_m':3.3}
         with tempfile.TemporaryDirectory() as d:
             p=Path(d)/'scenario.yaml';p.write_text(yaml.safe_dump(scenario))
             with self.assertRaisesRegex(ValueError,'hull conflicts'):
-                resolve_configuration(CONFIG/'njord_v1.yaml',p,CONFIG/'algorithms.yaml')
+                resolve_configuration(VESSELS/'njord_v1.yaml',p,CONFIG/'algorithms.yaml')
             scenario['hull']={'length_m':3.,'beam_m':1.5}
             p.write_text(yaml.safe_dump(scenario))
-            resolved=resolve_configuration(CONFIG/'njord_v1.yaml',p,CONFIG/'algorithms.yaml')
+            resolved=resolve_configuration(VESSELS/'njord_v1.yaml',p,CONFIG/'algorithms.yaml')
             self.assertEqual(resolved['scenario']['hull'],scenario['hull'])
         self.assertEqual(self.resolve()['scenario']['hull'],{'length_m':3.,'beam_m':1.5})
 
     def test_lidar_max_exceeds_fixed_minimum(self):
         for value in (0.1,0.2):
-            vessel=yaml.safe_load((CONFIG/'njord_v1.yaml').read_text())
+            vessel=yaml.safe_load((VESSELS/'njord_v1.yaml').read_text())
             vessel['sensors']['settings']['lidar_range']=value
             with self.assertRaisesRegex(ValueError,'physical minimum'):validate_vessel(vessel)
 
@@ -123,7 +155,7 @@ class ConfigurationTests(unittest.TestCase):
 
 class MeshConfigurationTests(unittest.TestCase):
     def setUp(self):
-        self.vessel=yaml.safe_load((CONFIG/'njord_v1.yaml').read_text())
+        self.vessel=yaml.safe_load((VESSELS/'njord_v1.yaml').read_text())
 
     @staticmethod
     def write_obj(path,vertices,faces):
@@ -183,16 +215,16 @@ class MeshConfigurationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'missing'):validate_vessel(self.vessel)
 
     def test_wamv_rejects_ignored_geometry_and_environment(self):
-        vessel=yaml.safe_load((CONFIG/'wamv_reference.yaml').read_text())
-        vessel['legacy']['thruster_separation_m']=3.
-        with self.assertRaisesRegex(ValueError,'pinned'):validate_vessel(vessel)
+        vessel=yaml.safe_load((VESSELS/'wamv.yaml').read_text())
+        vessel['settings']['thruster_separation_m']=3.
+        with self.assertRaisesRegex(ValueError,'unknown'):validate_vessel(vessel)
         for field,value in [('current_speed_mps',1.),('water_density_kg_m3',1025.),('water_level_m',1.)]:
-            scenario=convert_legacy_scenario(yaml.safe_load((ROOT/'scenarios/reference.yaml').read_text()))
+            scenario=yaml.safe_load((ROOT/'scenarios/reference.yaml').read_text())
             scenario['environments']['calm'][field]=value
             with tempfile.TemporaryDirectory() as d:
                 p=Path(d)/'scenario.yaml';p.write_text(yaml.safe_dump(scenario))
                 with self.assertRaisesRegex(ValueError,'does not support'):
-                    resolve_configuration(CONFIG/'wamv_reference.yaml',p,CONFIG/'algorithms.yaml')
+                    resolve_configuration(VESSELS/'wamv.yaml',p,CONFIG/'algorithms.yaml')
 
     def test_splayed_axes_and_singular_allocation(self):
         import math

@@ -47,11 +47,10 @@ class TeamLaunchTests(unittest.TestCase):
             'profile': 'fast', 'seed': '7', 'expected_gates': '5',
             'autonomy': 'reference', 'controller': 'reference',
             'perception': 'reference', 'mapping': 'reference',
-            'params_file': '', 'vessel_config': str(SHARE / 'config/vessel.yaml'),
+            'params_file': '', 'vessel_config': str(SHARE / 'config/vessels/wamv.yaml'),
             **overrides,
         })
-        with patch.object(self.module, 'get_package_share_directory', return_value=str(SHARE)), \
-                patch.object(self.module, 'Node', side_effect=lambda **kwargs: kwargs):
+        with patch.object(self.module, 'Node', side_effect=lambda **kwargs: kwargs):
             return self.module.launch(context)
 
     def test_default_launch_keeps_complete_reference_stack(self):

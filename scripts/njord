@@ -1,12 +1,23 @@
 #!/usr/bin/env bash
+# Single entry point for building, testing and running the simulator.
+# CI (.github/workflows/ci.yml) calls the same commands as users.
+#
+#   ./scripts/njord help
+#
+# Settings are passed as environment variables (see compose.yaml and
+# docs/configuration.md), e.g. SEED=2 PROFILE=conservative ./scripts/njord demo slalom
 set -euo pipefail
 cd "$(dirname "$0")/.."
+
 export RUNNER_GIT_COMMIT="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+# Containers run as the calling user so files in outputs/ stay editable.
 export NJORD_UID="$(id -u)"
 export NJORD_GID="$(id -g)"
-# Images published by CI (.github/workflows/ci.yml) after the container tests pass.
+# Images published by CI after the container tests pass.
 registry="${NJORD_REGISTRY_IMAGE:-ghcr.io/martinnordli/surface_vessel_simulation}"
 local_image="${NJORD_IMAGE:-njord-sim:local}"
+
+# Compose overlays: software rendering, WSLg graphics, or the native GPU setup.
 if [ "${NJORD_CPU:-0}" = 1 ]; then
   export COMPOSE_FILE="${COMPOSE_FILE:-compose.yaml:compose.cpu.yaml}"
 elif grep -qi microsoft /proc/sys/kernel/osrelease; then
@@ -14,17 +25,43 @@ elif grep -qi microsoft /proc/sys/kernel/osrelease; then
 else
   export COMPOSE_FILE="${COMPOSE_FILE:-compose.yaml}"
 fi
+
 action="${1:-demo}"
 shift || true
+
+courses() {
+  local names=() file
+  for file in scenarios/*.yaml; do names+=("$(basename "$file" .yaml)"); done
+  echo "${names[*]}"
+}
+
 usage() {
-  echo 'Usage: scripts/njord {pull|build|check-image|test|selftest|demo|gui|lab|simulator|benchmark|smoke|doctor}'
-  echo '       scripts/njord pull [tag]    (default: the image CI published for this commit)'
-  echo '       scripts/njord {demo|gui|lab|benchmark} [reference|slalom] [additional arguments]'
-  echo 'lab keeps simulator and sensor/autonomy nodes running without starting an evaluator.'
-  echo 'selftest starts simulator and autonomy, checks live sensors and navigation, then stops.'
-  echo 'Examples: scripts/njord gui slalom; scripts/njord gui reference'
-  echo 'An explicit course overrides SCENARIO; otherwise SCENARIO or the reference default is used.'
-  echo 'NJORD_CPU=1 selects software rendering for hosts without a usable GPU.'
+  cat <<EOF
+Usage: scripts/njord <command> [course] [extra arguments]
+
+Image
+  pull [tag]      Download the CI-tested image for this commit (or a tag, e.g. latest)
+  build           Build the image locally (after changing files copied into it)
+  check-image     Fail unless the image was built from this checkout
+  doctor          Check Docker, Compose, NVIDIA and the image
+
+Run (course defaults to SCENARIO, else reference)
+  demo [course]       Headless race: simulator + autonomy + evaluator; exits with the result
+  gui [course]        Same race with the Gazebo window and RViz
+  lab [course]        Simulator + autonomy without an evaluator; keeps running for inspection
+  simulator [course]  Simulator service only
+  benchmark [course]  Seed x environment x profile race matrix (see --help)
+
+Test
+  test            Full unit/integration suite inside the container
+  selftest        Start simulator + autonomy, check live sensors and navigation, stop
+  smoke           Check live sensors against an already running stack
+
+Courses: $(courses)
+Common settings: SEED, ENVIRONMENT, PROFILE, VESSEL_CONFIG, ALGORITHMS_CONFIG,
+CONTROLLER/PERCEPTION/MAPPING/AUTONOMY=external. NJORD_CPU=1 uses software
+rendering on hosts without a usable GPU.
+EOF
 }
 
 # Verify that the local image exists and was built from this checkout's Docker
@@ -50,6 +87,8 @@ check_image() {
   return 0
 }
 
+# Pin the immutable image ID, create a unique run ID and a fresh output
+# directory. A directory that already holds a finished run is never reused.
 prepare_run() {
   check_image
   export NJORD_IMAGE="$(docker image inspect "$local_image" --format '{{.Id}}')"
@@ -63,16 +102,17 @@ prepare_run() {
   mkdir -p "$OUTPUT_HOST"
 }
 
+# A first argument naming a file in scenarios/ selects that course; it
+# overrides SCENARIO. Scenarios are copied into the image at build time.
 case "$action" in
   demo|gui|lab|simulator|benchmark)
-    case "${1:-}" in
-      reference|slalom)
-        export SCENARIO="/opt/njord/scenarios/$1.yaml"
-        shift
-        ;;
-    esac
+    if [ -n "${1:-}" ] && [ -f "scenarios/$1.yaml" ]; then
+      export SCENARIO="/opt/njord/scenarios/$1.yaml"
+      shift
+    fi
     ;;
 esac
+
 case "$action" in
   help|-h|--help) usage ;;
   pull)
@@ -95,6 +135,7 @@ case "$action" in
     check_image
     ;;
   build)
+    # Bake the source commit and digest into the image for provenance.
     source_digest="$(python3 scripts/build_metadata.py --field source_digest)"
     docker compose build \
       --build-arg "NJORD_IMAGE_SOURCE_COMMIT=$RUNNER_GIT_COMMIT" \
@@ -136,6 +177,7 @@ case "$action" in
       # exit must not tear down the ongoing sensor session.
       docker compose up simulator autonomy "$@"
     else
+      # The evaluator's exit code (0 = course completed) becomes ours.
       docker compose up --abort-on-container-exit --exit-code-from evaluator simulator autonomy evaluator "$@"
     fi
     ;;

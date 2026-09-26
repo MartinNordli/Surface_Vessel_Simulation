@@ -76,7 +76,7 @@ class PhysicsTests(unittest.TestCase):
     def test_multiple_convex_buoyancy_volumes(self):
         from njord_sim.mesh_geometry import geometry_mesh
 
-        vessel = yaml.safe_load((ROOT / "njord_sim/config/njord_v1.yaml").read_text())
+        vessel = yaml.safe_load((ROOT / "njord_sim/config/vessels/njord_v1.yaml").read_text())
         box = copy.deepcopy(vessel["geometry"]["buoyancy"])
         box["size_m"] = [3, 0.3, 0.6]
         vertices, faces = geometry_mesh(box)
@@ -116,7 +116,7 @@ class PhysicsTests(unittest.TestCase):
                 self.assertEqual(len(volume.findall("triangle")), 12)
 
     def test_generated_model(self):
-        vessel = yaml.safe_load((ROOT / "njord_sim/config/njord_v1.yaml").read_text())
+        vessel = yaml.safe_load((ROOT / "njord_sim/config/vessels/njord_v1.yaml").read_text())
         vessel["center_of_mass_m"] = [0.1, 0.2, 0.05]
         resolved = {
             "vessel": vessel,

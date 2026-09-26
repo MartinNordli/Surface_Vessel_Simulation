@@ -72,38 +72,41 @@ without detections; the reference mission uses the array stamp as image-processi
 freshness (0.5 s maximum). Transform measurements with TF at acquisition time.
 2D detections require a range/depth fusion adapter before this 3D interface.
 
-`params_file:=/path/to/parameters.yaml` applies ROS parameters by node name to
-the launched nodes, overriding defaults; `use_sim_time=true` is enforced last.
-Compose exposes this as `ROS_PARAMS_FILE`. `VESSEL_CONFIG` selects a partial
-sensor YAML override; `CONFIG_HOST` mounts a host directory at `/config` read-only.
-The runner passes the simulator's resolved `vessel_config.yaml` to autonomy,
-snapshots any ROS parameter file and saves settings/digests in
-`autonomy_config.json`. Direct separate launches must use the same vessel file.
-See [team-integration.md](team-integration.md) for exact commands, recording and replay.
+`params_file:=/path/to/parameters.yaml` (Compose: `ROS_PARAMS_FILE`) applies ROS
+parameters by node name to the launched nodes. Values resolved from the vessel
+file and `algorithms.yaml` take precedence over it, and `use_sim_time=true` is
+enforced last; see [configuration.md](configuration.md#parameter-precedence).
+The runner snapshots any ROS parameter file and saves settings and digests in
+`autonomy_config.json`. See [team-integration.md](team-integration.md) for exact
+commands, recording and replay.
 
 Use topic remapping/ROS parameters on the individual nodes for different sensor
 names. Sensor geometry and models are in `njord_sim/config`; scenario truth goes
 only to world generation and scoring. A mission knows the number of gates, not
 their locations. Red-left/green-right is this demo's rule, not an assertion about
 the official competition rules.
-# Versioned physical configuration
+## Njord physics model
 
-The versioned Njord model retains the `wamv` model/topic/frame namespace for
-compatibility with these interfaces. `njord::Physics` consumes the same atomic
+The Njord vessel keeps the `wamv` model, topic and frame namespace so all of the
+interfaces above are unchanged. `njord::Physics` consumes the same atomic
 `/njord/actuator_forces` envelope as the WAM-V watchdog; exactly one of these
-plugins is loaded. Forces are newtons, applied at configured physical locations.
-The Njord watchdog targets zero on invalid/expired commands; configured actuator
-response decays force in simulation time while expiration uses steady wall time.
+plugins is loaded. Forces are newtons, applied at the configured thruster
+positions. Invalid or expired commands target zero thrust; the configured
+actuator response decays the force in simulation time, while expiry uses steady
+wall time.
+
 Gazebo-only `/njord/actuator_applied` (`gz.msgs.Twist`) reports applied newtons in
 `linear.x/y`, target newtons in `angular.x/y`, and command validity (1/0) in
 `angular.z`, at up to 50 Hz. Its header is simulation time at the end of the
 response integration step. It is evaluation telemetry and has no autonomy bridge.
 
-Launch resolves all three YAML files before Gazebo starts. It publishes
-`public_parameters.json` (guidance, planner, mapper and guard settings, no course
-coordinates), `vessel_config.yaml` (sensor compatibility settings), and an atomic
-`run_ready.json` with run ID, gate count and manifest SHA-256. Consumers verify
-the public artifacts against `run_manifest.json`. Reference node parameters from
-this projection take precedence over team ROS overrides. Evaluator, autonomy and
-recorder results carry the same manifest digest. Full configuration and scenario
-artifacts are evaluation data; they are not autonomy inputs.
+## Run handoff files
+
+Before Gazebo starts, the simulator writes into the run directory:
+`public_parameters.json` (guidance, planner, mapper, guard and sensor-adapter
+parameters; no course coordinates), `vessel_config.yaml` (the flat sensor and
+thrust settings in use), `run_manifest.json` (SHA-256 of every input and
+generated file) and, last and atomically, `run_ready.json` with the run ID, gate
+count and manifest digest. Autonomy, evaluator and recorder verify the public
+artifacts against the manifest and record its digest. The full configuration
+and scenario files are evaluation data, not autonomy inputs.

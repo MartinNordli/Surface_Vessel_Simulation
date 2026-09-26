@@ -1,40 +1,102 @@
+# Base Compose stack of the Njord simulator. Normally driven through
+# ./scripts/njord, which exports the variables below (NJORD_UID/GID, RUN_ID,
+# OUTPUT_HOST, NJORD_IMAGE, ...) and adds a platform overlay via COMPOSE_FILE:
+#   compose.gui.yaml     Gazebo window on the host X display (./scripts/njord gui)
+#   compose.wsl.yaml     GPU rendering through WSLg on Windows (auto-selected)
+#   compose.cpu.yaml     software rendering without a GPU (NJORD_CPU=1, CI)
+#   compose.record.yaml  optional MCAP recorder service
+#   compose.team.yaml    shell for building/running team ROS 2 packages
+# Every ${VAR:-default} can be overridden from the host environment.
+
+# Project name; benchmark.py and dynamics_campaign.py override it per run
+# (COMPOSE_PROJECT_NAME / -p) so parallel stacks never share containers.
 name: njord-sim
+
+# Settings shared by every service; merged in with `<<: *common`.
 x-common: &common
+  # scripts/njord pins this to the immutable image ID for a run, so a rebuild
+  # during the run cannot change what the services execute.
   image: ${NJORD_IMAGE:-njord-sim:local}
   build: .
+  # Run Docker's minimal init as the main process; it forwards signals to the
+  # command and reaps exited child processes.
   init: true
+  # Run as the calling host user so files written to outputs/ stay owned and
+  # editable by that user (scripts/njord exports NJORD_UID/NJORD_GID).
   user: ${NJORD_UID:-1000}:${NJORD_GID:-1000}
+  # Host networking: ROS 2 (DDS) and Gazebo transport discovery work between
+  # the services and with ROS nodes running directly on the host. Isolation
+  # between stacks therefore comes from ROS_DOMAIN_ID and GZ_PARTITION below,
+  # not from Docker networks.
   network_mode: host
+  # Share the host's IPC namespace (shared memory), e.g. for X11 GUI clients.
   ipc: host
+  # Share the host's PID namespace so every process in every container has a
+  # host-unique PID. Fast DDS derives participant identities from the PID; with
+  # a shared host network, per-container PIDs (all starting at 1) could clash.
   pid: host
   environment: &environment
+    # The host user has no home directory in the image; entrypoint.sh creates it.
     HOME: /tmp/njord-home
+    # Fast DDS over UDP only, so discovery and data never depend on its
+    # shared-memory transport across container boundaries.
     FASTDDS_BUILTIN_TRANSPORTS: UDPv4
+    # ROS 2 isolation: only nodes with the same domain ID see each other.
+    # The benchmark leases a unique domain (60..159) per concurrent race.
     ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-42}
+    # Course file inside the image; `./scripts/njord demo <course>` sets it.
     SCENARIO: ${SCENARIO:-/opt/njord/scenarios/reference.yaml}
     SEED: ${SEED:-1}
+    # Gazebo transport isolation, the Gazebo counterpart of ROS_DOMAIN_ID.
     GZ_PARTITION: ${GZ_PARTITION:-njord-sim}
+    # Named environment in the scenario (wind, waves, current), e.g. calm.
     ENVIRONMENT: ${ENVIRONMENT:-calm}
+    # Speed profile of the reference autonomy: fast or conservative.
     PROFILE: ${PROFILE:-fast}
+    # Free-form label stored in the evaluator's metrics.
     RUN_LABEL: ${RUN_LABEL:-demo}
+    # Unique run identifier; required by autonomy, evaluator and recorder to
+    # accept the simulator's run_ready.json. scripts/njord generates it.
     RUN_ID: ${RUN_ID:-}
+    # "reference" runs the built-in node, "external" leaves that role to a
+    # team's own node (see docs/team-integration.md).
     AUTONOMY: ${AUTONOMY:-reference}
     CONTROLLER: ${CONTROLLER:-reference}
     PERCEPTION: ${PERCEPTION:-reference}
     MAPPING: ${MAPPING:-reference}
-    VESSEL_CONFIG: ${VESSEL_CONFIG:-/opt/njord/install/share/njord_sim/config/vessel.yaml}
-    ALGORITHMS_CONFIG: ${ALGORITHMS_CONFIG:-/opt/njord/install/share/njord_sim/config/algorithms.yaml}
+    # The vessel and algorithm inputs of a run (see docs/configuration.md);
+    # paths are inside the container. The defaults read the host's
+    # njord_sim/config/ through the /config mount below, so edits there apply
+    # to the next run without rebuilding the image.
+    VESSEL_CONFIG: ${VESSEL_CONFIG:-/config/vessels/wamv.yaml}
+    ALGORITHMS_CONFIG: ${ALGORITHMS_CONFIG:-/config/algorithms.yaml}
+    # Other configuration files (localization.yaml, the partial-override
+    # base, node fallback defaults) are read from here first, falling back to
+    # the copies built into the image (njord_sim/configuration.py:config_path).
+    NJORD_CONFIG_DIR: /config
+    # Optional extra ROS parameter file for the reference autonomy nodes.
     ROS_PARAMS_FILE: ${ROS_PARAMS_FILE:-}
+    # Where services write run artifacts inside the container (mounted below).
     OUTPUT_DIR: /outputs
+    # Provenance written into manifests and metrics: the host checkout's
+    # commit and the image ID actually used.
     RUNNER_GIT_COMMIT: ${RUNNER_GIT_COMMIT:-unknown}
     IMAGE_ID: ${IMAGE_ID:-unknown}
   volumes:
+    # Run output directory on the host (scripts/njord creates a fresh
+    # outputs/run-<UTC time> per run).
     - ${OUTPUT_HOST:-./outputs/demo}:/outputs
+    # Host configuration, read-only: njord_sim/config/, or a team directory
+    # via CONFIG_HOST (then point VESSEL_CONFIG/ALGORITHMS_CONFIG into it).
     - ${CONFIG_HOST:-./njord_sim/config}:/config:ro
+  # Time for a clean shutdown after SIGTERM before Docker kills the service.
   stop_grace_period: 10s
 services:
+  # Gazebo with the vessel, sensors, course and ROS bridges; resolves the
+  # configuration and publishes the run handoff (run_ready.json).
   simulator:
     <<: *common
+    # Reserve one NVIDIA GPU for sensor rendering (removed by compose.cpu.yaml).
     deploy:
       resources:
         reservations:
@@ -43,16 +105,24 @@ services:
               count: 1
               capabilities: [gpu]
     command: [ros2, launch, njord_sim, simulation.launch.py]
+  # Reference autonomy (perception, mapping, planning, guidance, command
+  # guard); waits for the simulator's handoff (scripts/run_autonomy.py).
   autonomy:
     <<: *common
     command: [python3, /opt/njord/scripts/run_autonomy.py]
+  # Ground-truth race scorer; its exit code is the race result
+  # (scripts/run_evaluator.py).
   evaluator:
     <<: *common
     command: [python3, /opt/njord/scripts/run_evaluator.py]
+  # Unit/integration test suite; only started on request
+  # (./scripts/njord test, which runs this service).
   tests:
     <<: *common
     profiles: [test]
     command: [bash, -c, "python3 tests/test_dstar_lite.py && python3 -m unittest discover -s tests -p 'test_*.py'"]
+  # RViz on the host X display; only started on request
+  # (docker compose --profile gui up rviz).
   rviz:
     <<: *common
     profiles: [gui]
@@ -67,6 +137,9 @@ services:
       <<: *environment
       DISPLAY: ${DISPLAY:-:0}
       XAUTHORITY: /tmp/xauthority
+    # X11 socket and the host's Xauthority cookie, both read-only; no
+    # `xhost +` is needed. Without XAUTHORITY set, /dev/null is mounted.
+    # This list replaces the shared volumes above (no /outputs or /config).
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix:ro
       - ${XAUTHORITY:-/dev/null}:/tmp/xauthority:ro

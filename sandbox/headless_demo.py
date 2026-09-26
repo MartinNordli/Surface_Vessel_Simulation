@@ -13,6 +13,18 @@ hydrodynamic fidelity will save it.
 
 Results are written to outputs/sandbox/ so a run never rewrites the committed
 figures in this directory. Use --output-dir for a different destination.
+
+Where to run: on the host (or anywhere) with Python 3, numpy and matplotlib;
+no Docker, ROS or Gazebo. Five seeds (0-4) run in about ten seconds.
+
+Outputs: one line per seed on stdout, headless_demo.png (seed 0) and
+headless_metrics.json (all seeds). Exit code 0 if every seed reaches the goal
+without touching an obstacle, 1 otherwise.
+
+Limits: the vessel model is a simple uncoupled surge/yaw model with linear
+damping and made-up coefficients (not WAM-V or Njord values), obstacles are
+circles and the map is binary (blocked or free). It tests the planner,
+inflation and guidance logic, not hydrodynamics, rendering or ROS.
 """
 
 import argparse
@@ -52,14 +64,14 @@ OBSTACLES = [
     (45.0, 95.0, 6.0),
 ]
 
-# vessel
-MASS = 180.0
-IZZ = 200.0
-X_U = 40.0             # linear surge damping
-N_R = 300.0            # linear yaw damping
+# vessel (illustrative values, not a calibrated model)
+MASS = 180.0           # kg
+IZZ = 200.0            # kg m^2, yaw inertia
+X_U = 40.0             # linear surge damping, N per m/s
+N_R = 300.0            # linear yaw damping, N m per rad/s
 BEAM = 1.8             # thruster separation, metres
 T_MAX = 100.0          # newtons per thruster
-DT = 0.05
+DT = 0.05              # s, integration and control step
 
 # sensing
 LIDAR_HZ = 5.0
@@ -70,23 +82,26 @@ LIDAR_SIGMA = 0.15     # range noise, metres
 # planning and control
 INFLATION_CELLS = 3    # hull half-width plus safety margin
 FOOTPRINT_CELLS = 2    # cells around the boat that are always kept free
-LOOKAHEAD = 12.0
-KP_PSI, KD_PSI = 900.0, 700.0
-KP_U = 120.0
-U_MAX = 4.0
-GOAL_TOL = 5.0
-TIMEOUT = 400.0
+LOOKAHEAD = 12.0       # m, carrot distance along the path
+KP_PSI, KD_PSI = 900.0, 700.0  # heading PD gains (N m per rad, per rad/s)
+KP_U = 120.0           # surge P gain, N per m/s
+U_MAX = 4.0            # m/s, cruise speed on a straight heading
+GOAL_TOL = 5.0         # m, goal reached radius
+TIMEOUT = 400.0        # s of simulated time before giving up
 
 
 def wrap(angle):
+    """Wrap an angle in radians to [-pi, pi)."""
     return (angle + math.pi) % (2 * math.pi) - math.pi
 
 
 def to_cell(p):
+    """World (x, y) in metres -> grid cell (row, col); row follows y."""
     return (int(p[1] / RES), int(p[0] / RES))
 
 
 def to_world(cell):
+    """Grid cell (row, col) -> world (x, y) of the cell centre in metres."""
     return np.array([(cell[1] + 0.5) * RES, (cell[0] + 0.5) * RES])
 
 
@@ -121,6 +136,7 @@ def lidar_scan(pos, heading, rng):
 
 
 def _disc(centre, radius_cells):
+    """Yield every cell within ``radius_cells`` of ``centre`` (may be out of bounds)."""
     for dr in range(-radius_cells, radius_cells + 1):
         for dc in range(-radius_cells, radius_cells + 1):
             if dr * dr + dc * dc <= radius_cells**2:
@@ -157,6 +173,7 @@ def integrate_scan(grid, hits, robot_cell):
 
 
 def lookahead_point(path_xy, pos):
+    """Return the first path point at least LOOKAHEAD m ahead of the nearest one."""
     if len(path_xy) == 1:
         return path_xy[0]
     d = np.linalg.norm(path_xy - pos[None, :], axis=1)
@@ -172,7 +189,16 @@ def lookahead_point(path_xy, pos):
 
 
 def run(seed=0, verbose=True, record_every=None):
-    """record_every: capture a frame every N control steps, for sandbox/make_gif.py."""
+    """Simulate one seeded run from START to GOAL and return its results.
+
+    record_every: capture a frame every N control steps, for sandbox/make_gif.py.
+
+    Returns (metrics, trajectory, first_plan, grid, frames): metrics as
+    printed by the CLI (time_s is simulated seconds; min_clearance_m is the
+    smallest distance from the boat's centre point to an obstacle edge, and
+    collision means it went below zero), the (N, 2) track in metres, the
+    initial plan on the empty map, the final grid and the recorded frames.
+    """
     rng = np.random.default_rng(seed)
     grid = Grid(CELLS, CELLS)
 
@@ -197,6 +223,7 @@ def run(seed=0, verbose=True, record_every=None):
     step = 0
 
     while t < TIMEOUT:
+        # Scan at LIDAR_HZ; replan only when the map actually changed.
         if t >= next_scan:
             next_scan += 1.0 / LIDAR_HZ
             hits = lidar_scan(pos, psi, rng)
@@ -230,6 +257,8 @@ def run(seed=0, verbose=True, record_every=None):
             )
         step += 1
 
+        # Line-of-sight guidance: heading PD for the turning moment, and a
+        # speed target that drops (to 25 % minimum) with the heading error.
         target = lookahead_point(path_xy, pos)
         psi_d = math.atan2(target[1] - pos[1], target[0] - pos[0])
         e = wrap(psi_d - psi)
@@ -238,11 +267,14 @@ def run(seed=0, verbose=True, record_every=None):
         u_d = U_MAX * max(0.25, 1.0 - abs(e) / (math.pi / 2))
         thrust = KP_U * (u_d - u)
 
+        # Differential-thrust allocation, then saturation per thruster.
         left = np.clip(thrust / 2 - moment / BEAM, -T_MAX, T_MAX)
         right = np.clip(thrust / 2 + moment / BEAM, -T_MAX, T_MAX)
         thrust = left + right                    # actual, after saturation
         moment = (right - left) * BEAM / 2
 
+        # Explicit Euler step of the surge and yaw dynamics (no sway, no
+        # added mass, no environment); the boat moves along its heading.
         u += DT * (thrust - X_U * u) / MASS
         r += DT * (moment - N_R * r) / IZZ
         psi = wrap(psi + DT * r)
@@ -274,6 +306,7 @@ def run(seed=0, verbose=True, record_every=None):
 
 
 def plot(trajectory, first_plan, grid, path):
+    """Save a PNG of obstacles, discovered cells, first plan and executed track."""
     fig, ax = plt.subplots(figsize=(7.5, 7.5))
     blocked = np.array([to_world(c) for c in grid.blocked]) if grid.blocked else np.empty((0, 2))
     if len(blocked):

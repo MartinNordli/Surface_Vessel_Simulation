@@ -1,0 +1,34 @@
+# WAM-V reference vessel (default VESSEL_CONFIG).
+#
+# This is the only place to change WAM-V sensor and thrust settings. The hull,
+# hydrodynamics and thruster placement come from the pinned VRX v3.1.0 model and
+# are not configurable here; sensor mounting poses are in wamv_sensors.xacro.
+#
+# A team can override a subset of `settings` without copying this file: write a
+# flat YAML with only the keys to change (see ../examples/sensors_low_bandwidth.yaml)
+# and select it with VESSEL_CONFIG. Unknown keys are rejected.
+schema_version: 1
+profile: wamv_reference
+settings:
+  # Front left and right RGB cameras (both use the same settings).
+  camera_width: 640                     # pixels
+  camera_height: 360                    # pixels
+  camera_rate: 15.0                     # Hz
+  camera_horizontal_fov_rad: 1.3962634  # 80 degrees; CameraInfo follows this
+  camera_noise_stddev: 0.007            # Gaussian pixel noise, normalized [0, 1]
+  # 3D lidar on the mast.
+  lidar_range: 80.0                     # m, maximum range
+  lidar_samples: 720                    # horizontal rays per revolution
+  lidar_vertical_samples: 16            # vertical beams
+  lidar_rate: 10.0                      # Hz
+  lidar_noise_stddev: 0.01              # m
+  # GPS and IMU. Noise is added by the sensor adapter node in metres/radians,
+  # because Gazebo Harmonic applies NavSat noise in degrees.
+  gps_rate: 10.0                        # Hz
+  imu_rate: 100.0                       # Hz
+  gps_horizontal_noise_m: 0.3           # standard deviation
+  gps_vertical_noise_m: 0.5             # standard deviation
+  imu_orientation_noise_rad: 0.005      # standard deviation
+  # Physical thrust limit per engine, forward and reverse. The Gazebo actuator
+  # watchdog clamps to this; algorithms.yaml may choose a lower operating limit.
+  max_thrust_n: 500.0

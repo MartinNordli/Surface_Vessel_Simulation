@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<!--
+  WAM-V sensor mounting poses (metres / radians, WAM-V body frame).
+
+  Rates, resolution, range and noise are NOT set here: the model generator
+  (njord_sim/vessel.py) overwrites them from vessels/wamv.yaml. Changing a pose
+  requires `./scripts/njord build`, so URDF, TF and the Gazebo model stay in sync.
+-->
+<robot xmlns:xacro="http://ros.org/wiki/xacro">
+  <xacro:macro name="yaml_components">
+    <xacro:wamv_camera name="front_left_camera" x="0.75" y="0.15" P="0.05" />
+    <xacro:wamv_camera name="front_right_camera" x="0.75" y="-0.15" P="0.05" />
+    <xacro:wamv_gps name="gps_wamv" x="-0.85" />
+    <xacro:wamv_imu name="imu_wamv" y="-0.2" />
+    <xacro:wamv_3d_lidar name="lidar_wamv" />
+  </xacro:macro>
+</robot>

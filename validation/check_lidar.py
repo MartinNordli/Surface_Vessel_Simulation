@@ -6,6 +6,26 @@ Expected range is measured from the sensor origin, not the boat origin.
 
 python3 validation/check_lidar.py --ros-args -p target:='[25.0, 7.0, 0.5]'
 Use the resolved scenario's marker coordinate (seeds may shift it).
+
+Where to run: inside the container (e.g. ``docker compose run --rm autonomy
+python3 /opt/njord/validation/check_lidar.py ...``) on the same ROS domain as
+a running ``simulator`` service, with use_sim_time as for the other checks.
+
+Parameters:
+    target          [x_m, y_m, radius_m] of the cylinder in the world frame
+                    (the third value is the radius, not a height)
+    points_topic, odom_topic, body_frame   topics and the vessel body frame
+    min_height_m    returns at or below this world z (default 0.4 m) are
+                    treated as water/low returns and ignored
+    max_error_m     acceptance limit on |measured - expected| (default 0.5 m)
+    wall_timeout_s  steady wall-time limit (default 120 s)
+
+For each new cloud, the returns within 0.4 m of the cylinder surface are
+found; the measured range is the nearest such return horizontally from the
+sensor origin, the expected range is the distance to the cylinder axis minus
+the radius. After 40 scans it prints mean/std/max error, TF drops and the
+fraction of low returns, and exits 0 if every |error| <= max_error_m, else 2.
+It also exits 2 on the wall-time watchdog.
 """
 import math
 import time
@@ -23,10 +43,14 @@ from sensor_msgs.msg import PointCloud2
 from sensor_msgs_py import point_cloud2
 from tf2_ros import Buffer, TransformException, TransformListener
 
-SAMPLES = 40
+SAMPLES = 40  # Scans with a target hit needed before judging.
 
 
 def rotation(q):
+    """Return the 3x3 rotation matrix of a quaternion (normalized first).
+
+    Raises ValueError for a zero or non-finite quaternion.
+    """
     x, y, z, w = q.x, q.y, q.z, q.w
     norm = math.sqrt(x*x + y*y + z*z + w*w)
     if not math.isfinite(norm) or norm < 1e-12:
@@ -42,6 +66,7 @@ def translation(t):
 
 
 class LidarCheck(Node):
+    """Measure lidar range error against the known target cylinder."""
     def __init__(self):
         super().__init__("lidar_check")
         self.declare_parameters("", [
@@ -53,6 +78,9 @@ class LidarCheck(Node):
         self.body_frame = self.get_parameter("body_frame").value
         self.min_height = self.get_parameter("min_height_m").value
         self.errors, self.low_fractions = [], []
+        # Two buffers keep truth separate: sensor_tf is filled from /tf (the
+        # body-to-sensor extrinsics); truth_tf only from ground-truth odometry,
+        # so the check never mixes truth into the autonomy's TF tree.
         self.sensor_tf = Buffer(cache_time=Duration(seconds=10))
         self.truth_tf = Buffer(cache_time=Duration(seconds=10))
         self.listener = TransformListener(self.sensor_tf, self)
@@ -69,6 +97,7 @@ class LidarCheck(Node):
             raise SystemExit(2)
 
     def on_odom(self, message):
+        """Store the ground-truth world->body pose in the private truth buffer."""
         transform = TransformStamped()
         transform.header.stamp = message.header.stamp
         transform.header.frame_id = "validation_world"
@@ -80,9 +109,12 @@ class LidarCheck(Node):
         self.truth_tf.set_transform(transform, "ground_truth_validation")
 
     def on_cloud(self, message):
+        """Score one point cloud; exit once SAMPLES scans have been measured."""
         stamp = Time.from_msg(message.header.stamp)
+        # Skip unstamped, repeated or out-of-order clouds.
         if stamp.nanoseconds == 0 or (self.last_stamp is not None and stamp.nanoseconds <= self.last_stamp):
             return
+        # Both transforms at the cloud's own stamp (interpolated, not latest).
         try:
             wb = self.truth_tf.lookup_transform("validation_world", self.body_frame, stamp).transform
             bs = self.sensor_tf.lookup_transform(self.body_frame, message.header.frame_id, stamp).transform
@@ -97,6 +129,7 @@ class LidarCheck(Node):
         raw = raw[np.isfinite(raw).all(axis=1)]
         if not raw.size:
             return
+        # Sensor frame -> world frame: world = R_wb (R_bs p + t_bs) + t_wb.
         r_wb, r_bs = rotation(wb.rotation), rotation(bs.rotation)
         sensor_origin = translation(wb.translation) + r_wb @ translation(bs.translation)
         world = raw @ (r_wb @ r_bs).T + sensor_origin

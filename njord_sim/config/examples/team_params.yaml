@@ -1,0 +1,13 @@
+# Example ROS 2 parameter file for reference nodes, selected with
+#   ROS_PARAMS_FILE=/config/examples/team_params.yaml ./scripts/njord demo slalom
+#
+# Use this for node parameters that algorithms.yaml does not manage, such as
+# perception thresholds or mission geometry. Guidance, planner and mapper
+# tuning always comes from ALGORITHMS_CONFIG (config/algorithms.yaml) and takes
+# precedence over this file; change it there instead.
+perception:
+  ros__parameters:
+    min_blob_area: 15        # px, smallest color blob accepted as a buoy (default 20)
+mission:
+  ros__parameters:
+    crossing_memory_s: 60.0  # s, how long a gate out of view is remembered (default 45)

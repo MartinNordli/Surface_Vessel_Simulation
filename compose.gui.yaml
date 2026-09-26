@@ -1,9 +1,15 @@
+# Overlay: show the Gazebo window on the host's X display.
+# Added automatically by ./scripts/njord gui [course]. Uses the existing X
+# display and Xauthority cookie read-only; it never runs `xhost +`.
 services:
   simulator:
     environment:
+      # simulation.launch.py starts the Gazebo GUI when HEADLESS is false.
       HEADLESS: 'false'
       DISPLAY: ${DISPLAY:-:0}
       XAUTHORITY: /tmp/xauthority
+    # Appended to the base volumes: the X11 socket and the Xauthority cookie
+    # (/dev/null when XAUTHORITY is unset on the host).
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix:ro
       - ${XAUTHORITY:-/dev/null}:/tmp/xauthority:ro

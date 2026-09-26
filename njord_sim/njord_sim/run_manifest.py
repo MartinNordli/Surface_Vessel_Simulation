@@ -1,4 +1,18 @@
-"""Atomic run handoff; autonomy receives only public mission metadata."""
+"""Atomic run handoff; autonomy receives only public mission metadata.
+
+The simulator launch prepares a fresh run directory in this order:
+
+1. ``freeze_resources``  copy checksummed mesh files into ``resources/``
+2. (model and world generation write wamv.sdf, njord_course.sdf, ...)
+3. ``write_manifest``    snapshot inputs, hash every generated artifact
+4. ``publish_ready``     atomically write ``run_ready.json`` last
+
+The autonomy, evaluator and recorder processes block in ``wait_ready`` until
+``run_ready.json`` names their RUN_ID, then check that nothing changed since.
+Autonomy only ever sees ``run_ready.json`` (run id, gate count, manifest
+digest) and ``public_parameters.json``; scenario geometry and ground truth
+stay with the simulator and the evaluator.
+"""
 import json
 import hashlib
 import os
@@ -7,6 +21,11 @@ import time
 
 
 def atomic_text(path, text):
+    """Write ``text`` to ``path`` via a temporary file and rename.
+
+    The rename is atomic on one filesystem, so a polling reader sees either
+    the old file or the complete new one, never a partial write.
+    """
     path = Path(path)
     temporary = path.with_name(path.name + '.tmp')
     temporary.write_text(text)
@@ -14,6 +33,11 @@ def atomic_text(path, text):
 
 
 def publish_ready(output, run_id, scenario, manifest_sha256=None):
+    """Write ``run_ready.json``, the signal that the run directory is complete.
+
+    Contains the run id, the number of gates and, when given, the SHA-256 of
+    run_manifest.json. Must be called after ``write_manifest``.
+    """
     if not run_id:
         raise ValueError('RUN_ID is required; use scripts/njord or set a unique run identifier')
     # Do not expose hidden gate positions to the mission process.
@@ -24,11 +48,18 @@ def publish_ready(output, run_id, scenario, manifest_sha256=None):
 
 
 def sha256(path):
+    """Hex SHA-256 digest of a file's bytes."""
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
 def freeze_resources(output, resolved):
-    """Copy checksummed inputs; generated meshes reference only the run copy."""
+    """Copy checksummed inputs; generated meshes reference only the run copy.
+
+    ``resolved['resources']`` maps each source file to the SHA-256 recorded
+    during configuration resolution. Each file is re-hashed (so an edit after
+    validation is caught), copied to ``resources/<sha256><suffix>``, and every
+    ``uri`` inside ``resolved['vessel']`` is rewritten in place to the copy.
+    """
     output = Path(output)
     directory = output/'resources'
     directory.mkdir(exist_ok=True)
@@ -42,6 +73,7 @@ def freeze_resources(output, resolved):
         destination.write_bytes(data)
         replacements[str(source)] = str(destination.resolve())
     def rewrite(value):
+        # Walk nested dicts/lists and replace matching 'uri' strings.
         if isinstance(value, dict):
             for key, child in value.items():
                 if key == 'uri' and isinstance(child, str):
@@ -71,6 +103,9 @@ def write_manifest(output, run_id, resolved, sources, public_parameters):
         if expected is not None and sha256(destination) != expected:
             raise ValueError(f'source configuration changed during startup: {path}')
         snapshots[name] = {'path': str(destination.relative_to(output)), 'sha256': sha256(destination)}
+    # Hash the fixed set of generated top-level files plus everything under
+    # resources/ and source_config/. Logs, metrics and bags written later
+    # are not part of the sealed run inputs.
     atomic_text(output/'resolved_configuration.json', json.dumps(resolved, indent=2, allow_nan=False)+'\n')
     atomic_text(output/'public_parameters.json', json.dumps(public_parameters, indent=2, allow_nan=False)+'\n')
     immutable = {'wamv.sdf', 'wamv.urdf', 'bridges.yaml', 'vessel_config.yaml',
@@ -80,6 +115,7 @@ def write_manifest(output, run_id, resolved, sources, public_parameters):
                  for path in sorted(output.rglob('*')) if path.is_file()
                  and (path.parent == output and path.name in immutable
                       or path.relative_to(output).parts[0] in ('resources', 'source_config'))}
+    # Provenance: which image and which runner commit produced this run.
     manifest = {
         'schema_version': 1, 'run_id': run_id, 'seed': resolved['scenario']['seed'],
         'sources': snapshots, 'artifacts': artifacts,
@@ -94,7 +130,12 @@ def write_manifest(output, run_id, resolved, sources, public_parameters):
 
 
 def verify_public_handoff(output, metadata):
-    """Verify public inputs against the run identity without loading scenario data."""
+    """Verify public inputs against the run identity without loading scenario data.
+
+    Raises ValueError if run_manifest.json no longer matches the digest in
+    ``metadata`` (from run_ready.json), belongs to another run, or if any
+    hashed artifact changed after readiness was published.
+    """
     output = Path(output)
     if 'manifest_sha256' not in metadata:
         return  # Compatibility with pre-manifest runs.
@@ -109,6 +150,13 @@ def verify_public_handoff(output, metadata):
 
 
 def wait_ready(output, run_id, timeout=120.0):
+    """Block until ``run_ready.json`` for ``run_id`` exists and verifies.
+
+    Polls every 0.1 s using the steady (monotonic) clock, because the
+    simulator and its /clock may not be running yet. Files from another run,
+    partial handoffs and failed verification are retried until ``timeout``
+    seconds, then TimeoutError is raised. Returns the ready metadata.
+    """
     if not run_id:
         raise ValueError('RUN_ID is required; use scripts/njord or set a unique run identifier')
     deadline = time.monotonic() + timeout

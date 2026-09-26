@@ -1,4 +1,24 @@
 // SPDX-License-Identifier: MIT
+//
+// njord::ActuatorWatchdog -- Gazebo model plugin used by the WAM-V reference
+// profile (attached by njord_sim/vessel.py). It is the only path from ROS
+// thrust commands to the upstream VRX thruster plugins.
+//
+// SDF parameters:
+//   <timeout_s>    steady wall-clock seconds a command stays valid (default 0.5,
+//                  set from constants.COMMAND_TIMEOUT_S)
+//   <max_force_n>  symmetric thrust limit in newtons (default 500, set from
+//                  the vessel's max_thrust_n)
+//
+// Topics (Gazebo transport):
+//   subscribes /njord/actuator_forces          gz.msgs.Twist, forces in newtons
+//   publishes  /wamv/thrusters/left/thrust     gz.msgs.Double, newtons
+//   publishes  /wamv/thrusters/right/thrust    gz.msgs.Double, newtons
+//
+// Failure behavior: a non-finite value zeroes both thrusters; a command older
+// than timeout_s (steady time), no command yet, or a paused simulation all
+// publish zero thrust. Zero thrust is a command to the VRX thruster model,
+// not a stop: the hull keeps its momentum and is slowed only by hydrodynamics.
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -15,10 +35,15 @@ namespace njord {
 // This is an internal transport envelope, never a kinematic velocity command.
 class ActuatorWatchdog final : public gz::sim::System,
   public gz::sim::ISystemConfigure, public gz::sim::ISystemPreUpdate {
+  // Steady wall time: command freshness is an infrastructure watchdog and
+  // must not depend on /clock, which stops when the simulator stalls.
   using Clock = std::chrono::steady_clock;
   gz::transport::Node node;
   gz::transport::Node::Publisher leftPub, rightPub;
+  // Guards the latest command, written from the transport callback thread
+  // and read in the simulation thread.
   std::mutex mutex;
+  // Epoch default: before the first command the age is huge, so thrust is 0.
   Clock::time_point received{};
   double left{0}, right{0}, timeout{0.5}, maxForce{500};
  public:
@@ -32,6 +57,8 @@ class ActuatorWatchdog final : public gz::sim::System,
     rightPub = node.Advertise<gz::msgs::Double>("/wamv/thrusters/right/thrust");
     node.Subscribe("/njord/actuator_forces", &ActuatorWatchdog::Command, this);
   }
+  // Transport callback: store the clamped left/right forces (N) and the
+  // steady receive time. Either value non-finite invalidates both.
   void Command(const gz::msgs::Twist &msg) {
     std::lock_guard<std::mutex> lock(mutex);
     const double l = msg.linear().x(), r = msg.linear().y();
@@ -39,6 +66,8 @@ class ActuatorWatchdog final : public gz::sim::System,
     right = std::isfinite(l) && std::isfinite(r) ? std::clamp(r, -maxForce, maxForce) : 0;
     received = Clock::now();
   }
+  // Every simulation step: republish the stored forces, or zero when the
+  // command is stale or the simulation is paused.
   void PreUpdate(const gz::sim::UpdateInfo &info, gz::sim::EntityComponentManager &) override {
     std::lock_guard<std::mutex> lock(mutex);
     const bool valid = !info.paused && std::chrono::duration<double>(Clock::now()-received).count() <= timeout;

@@ -10,6 +10,25 @@ Example, inside the Gazebo container after the dynamics manoeuvre ends:
 
 The result file and final stdout record are strict JSON. Exit 0 means all checks
 passed; exit 1 means a failed assertion or unavailable simulator/transport.
+
+Scope: the WAM-V ActuatorWatchdog Gazebo plugin (njord_gz_plugins), which is
+the only path from /njord/actuator_forces to the VRX thrust topics. This check
+talks to Gazebo transport directly (no ROS), in the partition given by
+--partition / GZ_PARTITION, so it must run in the container on the same host
+network as a running simulator. It must be the only force publisher.
+
+Sequence (all times are steady wall time, as the watchdog uses):
+1. connect: wait (--discovery-s) until both thrust topics have produced data
+   and the watchdog has subscribed to our force publisher.
+2. measure_timeout: publish the distinct finite forces (--left-force-n,
+   --right-force-n, newtons) until both thrust topics repeat them, then stop
+   publishing. Both outputs must reach zero within --timeout-s + --slack-s
+   and stay zero for 0.15 s.
+3. measure_nan: re-establish finite forces, then publish NaN on the left
+   only. Both outputs must reach zero within min(0.25 s, timeout/2), i.e.
+   faster than the normal timeout, showing a non-finite input is rejected
+   rather than just timing out.
+Afterwards explicit zero forces are published; no process is stopped.
 """
 
 import argparse
@@ -29,10 +48,16 @@ THRUSTERS = {'left': '/wamv/thrusters/left/thrust',
 
 
 class CheckFailure(RuntimeError):
-    pass
+    """A watchdog assertion failed or the simulator could not be reached."""
 
 
 class WatchdogProbe:
+    """Publishes forces and records every thrust output with its arrival time.
+
+    ``samples[side]`` holds (monotonic receive time, thrust N) tuples; the
+    Gazebo callbacks run on transport threads, so access goes through
+    ``condition``. ``result`` is the report dict, filled in place.
+    """
     def __init__(self, args, result):
         # Import after partition selection, before initializing Gazebo transport.
         from gz.transport13 import Node
@@ -63,6 +88,7 @@ class WatchdogProbe:
         return sent
 
     def latest_matches(self, expected, since):
+        """True if each side's newest sample arrived after ``since`` and equals its target."""
         with self.condition:
             return all(self.samples[side] and self.samples[side][-1][0] >= since
                        and math.isfinite(self.samples[side][-1][1])
@@ -74,6 +100,7 @@ class WatchdogProbe:
             self.condition.wait(timeout=max(0.0, seconds))
 
     def connect(self):
+        """Wait for thrust data on both sides and a watchdog subscriber."""
         deadline = time.monotonic() + self.args.discovery_s
         while time.monotonic() < deadline:
             with self.condition:
@@ -85,6 +112,11 @@ class WatchdogProbe:
                            'watchdog subscription and both original thrust topics')
 
     def establish_finite(self):
+        """Publish the finite forces at 25 Hz until both outputs show them.
+
+        Returns the monotonic time of the last publication, which starts the
+        watchdog silence interval.
+        """
         expected = {'left': self.args.left_force_n, 'right': self.args.right_force_n}
         started = time.monotonic()
         deadline, next_send = started + self.args.discovery_s, started
@@ -102,12 +134,14 @@ class WatchdogProbe:
                            'check paused world, competing publishers or force limits')
 
     def first_zero_times(self, since):
+        """Return, per side, the first arrival time of a zero thrust after ``since``."""
         with self.condition:
             return {side: next((stamp for stamp, value in self.samples[side]
                                 if stamp >= since and math.isfinite(value) and abs(value) <= 1e-6), None)
                     for side in THRUSTERS}
 
     def measure_timeout(self):
+        """Check that publisher silence zeroes both thrusters within the limit."""
         stopped = self.establish_finite()
         allowed = self.args.timeout_s + self.args.slack_s
         deadline = stopped + allowed
@@ -130,6 +164,11 @@ class WatchdogProbe:
         self.result['checks']['publisher_silence_zeroes_both_thrusters'] = True
 
     def measure_nan(self):
+        """Check that a NaN in one force zeroes both thrusters quickly.
+
+        NaN is republished at 25 Hz so the watchdog never times out; only its
+        non-finite input handling can zero the outputs within the limit.
+        """
         self.establish_finite()
         started = self.publish(math.nan, self.args.right_force_n)
         allowed = min(0.25, self.args.timeout_s * 0.5)
@@ -162,6 +201,7 @@ class WatchdogProbe:
 
 
 def positive(value):
+    """argparse type: a finite float > 0."""
     number = float(value)
     if not math.isfinite(number) or number <= 0:
         raise argparse.ArgumentTypeError('must be finite and positive')
@@ -189,6 +229,8 @@ def main():
     try:
         if not args.partition:
             raise CheckFailure('Set --partition or GZ_PARTITION to the intended simulator-only partition')
+        # Gazebo transport reads GZ_PARTITION when the node is created, so
+        # set it before WatchdogProbe imports and creates the node.
         os.environ['GZ_PARTITION'] = args.partition
         probe = WatchdogProbe(args, result)
         probe.connect()

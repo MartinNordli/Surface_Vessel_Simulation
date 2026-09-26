@@ -4,6 +4,34 @@ Start simulator alone in the dynamics scenario, without autonomy. Invoke this
 node before simulation time 5 s (or use a paused startup). Each repetition and
 each experiment needs a new simulator process; this tool never resets poses.
 Use --ros-args -p experiment:=coast -p manifest_path:=... -p output_path:=...
+
+Where to run: inside the container (``autonomy`` or ``tests`` service) on the
+same ROS domain as a running ``simulator`` service and no autonomy stack; this
+node must be the only publisher of /njord/actuator_forces. See
+docs/validation.md and docs/njord-calibration.md for the full protocol, and
+scripts/dynamics_campaign.py, which automates fresh-process repetitions.
+
+Experiments (``experiment`` parameter): straight, reverse (both thrusters at
++/- thrust_n), turn_left, turn_right (20 % thrust on the inner side, 100 % on
+the outer), coast (accelerate straight, then cut thrust), drift and
+hydrostatic (zero thrust). The run goes through phases:
+
+    settle      zero thrust until a stationary window is observed
+    accelerate  coast only: equal thrust until steady straight motion
+    measure     the experiment's command for duration_s, then report
+
+Parameters: odom_topic (default ground truth), forces_topic, thrust_n (N per
+thruster, default 300), duration_s (simulation s, default 60),
+stabilization_timeout_s (simulation s per preparation phase, default 60),
+window_s (trailing stationarity window, default 10 s), fresh_start_limit_s
+(default 5 s), manifest_path, output_path and repetition.
+
+Output: the JSON report on stdout and, if output_path is set, in that file,
+which must not already exist. It holds the metrics from
+dynamics_metrics.summarize_experiment, the settings, the manifest (content and
+SHA-256) and all raw samples. Exit code 0 if the experiment is complete, 2 if
+not (including watchdog expiry or Ctrl-C). Thrust is set to zero on exit;
+the vessel keeps its momentum.
 """
 import hashlib
 import json
@@ -22,6 +50,11 @@ from dynamics_metrics import stationary, summarize_experiment
 
 
 class DynamicsCheck(Node):
+    """Open-loop force publisher and odometry recorder for one experiment.
+
+    Ground-truth odometry is used on purpose: this measures the simulated
+    vessel's dynamics, not the autonomy's estimates.
+    """
     def __init__(self):
         super().__init__("dynamics_check")
         defaults = {"odom_topic": "/wamv/ground_truth/odometry", "forces_topic": "/njord/actuator_forces",
@@ -49,10 +82,19 @@ class DynamicsCheck(Node):
         self.trajectory = []
         self.wall_start = self.last_odom_wall = time.monotonic()
         self.done = False
+        # Control step at 20 Hz on node time (simulation time with use_sim_time).
         self.create_timer(0.05, self.step)
+        # Infrastructure watchdog on steady wall time, so it still fires if /clock stops.
         self.create_timer(0.2, self.watchdog, clock=Clock(clock_type=ClockType.STEADY_TIME))
 
     def on_odom(self, msg):
+        """Store one odometry sample (see sample_columns in finish for the layout).
+
+        The first message fixes t0; it must be stamped at or before
+        fresh_start_limit_s, which shows the simulator was freshly started
+        rather than already moving. Non-finite or non-advancing samples end
+        the experiment as incomplete.
+        """
         t = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
         if self.t0 is None:
             path = self.settings["manifest_path"]
@@ -64,6 +106,7 @@ class DynamicsCheck(Node):
                 return
             self.t0 = self.phase_start = t
         q = msg.pose.pose.orientation
+        # Roll and pitch (rad) from the orientation quaternion.
         roll = math.atan2(2 * (q.w*q.x + q.y*q.z), 1 - 2 * (q.x*q.x + q.y*q.y))
         pitch = math.asin(max(-1.0, min(1.0, 2 * (q.w*q.y - q.z*q.x))))
         row = (t, msg.pose.pose.position.x, msg.pose.pose.position.y,
@@ -82,16 +125,19 @@ class DynamicsCheck(Node):
         self.trajectory.append(row)
 
     def watchdog(self):
+        """Fail on 120 s without first odometry, 10 s gaps later, or 600 s total (wall time)."""
         odom_timeout = 120 if self.t0 is None else 10
         if time.monotonic() - self.last_odom_wall > odom_timeout or time.monotonic() - self.wall_start > 600:
             self.finish("wall-time watchdog expired")
 
     def command(self, left, right):
+        """Publish left/right thrust in newtons (Twist linear.x / linear.y)."""
         message = Twist()
         message.linear.x, message.linear.y = float(left), float(right)
         self.forces.publish(message)
 
     def step(self):
+        """Advance the phase machine using the latest sample time (simulation s)."""
         if self.t0 is None or self.done:
             return
         rows = self.samples if self.phase == "measure" else self.preparation
@@ -106,8 +152,11 @@ class DynamicsCheck(Node):
             # Coasting must start with stable straight motion, never after a turn.
             straight = all(abs(r[4]) <= 0.001 for r in tail)
             ready = stable and (self.experiment == "drift" or straight)
+            # Settle must reach rest (<= 0.01 m/s); drift only needs steadiness,
+            # since wind or current may keep the boat moving.
             if self.phase == "settle" and self.experiment != "drift":
                 ready = ready and all(r[3] <= 0.01 for r in tail)
+            # Coast entry needs real forward speed (> 0.05 m/s).
             if self.phase == "accelerate":
                 ready = ready and rows[-1][3] > 0.05
             if ready:
@@ -127,6 +176,11 @@ class DynamicsCheck(Node):
             self.finish()
 
     def finish(self, reason=None):
+        """Zero thrust, write the report and exit (0 complete, 2 incomplete).
+
+        ``reason`` marks the report incomplete. The output file is opened in
+        exclusive mode, so an existing result is never overwritten.
+        """
         self.done = True
         self.command(0, 0)
         report = summarize_experiment(self.samples, self.experiment, self.settings["window_s"])

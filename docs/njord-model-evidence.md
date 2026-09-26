@@ -1,9 +1,10 @@
-# Implementation and evidence for plan.md
+# Njord physics model: implementation and evidence
 
-The versioned configuration and independent Njord force model are implemented.
-The supplied hull and coefficients remain an **uncalibrated analytical fixture**.
-Actual Njord CAD, load properties and independent boat trials were not supplied;
-there is no claim of calibrated Njord realism.
+This records what the versioned configuration and the independent Njord force
+model implement, and the measured evidence behind them. The supplied hull and
+coefficients remain an **uncalibrated analytical fixture**. Actual Njord CAD,
+load properties and independent boat trials were not available; there is no
+claim of calibrated Njord realism.
 
 ## Implemented scope
 
@@ -19,15 +20,18 @@ there is no claim of calibrated Njord realism.
 - Fresh-process dynamics experiments, stationarity/incomplete measurement rules,
   timestep/repetition acceptance tooling and a physical measurement/holdout protocol.
 
-The plan's `vessel.yaml` role is filled by versioned profiles (`njord_v1.yaml`,
-`wamv_reference.yaml`) selected with `VESSEL_CONFIG`. The unversioned
-`vessel.yaml` remains the default WAM-V input through the explicit legacy adapter.
+Each vessel is one versioned file under `njord_sim/config/vessels/`
+(`wamv.yaml`, the default, and `njord_v1.yaml`), selected with `VESSEL_CONFIG`.
 
-See [physical configuration](physical-configuration.md) for exact schema, units,
-frames and supported geometry, and [calibration protocol](njord-calibration.md)
-for measurements and acceptance.
+See [configuration](configuration.md) for exact schema, units, frames and
+supported geometry, and [calibration protocol](njord-calibration.md) for
+measurements and acceptance.
 
 ## Reproducible evidence
+
+The evidence below was recorded before the configuration cleanup of
+2026-09-26, which moved files but left resolved values unchanged; paths and
+image identities refer to that earlier layout.
 
 The final source fingerprint is
 `246dbd711ca40a5c6cfd0753fffac1fa5b5334399f8e1103fdfb5cfa0c411c9f`.

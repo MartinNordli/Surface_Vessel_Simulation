@@ -1,8 +1,26 @@
-"""Pure calculations for the open-loop manoeuvre report."""
+"""Pure calculations for the open-loop manoeuvre report.
+
+Used by validation/check_dynamics.py; plain Python with no ROS dependency, so
+it is unit-tested on the host. Sample rows are tuples in SI units, ordered as
+
+    0 time_s (simulation)  1 x_m  2 y_m  3 speed_mps (horizontal)
+    4 yaw_rate_radps  5 z_m  6 roll_rad  7 pitch_rad  8 surge_mps (body)
+    9 body_heave_mps  10 body_roll_rate_radps  11 body_pitch_rate_radps
+
+Older 5-column rows (0-4 only) are still accepted; the pose checks then
+cannot run.
+"""
 import math
 
 
 def summarize(samples, straight_s, turn_s):
+    """Legacy sequential straight/turn/coast report, kept for old reports.
+
+    Splits one run into straight (t < straight_s), the second half of the turn
+    and the coast after straight_s + turn_s. These numbers do not meet the
+    fresh-process protocol of summarize_experiment; do not use them for
+    acceptance. Raises ValueError if a phase has no samples.
+    """
     straight = [s for s in samples if s[0] < straight_s]
     turn = [s for s in samples if straight_s + turn_s / 2 < s[0] < straight_s + turn_s]
     coast_start = straight_s + turn_s
@@ -67,6 +85,8 @@ def stationary(samples, window_s=10.0, speed_tolerance=0.01,
     tail = samples[index:]
     if any(b[0] - a[0] > max_gap_s for a, b in zip(tail, tail[1:])):
         return False
+    # Full rows: z (m), roll and pitch (rad) must also stay within these
+    # peak-to-peak bounds, and their drift (per second) must stay below them.
     if len(tail[0]) >= 12:
         for column, tolerance in ((5, 0.01), (6, 0.001), (7, 0.001)):
             if max(s[column] for s in tail) - min(s[column] for s in tail) > tolerance:
@@ -81,11 +101,28 @@ def stationary(samples, window_s=10.0, speed_tolerance=0.01,
 
 
 def summarize_experiment(samples, experiment, window_s=10.0):
-    """One isolated manoeuvre; missing steady response and stopping are incomplete."""
+    """One isolated manoeuvre; missing steady response and stopping are incomplete.
+
+    ``samples`` are the measure-phase rows. Returns {"complete", "reason",
+    "metrics"}. Metrics (SI units) always include observed_distance_m,
+    peak_speed_mps and observation_s; with 12-column rows also the trailing
+    window means and drifts and the surge acceleration over the first 2 s.
+    Per experiment:
+    - straight/reverse/turn: steady_speed_mps and steady_yaw_rate_radps
+      (trailing window means) once stationary; turns add turning_radius_m =
+      speed / |yaw rate|. Straight/reverse also need the mean surge sign
+      to match the command (> 0.01 or < -0.01 m/s).
+    - coast: coast_distance_m only if stopped (<= 0.05 m/s and |yaw rate|
+      <= 0.001 rad/s throughout the window), else None.
+    - hydrostatic: complete when stationary, at least one of roll/pitch was
+      initially excited, and each excited angle's window mean has at least
+      halved.
+    """
     if experiment not in {"straight", "reverse", "turn_left", "turn_right", "coast", "drift", "hydrostatic"}:
         raise ValueError("unknown experiment")
     if len(samples) < 2 or any(len(s) < 5 or not all(math.isfinite(v) for v in s) for s in samples):
         return {"complete": False, "reason": "insufficient or invalid samples", "metrics": {}}
+    # Samples more than 0.5 s apart mean odometry was lost.
     if any(b[0] <= a[0] or b[0] - a[0] > 0.5 for a, b in zip(samples, samples[1:])):
         return {"complete": False, "reason": "nonmonotonic or missing odometry", "metrics": {}}
     distance = sum(math.dist(a[1:3], b[1:3]) for a, b in zip(samples, samples[1:]))
@@ -107,6 +144,7 @@ def summarize_experiment(samples, experiment, window_s=10.0):
     if experiment == "hydrostatic":
         if len(samples[0]) < 12:
             return {"complete": False, "reason": "hydrostatic pose and velocity channels missing", "metrics": metrics}
+        # An angle counts as excited if it started at >= 0.01 rad.
         excited = [column for column in (6, 7) if abs(samples[0][column]) >= 0.01]
         restored = bool(excited) and all(abs(sum(s[c] for s in tail) / len(tail)) <= 0.5 * abs(samples[0][c]) for c in excited)
         metrics["restoring_response_observed"] = restored

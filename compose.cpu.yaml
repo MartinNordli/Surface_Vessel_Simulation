@@ -2,8 +2,10 @@
 # Opt in with NJORD_CPU=1 ./scripts/njord ...; sensors render correctly but slowly.
 services:
   simulator:
+    # `!reset {}` removes the NVIDIA GPU reservation inherited from compose.yaml.
     deploy: !reset {}
     environment:
+      # Force Mesa's CPU renderer instead of any hardware driver.
       LIBGL_ALWAYS_SOFTWARE: 'true'
       GALLIUM_DRIVER: llvmpipe
   rviz:

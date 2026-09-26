@@ -43,6 +43,7 @@ needs. Use fixed seeds and keep config and commit provenance in the metrics.
 | Planner / D* Lite | `python3 tests/test_dstar_lite.py` (independent A* comparison) |
 | Any pure-Python core | `python3 -m unittest discover -s tests -p 'test_*.py'` |
 | Nodes, launch, config, ROS wiring | `./scripts/njord test` (host suite skips ROS-dependent tests) |
+| Configuration files or loader | `python3 -m unittest discover -s tests -p 'test_*config*.py'`, then `./scripts/njord test` and `selftest` |
 | Sensors, TF, rendering | `./scripts/njord selftest`, or `./scripts/njord smoke` against a running `lab` stack |
 | Dynamics / thruster behavior | `validation/check_dynamics.py` with only the simulator service up |
 | Perception and guidance end to end | `./scripts/njord demo`, then a benchmark on matched seeds |
@@ -81,6 +82,14 @@ Topic names, message types, frames, QoS and node ownership are documented in
 [docs/interfaces.md](interfaces.md). Update that file in the same commit as any
 interface change, and keep replaceable-algorithm boundaries intact so a team can
 substitute their own controller, perception or mapping node.
+
+## Shared interfaces
+
+The primary agent owns everything other areas depend on: `njord_sim/config/`,
+`configuration.py`, `constants.py`, `defaults.py`, the launch files, the
+scenario format, `docs/interfaces.md` and `docs/configuration.md`. A new
+setting goes into the file that owns it (see
+[configuration.md](configuration.md)) and is read from there.
 
 ## Delegating to subagents
 

@@ -1,0 +1,102 @@
+# Njord vessel, analytic test hull (select with VESSEL_CONFIG=/config/vessels/njord_v1.yaml).
+#
+# UNCALIBRATED infrastructure fixture: the numbers are invented engineering
+# values, NOT measured Njord geometry. See docs/njord-calibration.md.
+#
+# This is the only place to change the Njord vessel: geometry, mass properties,
+# hydrodynamics, wind response, thrusters and sensors are all read from here.
+# Units are SI. Body axes are forward/left/up (x/y/z); poses are
+# [x, y, z, roll, pitch, yaw] relative to the body origin.
+schema_version: 1
+profile: njord
+name: njord_analytic
+revision: analytic-box-v1
+calibration:
+  status: uncalibrated              # the loader only accepts 'uncalibrated' for now
+  valid_speed_mps: [0.0, 3.0]       # intended test envelope, not evidence of accuracy
+
+# Rigid-body mass properties. Inertia is about the center of mass, with axes
+# parallel to the body axes, and includes all payload.
+mass_kg: 180.0
+center_of_mass_m: [0.0, 0.0, 0.0]
+inertia_kg_m2: {ixx: 35.0, iyy: 140.0, izz: 160.0, ixy: 0.0, ixz: 0.0, iyz: 0.0}
+
+# Visual, collision and buoyancy shapes are independent. Use a box
+# (size_m) or a prepared convex OBJ mesh (uri, relative to this file).
+# Geometry pose rotation must be zero; bake rotations into the mesh.
+geometry:
+  visual:
+    type: box
+    size_m: [3.0, 1.5, 0.6]
+    pose: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  collision:                        # also defines the scoring envelope and map inflation
+    type: box
+    size_m: [3.0, 1.5, 0.6]
+    pose: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  buoyancy:                         # may be a list of disjoint convex volumes
+    type: box
+    size_m: [3.0, 1.5, 0.6]
+    pose: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+# Six-DOF diagonal magnitudes in order [surge, sway, heave, roll, pitch, yaw].
+# Linear: kg/s and N*m*s/rad. Quadratic: kg/m and N*m*s^2/rad^2.
+# Added mass: kg and kg*m^2.
+hydrodynamics:
+  linear_damping: [40.0, 100.0, 100.0, 20.0, 40.0, 50.0]
+  quadratic_damping: [30.0, 100.0, 100.0, 20.0, 40.0, 50.0]
+  added_mass: [20.0, 80.0, 100.0, 10.0, 40.0, 50.0]
+
+# Wind loads: reference areas [frontal, lateral] in m^2 and a yaw reference
+# length. Coefficients are interpolated periodically over the angle of the
+# relative air velocity toward the body (degrees, 0 = from ahead).
+wind:
+  reference_area_m2: [0.9, 1.8]
+  reference_length_m: 3.0
+  coefficients:
+  - {angle_deg: 0, cx: 1.0, cy: 0.0, cn: 0.0}
+  - {angle_deg: 90, cx: 0.0, cy: 1.0, cn: 0.0}
+  - {angle_deg: 180, cx: -1.0, cy: 0.0, cn: 0.0}
+  - {angle_deg: 270, cx: 0.0, cy: -1.0, cn: 0.0}
+
+# Exactly two fixed thrusters, ordered left then right. Axis is a forward-facing
+# planar unit vector; limits are force magnitudes in newtons; response_time_s is
+# a first-order lag on the applied force.
+thrusters:
+- name: left
+  position_m: [-1.2, 0.6, -0.1]
+  axis: [1.0, 0.0, 0.0]
+  forward_limit_n: 500.0
+  reverse_limit_n: 500.0
+  response_time_s: 0.1
+- name: right
+  position_m: [-1.2, -0.6, -0.1]
+  axis: [1.0, 0.0, 0.0]
+  forward_limit_n: 500.0
+  reverse_limit_n: 500.0
+  response_time_s: 0.1
+
+sensors:
+  # Same keys and meaning as `settings` in wamv.yaml (both cameras share them).
+  settings:
+    camera_width: 640
+    camera_height: 360
+    camera_rate: 15.0
+    camera_horizontal_fov_rad: 1.3962634
+    camera_noise_stddev: 0.007
+    lidar_range: 80.0
+    lidar_samples: 720
+    lidar_vertical_samples: 16
+    lidar_rate: 10.0
+    lidar_noise_stddev: 0.01
+    gps_rate: 10.0
+    imu_rate: 100.0
+    gps_horizontal_noise_m: 0.3
+    gps_vertical_noise_m: 0.5
+    imu_orientation_noise_rad: 0.005
+  # Mounting poses [x, y, z, roll, pitch, yaw] in the body frame.
+  poses:
+    camera: [0.75, 0.15, 0.7, 0.0, 0.05, 0.0]        # front left camera
+    camera_right: [0.75, -0.15, 0.7, 0.0, 0.05, 0.0]
+    lidar: [0.0, 0.0, 0.8, 0.0, 0.0, 0.0]
+    gps: [-0.85, 0.0, 0.7, 0.0, 0.0, 0.0]
+    imu: [0.0, -0.2, 0.0, 0.0, 0.0, 0.0]

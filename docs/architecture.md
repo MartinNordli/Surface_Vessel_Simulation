@@ -1,4 +1,4 @@
-# Architecture and configuration
+# Architecture
 
 ## Data flow
 
@@ -18,79 +18,110 @@ flowchart LR
   G --> V[Ground-truth evaluator]
 ```
 
-The scenario file is the only source of world and evaluator obstacle geometry.
-Autonomy receives the gate count through an atomic, run-specific startup manifest,
-never the hidden coordinates. Output directories containing a prior run are
-rejected.
+The autonomy only sees sensors. The scenario file is the only source of gate
+and obstacle geometry, and only world generation and the evaluator read it; the
+autonomy learns how many gates there are, never where.
 
-Both cameras have calibrated optical frames, and pointcloud transforms use their
-acquisition time with full roll/pitch/yaw. Free ray observations and aged occupancy
-replace the old permanent obstacle map. Unknown cells remain explicitly unknown;
-the route planner may explore through them, but the controller only advances into
-an observed-free corridor.
+Both cameras have calibrated optical frames, and point clouds are transformed
+with TF at their acquisition time, with full roll/pitch/yaw. The map keeps
+unknown, observed-free and occupied cells distinct and ages out old
+observations. The route planner may explore through unknown cells, but the
+controller only advances into an observed-free corridor.
+
+## Run lifecycle
+
+`./scripts/njord demo` starts three Compose services from the same image:
+
+1. **`scripts/njord`** pins the image ID, creates a unique `RUN_ID` and a fresh
+   `outputs/run-*` directory.
+2. **simulator** (`launch/simulation.launch.py`) resolves the vessel, scenario
+   and algorithm files into one validated configuration, freezes checksummed
+   copies, generates the vessel model, world and bridge files, writes
+   `public_parameters.json` and `run_manifest.json`, and atomically publishes
+   `run_ready.json`. Only then does it start Gazebo, spawn the vessel and start
+   the bridges.
+3. **autonomy** (`scripts/run_autonomy.py`) waits for `run_ready.json` with the
+   matching run ID, verifies the manifest, records its own settings in
+   `autonomy_config.json` and starts `launch/dstar_demo.launch.py` with the
+   public parameters.
+4. **evaluator** (`scripts/run_evaluator.py` → `evaluator_node.py`) waits for
+   the same handoff, starts the race once navigation, mission, planner and
+   contact monitoring are healthy, scores it against ground truth and writes
+   `run_metrics.json`. Its exit code (0 = completed) ends the run.
+
+## Code map
+
+`njord_sim/njord_sim/` follows one rule: `*_core.py` (and the other plain
+modules) are pure Python and testable without ROS; `*_node.py` only connects
+them to topics, parameters and timers.
+
+| Area | Module | Role |
+| --- | --- | --- |
+| Configuration | `configuration.py` | Loads and validates the three YAML files into one resolved configuration |
+| | `constants.py` | Fixed platform constants (world origin, command timeout, WAM-V geometry) |
+| | `defaults.py` | Fallback node parameters, read from the configuration files |
+| Model and world | `vessel.py` | WAM-V model from the VRX xacro, sensor settings and bridges |
+| | `njord_model.py`, `mesh_geometry.py`, `physics_core.py` | Njord model generation, convex mesh import, reference force calculations |
+| | `scenario.py` | World SDF: buoys, obstacles, water, wind and waves |
+| | `run_manifest.py` | Atomic, checksummed handoff between the services |
+| Scoring | `scenario_core.py`, `evaluator_node.py` | Gate crossing, clearance and race status from ground truth |
+| Estimation | `sensor_adapter_node.py` | GPS/IMU noise and the navigation health heartbeat |
+| Perception | `perception_core.py`, `perception_node.py` | Colour blobs + lidar depth → buoy tracks |
+| Mapping | `mapping_core.py`, `mapper_node.py` | Ray-traced occupancy grid with aging and inflation |
+| Planning | `dstar_lite.py`, `planner_core.py`, `planner_node.py` | Incremental D* Lite on the occupancy grid |
+| Mission | `mission_node.py` | Ordered red-left/green-right gate sequence → goals |
+| Control | `control_core.py`, `guidance_node.py` | Line-of-sight tracking, speed limits, thrust allocation |
+| Safety | `command_guard_node.py` | Single actuator authority; zero thrust on stale inputs |
+| Shared | `geometry.py` | Rigid transforms and timestamp helpers |
+
+Gazebo plugins in `njord_gz_plugins/`: `ActuatorWatchdog` (WAM-V thrust with a
+steady-time timeout), `NjordPhysics` (Njord hydrostatics, wind and thrusters)
+and `ContactMonitor` (contact heartbeat so silence never means "no contact").
 
 ## Configuration
 
-- `scenarios/reference.yaml`: three 14 m-wide gates, two additional obstacles,
-  starting pose, seed, timeout and calm/moderate wind/wave presets. JSON syntax is
-  valid YAML; general YAML is accepted too. Scenario generation saves resolved
-  geometry and a SHA256 digest per run.
-- `scenarios/slalom.yaml`: five 14 m-wide gates with centres alternating between
-  y=0 and y=5 m and forward normals alternating ±10° from east. Five 0.8 m-radius
-  obstacles flank the route, with room for the existing clearance-limited
-  controller. Seeded gate offsets are ±0.5 m; the simulation timeout is 480 s. It
-  uses the reference start pose, vessel and calm/moderate environments and fits
-  within the existing map. The ordered gates create the slalom; obstacles do not
-  all force additional detours on the nominal route.
-- `njord_sim/config/vessel.yaml` and `sensors.xacro`: sensor geometry, rates,
-  resolution and noise, thruster limits. Defaults: 640×360 RGB at 15 Hz, 720×16
-  lidar at 10 Hz/80 m, GPS 10 Hz, IMU 100 Hz. WAM-V thruster separation 2.05427 m.
-- `njord_sim/config/localization.yaml`: local attitude EKF, global GPS/IMU EKF,
-  and local-cartesian GPS conversion. No ground-truth odometry enters these nodes.
-- `PROFILE=conservative|fast`: speed ceilings of 1.0 and 2.0 m/s, reduced by
-  heading error, clearance and available stopping corridor. Thrust limit 500 N per
-  engine. The initial braking assumption of 0.25 m/s² must be checked through
-  dynamics experiments before transferring parameters to another boat.
-
-The versioned Njord vessel, scenario and algorithm schema is described in
-[physical-configuration.md](physical-configuration.md).
+Where each setting lives, how files are selected and how parameters take
+precedence is described in [configuration.md](configuration.md).
 
 ## Sensor noise
 
 Harmonic's NavSat implementation applies horizontal noise in **degrees**. The
-built-in noise is therefore disabled, and the GPS adapter adds independently
+built-in noise is therefore disabled, and the sensor adapter adds independently
 seeded metric noise, using WGS84 curvature to convert metres to latitude and
-longitude. Default standard deviation is 0.3 m horizontal and 0.5 m vertical. IMU
-attitude noise is 0.005 rad; angular-rate and acceleration noise remain the
-upstream sensor model.
+longitude. IMU attitude noise is added the same way; angular-rate and
+acceleration noise remain the upstream sensor model. The noise levels are set
+per vessel in its vessel file.
 
 ## Mission and safety
 
 The mission initializes its first search from the estimated heading. A gate
-leaving the camera field of view may be remembered for at most 45 s inside a
-bounded 15 m approach/crossing corridor; fresh camera frames, odometry and
-observed-free lidar guidance are still required. Mapping inflates obstacles by 4 m.
+leaving the camera field of view may be remembered for a limited time inside a
+bounded approach/crossing corridor; fresh camera frames, odometry and
+observed-free lidar guidance are still required.
 
 The command guard requires current planner, mission, navigation and evaluator
-heartbeats. Commands expire after 0.5 s of steady time. A separate Gazebo plugin
-removes thrust if the ROS guard or bridge disappears. Zero thrust leaves momentum
-and wind drift; it is not an instant stop or a collision guarantee.
+heartbeats, and commands expire after `COMMAND_TIMEOUT_S` of steady time. A
+separate Gazebo plugin removes thrust if the ROS guard or bridge disappears.
+Zero thrust leaves momentum and wind drift; it is not an instant stop or a
+collision guarantee.
 
 ## Limits and next vessel integration
 
-The stock hydrodynamics are a reference, not Njord measurements. Buoys are fixed
-vertical cylinders approximating moored markers. The camera baseline assumes
-colored gates and undistorted images; it is not a general learned detector.
-The lidar's no-return scan supplement assumes obstacles intersect its sensing
-volume; very short objects, spray, sun glare and physical water optics need
-further work. Moving traffic, currents, COLREGs and global time-optimal control
-are not implemented. D* Lite minimizes geometric grid distance; the two speed
-profiles provide a measurable timing comparison, not proof of the fastest
-possible route.
+The WAM-V hydrodynamics are the VRX reference, not Njord measurements, and the
+Njord model is uncalibrated. Buoys are fixed vertical cylinders approximating
+moored markers. The camera baseline assumes coloured gates and undistorted
+images; it is not a general learned detector. The lidar's no-return scan
+supplement assumes obstacles intersect its sensing volume; very short objects,
+spray, sun glare and physical water optics need further work. Water current is
+modelled for the Njord vessel only. Moving traffic, COLREGs and global
+time-optimal control are not implemented. D* Lite minimizes geometric grid
+distance; the two speed profiles give a measurable timing comparison, not proof
+of the fastest possible route.
 
-For the real vessel, replace the model/configuration, sensor extrinsics and
+For the real vessel, replace the model configuration, sensor extrinsics and
 actuator mapping; calibrate mass/inertia, drag, thrust curves, turn response and
-stopping behaviour against measurements; then repeat the validation ladder.
+stopping behaviour against measurements ([njord-calibration.md](njord-calibration.md));
+then repeat the validation ladder.
 
 ## Reproducibility
 

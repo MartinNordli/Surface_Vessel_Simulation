@@ -1,21 +1,57 @@
-{
-  "name": "njord_reference",
-  "seed": 1,
-  "start": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-  "timeout_s": 360.0,
-  "hull": {"length_m": 6.0, "beam_m": 3.3},
-  "gate_y_jitter_m": 0.75,
-  "gates": [
-    {"name": "gate_1", "red": [25.0, 7.0], "green": [25.0, -7.0], "radius_m": 0.5},
-    {"name": "gate_2", "red": [50.0, 10.0], "green": [50.0, -4.0], "radius_m": 0.5},
-    {"name": "gate_3", "red": [75.0, 7.0], "green": [75.0, -7.0], "radius_m": 0.5}
-  ],
-  "obstacles": [
-    {"name": "obstacle_1", "position": [38.0, -7.0], "radius_m": 1.0},
-    {"name": "obstacle_2", "position": [63.0, 10.0], "radius_m": 1.0}
-  ],
-  "environments": {
-    "calm": {"wind_speed_mps": 0.0, "wind_direction_deg": 45.0, "wind_variance_gain": 0.0, "wave_gain": 0.0, "wave_period_s": 5.0, "wave_direction_rad": 0.0, "wave_steepness": 0.0},
-    "moderate": {"wind_speed_mps": 3.0, "wind_direction_deg": 45.0, "wind_variance_gain": 0.2, "wave_gain": 0.2, "wave_period_s": 5.0, "wave_direction_rad": 0.8, "wave_steepness": 0.0}
-  }
-}
+# Reference course: three 14 m wide gates and two extra obstacles.
+#   ./scripts/njord demo reference
+#
+# A course file owns everything about the world: gates, obstacles, start pose,
+# seed, time limit and environment presets. The vessel (and therefore the
+# scoring envelope) comes from VESSEL_CONFIG, not from here.
+#
+# Coordinates are ENU metres in the `map` frame. Pass red buoys on the left
+# (port) and green buoys on the right (starboard), in the listed order.
+# Gate positions are scoring and world-generation truth only; the autonomy
+# receives just the number of gates.
+schema_version: 1
+name: njord_reference
+seed: 1                               # default when SEED is not set
+start: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0] # [x, y, z, roll, pitch, yaw]
+timeout_s: 360.0                      # simulation-time limit for the race
+gate_y_jitter_m: 0.75                 # seeded random y offset per gate, +/- m
+
+gates:
+- {name: gate_1, red: [25.0, 7.0], green: [25.0, -7.0], radius_m: 0.5}
+- {name: gate_2, red: [50.0, 10.0], green: [50.0, -4.0], radius_m: 0.5}
+- {name: gate_3, red: [75.0, 7.0], green: [75.0, -7.0], radius_m: 0.5}
+
+obstacles:
+- {name: obstacle_1, position: [38.0, -7.0], radius_m: 1.0}
+- {name: obstacle_2, position: [63.0, 10.0], radius_m: 1.0}
+
+# Selected with ENVIRONMENT=<name>. Directions are the direction the flow moves
+# TOWARD in degrees ENU (0 = east, 90 = north). Waves and wind variance apply
+# to the WAM-V only; the Njord model currently requires flat water.
+environments:
+  calm:
+    wind_speed_mps: 0.0
+    wind_direction_to_deg_enu: 45.0
+    wind_variance_gain: 0.0
+    wave_gain: 0.0
+    wave_period_s: 5.0
+    wave_direction_rad: 0.0
+    wave_steepness: 0.0
+    current_speed_mps: 0.0
+    current_direction_to_deg_enu: 0.0
+    water_density_kg_m3: 1000.0
+    water_level_m: 0.0
+    physics_step_s: 0.004
+  moderate:
+    wind_speed_mps: 3.0
+    wind_direction_to_deg_enu: 45.0
+    wind_variance_gain: 0.2
+    wave_gain: 0.2
+    wave_period_s: 5.0
+    wave_direction_rad: 0.8
+    wave_steepness: 0.0
+    current_speed_mps: 0.0
+    current_direction_to_deg_enu: 0.0
+    water_density_kg_m3: 1000.0
+    water_level_m: 0.0
+    physics_step_s: 0.004

@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT/'njord_sim'))
 from njord_sim.vessel import load_config
 
-DEFAULTS = ROOT/'njord_sim/config/vessel.yaml'
+DEFAULTS = ROOT/'njord_sim/config/vessels/wamv.yaml'
 
 
 class VesselConfigTests(unittest.TestCase):
@@ -21,7 +21,7 @@ class VesselConfigTests(unittest.TestCase):
             return load_config(path, DEFAULTS)
 
     def test_partial_profile_inherits_noise_and_physical_limits(self):
-        config = load_config(ROOT/'njord_sim/config/sensors_low_bandwidth.yaml', DEFAULTS)
+        config = load_config(ROOT/'njord_sim/config/examples/sensors_low_bandwidth.yaml', DEFAULTS)
         defaults = load_config(defaults_file=DEFAULTS)
         self.assertEqual(config['camera_width'], 320)
         self.assertEqual(config['imu_rate'], 50.)

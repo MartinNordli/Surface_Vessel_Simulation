@@ -11,6 +11,7 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from std_msgs.msg import Float64
 
+from njord_sim.defaults import node_defaults
 from njord_sim.planner_core import Geometry, IncrementalPlanner, fresh
 
 
@@ -25,7 +26,7 @@ class Planner(Node):
             ('grid_topic', '/njord/occupancy'), ('odom_topic', '/njord/odometry'),
             ('goal_topic', '/njord/goal'), ('path_topic', '/njord/path'),
             ('status_topic', '/njord/planner_status'), ('map_frame', 'map'),
-            ('stale_after_s', 1.0), ('publish_hz', 5.0),
+            *node_defaults('planner'),  # stale_after_s, publish_hz from algorithms.yaml
         ])
         p = lambda name: self.get_parameter(name).value
         self.map_frame, self.timeout = p('map_frame'), p('stale_after_s')

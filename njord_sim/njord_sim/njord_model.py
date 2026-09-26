@@ -4,6 +4,8 @@ from pathlib import Path
 import math
 import xml.etree.ElementTree as ET
 import yaml
+from .configuration import sensor_settings
+from .constants import COMMAND_TIMEOUT_S
 from .vessel import set_text
 
 
@@ -13,14 +15,7 @@ def generate(output_dir, resolved_configuration):
         resolved = resolved.to_dict()
     vessel = resolved["vessel"]
     env = resolved["scenario"]["environment"]
-    config = dict(vessel["sensors"]["settings"])
-    config["max_thrust_n"] = min(
-        min(t["forward_limit_n"], t["reverse_limit_n"]) for t in vessel["thrusters"]
-    )
-    config["thruster_separation_m"] = abs(
-        vessel["thrusters"][0]["position_m"][1]
-        - vessel["thrusters"][1]["position_m"][1]
-    )
+    config = sensor_settings(resolved)
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
     root = ET.Element("sdf", version="1.11")
@@ -211,7 +206,7 @@ def generate(output_dir, resolved_configuration):
         "wind_area_x": vessel["wind"]["reference_area_m2"][0],
         "wind_area_y": vessel["wind"]["reference_area_m2"][1],
         "wind_length": vessel["wind"]["reference_length_m"],
-        "timeout_s": 0.5,
+        "timeout_s": COMMAND_TIMEOUT_S,
     }
     for k, v in fields.items():
         txt(p, k, v)

@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
+from .constants import WORLD_ORIGIN_WGS84
 from .scenario_core import load_scenario, obstacles, scenario_digest
 from .run_manifest import atomic_text
 
@@ -50,8 +51,8 @@ def world_xml(scenario, vessel_profile='wamv_reference'):
     element(light, "cast_shadows", "true")
     spherical = element(world, "spherical_coordinates")
     for key, value in {"surface_model": "EARTH_WGS84", "world_frame_orientation": "ENU",
-                       "latitude_deg": 63.4305, "longitude_deg": 10.3951,
-                       "elevation": 0, "heading_deg": 0}.items():
+                       "latitude_deg": WORLD_ORIGIN_WGS84[0], "longitude_deg": WORLD_ORIGIN_WGS84[1],
+                       "elevation": WORLD_ORIGIN_WGS84[2], "heading_deg": 0}.items():
         element(spherical, key, value)
     ocean = element(world, "include")
     element(ocean, "uri", "coast_waves")

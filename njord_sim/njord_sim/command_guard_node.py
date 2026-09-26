@@ -9,14 +9,15 @@ from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus
 from geometry_msgs.msg import Twist
 from std_msgs.msg import Float64, Bool
 
+from njord_sim.defaults import node_defaults
+
 
 class CommandGuard(Node):
     def __init__(self):
         super().__init__('command_guard')
-        self.declare_parameters('', [('timeout_s', 0.5), ('max_thrust', 500.0),
-                                     ('forward_limits', [500.0, 500.0]),
-                                     ('reverse_limits', [500.0, 500.0]),
-                                     ('require_mission', True)])
+        # timeout_s, max_thrust and per-thruster limits come from the vessel,
+        # algorithms.yaml and constants.py (see defaults.py).
+        self.declare_parameters('', [*node_defaults('command_guard'), ('require_mission', True)])
         self.values = {}
         self.race_active = False
         self.race_received = 0.0

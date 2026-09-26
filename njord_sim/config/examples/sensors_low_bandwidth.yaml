@@ -1,0 +1,11 @@
+# Partial WAM-V sensor override: every key not listed keeps its value from
+# vessels/wamv.yaml. Select it for a new run with
+#   VESSEL_CONFIG=/config/examples/sensors_low_bandwidth.yaml ./scripts/njord demo slalom
+camera_width: 320
+camera_height: 180
+camera_rate: 10.0
+lidar_samples: 360
+lidar_vertical_samples: 8
+lidar_rate: 5.0
+gps_rate: 5.0
+imu_rate: 50.0

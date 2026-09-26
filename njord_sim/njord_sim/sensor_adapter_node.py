@@ -11,12 +11,15 @@ from sensor_msgs.msg import Imu, NavSatFix
 from nav_msgs.msg import Odometry
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus
 
+from njord_sim.defaults import node_defaults
+
 
 class SensorAdapter(Node):
     def __init__(self):
         super().__init__('sensor_adapter')
-        self.declare_parameters('', [('seed', 0), ('orientation_noise_rad', 0.005),
-                                     ('gps_xy_std_m', 0.3), ('gps_z_std_m', 0.5)])
+        # Noise levels come from the vessel file (see defaults.py); the launch
+        # always sets the seed from the scenario.
+        self.declare_parameters('', [('seed', 0), *node_defaults('sensor_adapter')])
         self.rng = random.Random(self.get_parameter('seed').value)
         self.gps_rng = random.Random(self.get_parameter('seed').value + 10000)
         self.received = {}

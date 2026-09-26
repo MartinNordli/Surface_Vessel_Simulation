@@ -10,6 +10,7 @@ from sensor_msgs_py import point_cloud2
 from tf2_ros import Buffer, TransformException, TransformListener
 
 from njord_sim.geometry import stamp_seconds, transform_from_ros, yaw_from_quaternion
+from njord_sim.defaults import node_defaults
 from njord_sim.mapping_core import OccupancyMapper
 
 
@@ -21,7 +22,8 @@ class Mapper(Node):
             ("scan_topic", "/wamv/sensors/lidars/lidar_wamv_sensor/scan"),
             ("grid_topic", "/njord/occupancy"), ("map_frame", "map"),
             ("base_frame", "wamv/base_link"), ("resolution", 0.5), ("size_m", 160.0),
-            ("origin_x", -40.0), ("origin_y", -40.0), ("inflation_m", 4.0),
+            ("origin_x", -40.0), ("origin_y", -40.0),
+            *node_defaults("mapper"),  # inflation_m: hull radius + algorithms.yaml margin
             ("observation_ttl_s", 5.0), ("min_height_m", 0.2), ("max_height_m", 5.0),
             ("max_range_m", 80.0), ("self_length_m", 5.0), ("self_width_m", 2.8),
             ("input_max_age_s", 0.5), ("publish_hz", 5.0),

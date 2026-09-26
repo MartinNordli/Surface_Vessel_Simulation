@@ -47,7 +47,7 @@ class ManifestTests(unittest.TestCase):
 
     def test_njord_world_gravity_and_water_plane_match_force_model(self):
         root = Path(__file__).resolve().parents[1]
-        resolved = resolve_configuration(root/'njord_sim/config/njord_v1.yaml',
+        resolved = resolve_configuration(root/'njord_sim/config/vessels/njord_v1.yaml',
             root/'scenarios/reference.yaml', root/'njord_sim/config/algorithms.yaml')
         scenario = resolved['scenario']
         scenario['environment']['water_level_m'] = 2.0

@@ -107,7 +107,7 @@ class SlalomCourseTests(unittest.TestCase):
         # aligned with that gate's forward normal. These planar center rays and
         # the standard 80-degree horizontal FOV do not establish live visibility:
         # actual yaw, camera pitch, rendered pixels and detection remain untested.
-        sensors = ET.parse(ROOT / "njord_sim/config/sensors.xacro")
+        sensors = ET.parse(ROOT / "njord_sim/config/vessels/wamv_sensors.xacro")
         cameras = sensors.findall(".//{http://ros.org/wiki/xacro}wamv_camera")
         self.assertEqual(len(cameras), 2)
         for seed in range(1, 11):

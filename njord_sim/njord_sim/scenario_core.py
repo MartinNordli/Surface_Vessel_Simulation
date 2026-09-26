@@ -10,10 +10,19 @@ import hashlib
 import json
 import math
 from pathlib import Path
-import random
+
+from .constants import WAMV_HULL
 
 
 def load_scenario(path, seed=None, environment=None):
+    """Load a course file or an already resolved scenario (JSON or YAML).
+
+    A course file is resolved with configuration.resolve_scenario, the same
+    code the launch uses. Without a vessel it is scored with the WAM-V
+    envelope; launch replaces this with the selected vessel's envelope.
+    A resolved file (``resolved: true``) is returned unchanged, so it can
+    never receive a second random gate offset.
+    """
     text = Path(path).read_text()
     try:
         data = json.loads(text)
@@ -21,7 +30,6 @@ def load_scenario(path, seed=None, environment=None):
         import yaml
         data = yaml.safe_load(text)
     data = copy.deepcopy(data)
-    # Resolved files must never receive a second random offset.
     if data.get("resolved"):
         if seed is not None and seed != data["seed"]:
             raise ValueError("cannot reseed a resolved scenario")
@@ -29,20 +37,9 @@ def load_scenario(path, seed=None, environment=None):
             raise ValueError("cannot change environment of a resolved scenario")
         validate_scenario(data)
         return data
-    data["seed"] = int(data.get("seed", 1) if seed is None else seed)
-    # USVWind interprets zero as a nondeterministic seed.
-    if data["seed"] <= 0:
-        raise ValueError("seed must be a positive integer")
-    environment = environment or "calm"
-    data["environment_name"] = environment
-    data["environment"] = copy.deepcopy(data["environments"][environment])
-    rng = random.Random(data["seed"])
-    jitter = float(data.get("gate_y_jitter_m", 0.0))
-    for gate in data["gates"]:
-        offset = rng.uniform(-jitter, jitter)
-        gate["red"][1] += offset
-        gate["green"][1] += offset
-    data["resolved"] = True
+    from .configuration import resolve_scenario  # local import: configuration imports this module
+    data = resolve_scenario(data, None if seed is None else int(seed), environment)
+    data.setdefault("hull", dict(WAMV_HULL))
     validate_scenario(data)
     return data
 

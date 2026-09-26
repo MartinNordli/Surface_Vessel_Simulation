@@ -168,58 +168,74 @@ unknown, 0 observed free and 100 occupied/inflated. Keep unknown as unknown.
 
 ## 6. Change sensors and algorithm parameters without rebuilding
 
+[configuration.md](configuration.md) lists where every setting lives. The short
+version for teams:
+
+- **Sensors** of the WAM-V: `njord_sim/config/vessels/wamv.yaml`, or a partial
+  override file with only the keys you change.
+- **Reference guidance, planner and mapper tuning and the speed profiles**:
+  `njord_sim/config/algorithms.yaml`.
+- **Other reference-node parameters** (perception thresholds, mission geometry):
+  a ROS parameter file passed with `ROS_PARAMS_FILE`.
+
 With the default mount, `njord_sim/config/` on the host is available as `/config`
 inside the containers. A bundled example reduces the cameras to 320×180 at 10 Hz,
 the lidar to 360×8 at 5 Hz, GPS to 5 Hz and IMU to 50 Hz:
 
 ```bash
-VESSEL_CONFIG=/config/sensors_low_bandwidth.yaml SEED=1 ./scripts/njord lab slalom
+VESSEL_CONFIG=/config/examples/sensors_low_bandwidth.yaml SEED=1 ./scripts/njord lab slalom
 # Or a complete race:
-VESSEL_CONFIG=/config/sensors_low_bandwidth.yaml SEED=1 ./scripts/njord demo slalom
+VESSEL_CONFIG=/config/examples/sensors_low_bandwidth.yaml SEED=1 ./scripts/njord demo slalom
 ```
 
-Team files can live in a separate directory:
+Team files can live in a separate directory, mounted at `/config` instead:
 
 ```bash
 mkdir -p outputs/team-config
-cp njord_sim/config/sensors_low_bandwidth.yaml outputs/team-config/sensors.yaml
-cp njord_sim/config/team_example.yaml outputs/team-config/algorithms.yaml
+cp njord_sim/config/examples/sensors_low_bandwidth.yaml outputs/team-config/sensors.yaml
+cp njord_sim/config/algorithms.yaml outputs/team-config/algorithms.yaml
+cp njord_sim/config/examples/team_params.yaml outputs/team-config/params.yaml
 # Edit the files, then start a new race:
 CONFIG_HOST="$PWD/outputs/team-config" \
-VESSEL_CONFIG=/config/sensors.yaml ROS_PARAMS_FILE=/config/algorithms.yaml \
+VESSEL_CONFIG=/config/sensors.yaml ALGORITHMS_CONFIG=/config/algorithms.yaml \
+ROS_PARAMS_FILE=/config/params.yaml \
 SEED=1 ENVIRONMENT=calm PROFILE=fast ./scripts/njord demo slalom
 ```
 
-**Sensor file.** A partial override of `vessel.yaml`. It supports resolution,
-a shared camera rate, horizontal field of view in radians, camera/lidar noise,
-lidar range and ray count, GPS/IMU rate and GPS/IMU orientation noise. Unknown
-field names and invalid numbers are rejected. Settings apply to both cameras.
-Sensor placement and rotation are changed in `sensors.xacro` and require
-`./scripts/njord build simulator`, so URDF/TF and the physical model are updated
-together. New sensor types need a model, bridge and any adapters; adding a name
-to YAML does not add an arbitrary sensor.
+**Sensor file.** A partial override of `settings` in `vessels/wamv.yaml`. It
+supports resolution, a shared camera rate, horizontal field of view in radians,
+camera/lidar noise, lidar range and ray count, GPS/IMU rate, GPS/IMU noise and
+the thrust limit. Unknown field names and invalid numbers are rejected. Settings
+apply to both cameras. Sensor placement and rotation are changed in
+`vessels/wamv_sensors.xacro` and require `./scripts/njord build`, so URDF/TF and
+the physical model are updated together. New sensor types need a model, bridge
+and any adapters; adding a name to YAML does not add a sensor.
 
-**Algorithm file.** Standard ROS 2 format with node names and `ros__parameters`;
-see `team_example.yaml`. It overrides default parameters and `PROFILE` for the
-nodes started by the simulator's autonomy launch. `use_sim_time` always stays
+**Algorithm file.** `algorithms.yaml` is validated at startup and is the
+authority for the reference guidance, planner and mapper: its values override
+node defaults and any ROS parameter file. `PROFILE` picks a speed ceiling from
+its `speed_profiles_mps`. `guidance.max_thrust` may be lower than the vessel's
+thrust limit, never higher.
+
+**ROS parameter file.** Standard ROS 2 format with node names and
+`ros__parameters`; see `config/examples/team_params.yaml`. Use it for
+parameters that `algorithms.yaml` does not manage. `use_sim_time` always stays
 enabled. External nodes get their parameters through their own launch files or
-`--params-file /config/algorithms.yaml`. `max_thrust_n` sets the force limit;
-`thruster_separation_m` changes the controller's mixing, not the placement of the
-VRX thrusters.
+`--params-file /config/params.yaml`.
 
 **Provenance.** The simulator saves the resolved sensor configuration in
-`outputs/run-*/vessel_config.yaml`; the sensor adapter and guard use this same
-copy. Algorithm parameters are copied to `ros_params.yaml` when selected, and
-`autonomy_config.json` stores selections, arguments and SHA256 fingerprints.
-External packages must additionally archive their own commit, parameters and
-dependencies.
+`outputs/run-*/vessel_config.yaml` and the reference nodes' parameters in
+`public_parameters.json`. A ROS parameter file is copied to `ros_params.yaml`
+when selected, and `autonomy_config.json` stores selections, arguments and SHA256
+fingerprints. External packages must additionally archive their own commit,
+parameters and dependencies.
 
 ## 7. Record and compare trials
 
 ```bash
 # Native Linux; on WSL add :compose.wsl.yaml to COMPOSE_FILE.
 COMPOSE_FILE=compose.yaml:compose.record.yaml \
-VESSEL_CONFIG=/config/sensors_low_bandwidth.yaml \
+VESSEL_CONFIG=/config/examples/sensors_low_bandwidth.yaml \
 SEED=1 ./scripts/njord demo slalom recorder
 # Sensor recording without a race, until you press Ctrl-C:
 COMPOSE_FILE=compose.yaml:compose.record.yaml \
@@ -252,9 +268,9 @@ Compare configurations with the same course, seed, environment and profile, and
 separate output directories. The reference chain can run as a repeatable matrix:
 
 ```bash
-VESSEL_CONFIG=/config/vessel.yaml ./scripts/njord benchmark slalom \
+VESSEL_CONFIG=/config/vessels/wamv.yaml ./scripts/njord benchmark slalom \
   --seeds 1 2 3 --environments calm
-VESSEL_CONFIG=/config/sensors_low_bandwidth.yaml ./scripts/njord benchmark slalom \
+VESSEL_CONFIG=/config/examples/sensors_low_bandwidth.yaml ./scripts/njord benchmark slalom \
   --seeds 1 2 3 --environments calm
 ```
 

@@ -73,19 +73,25 @@ SEED=1 ENVIRONMENT=moderate PROFILE=fast ./scripts/njord demo slalom
 ./scripts/njord benchmark slalom --dry-run
 ```
 
-Two courses are available:
+Courses are the files in `scenarios/`:
 
 - **`reference`**: three gates and two additional obstacles.
 - **`slalom`**: five alternating gates and five obstacles. It is a shared test
   environment for the control/autonomy and perception teams to compare algorithms
   and sensor configurations. The reference autonomy is a baseline and is not
   required to complete every run.
+- **`dynamics`**: open water for dynamics measurements, not a race.
 
-Both support `SEED`, `ENVIRONMENT` (`calm`, `moderate`) and `PROFILE`
+All support `SEED`, `ENVIRONMENT` (`calm`, `moderate`) and `PROFILE`
 (`conservative`, `fast`). An explicit course name overrides `SCENARIO` for that
 invocation; without one, `SCENARIO` (a path inside the container) still works.
 Additional arguments follow the course name, for example
 `./scripts/njord demo slalom recorder`.
+
+To add a course, copy a file in `scenarios/`, edit it (format in
+[configuration.md](configuration.md#scenario-files-scenarioscourseyaml)) and run
+`./scripts/njord build`; it is then available as `./scripts/njord demo <file name>`.
+To use a different vessel or tuning, see [configuration.md](configuration.md).
 
 ## Rendering
 
@@ -154,12 +160,3 @@ See [team integration](team-integration.md#7-record-and-compare-trials) for repl
 Images are only published after the tests pass. CI proves that the image builds,
 that the container suite passes and that live sensors and navigation start with
 software rendering. It does not test GPU rendering, race completion or benchmarks.
-
-## Codex agent roles
-
-The project provides `sim_platform`, `perception`, `autonomy` and `validation`
-roles under `.codex/agents/`, using the
-[documented custom-agent format](https://learn.chatgpt.com/docs/agent-configuration/subagents#custom-agents).
-They inherit the parent model and permissions; [AGENTS.md](../AGENTS.md) defines
-ownership and review rules. Ask Codex to delegate an independent task to the
-relevant role.

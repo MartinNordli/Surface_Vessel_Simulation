@@ -22,17 +22,24 @@ linked guides, not here.
 ├── docker/                   Image dependencies, lock file, entrypoint, VRX license
 ├── docs/                     Design and reference documents
 │   ├── running.md            Commands, rendering, recording and CI/CD
+│   ├── configuration.md      Where every setting lives; vessel/scenario/algorithm schema
 │   ├── team-integration.md   Step-by-step guide for external team nodes
-│   ├── architecture.md       Data flow, configuration, limits, reproducibility
+│   ├── architecture.md       Data flow, run lifecycle, code map, limits
 │   ├── validation.md         Test coverage, benchmarks and dynamics measurements
 │   ├── interfaces.md         ROS topics, types, frames and ownership per node
+│   ├── njord-calibration.md  Calibration protocol for the Njord model
+│   ├── njord-model-evidence.md  Measured evidence for the Njord model
+│   ├── simulatorplattform-vrx-vs-pygemini.md  Why VRX/Gazebo (Norwegian)
 │   └── agent-workflows.md    How to build, verify, delegate and commit
 ├── njord_sim/                ROS 2 Python package (main simulator logic)
-│   ├── config/               Vessel, sensor, localization, team and RViz config
+│   ├── config/               algorithms.yaml, localization.yaml, RViz
+│   │   ├── vessels/          One file per vessel: wamv.yaml (default), njord_v1.yaml
+│   │   └── examples/         Partial sensor override and ROS parameter examples
 │   ├── launch/               simulation.launch.py, dstar_demo.launch.py
-│   └── njord_sim/            Nodes (*_node.py) and pure-Python cores (*_core.py)
-├── njord_gz_plugins/         C++ Gazebo plugins: actuator watchdog, contact monitor
-├── scenarios/                Course definitions: reference, slalom, dynamics
+│   └── njord_sim/            Nodes (*_node.py), pure-Python cores (*_core.py),
+│                             configuration.py, constants.py
+├── njord_gz_plugins/         C++ Gazebo plugins: actuator watchdog, Njord physics, contact monitor
+├── scenarios/                Course files: reference, slalom, dynamics
 ├── scripts/                  `njord` CLI, benchmark, runners, host setup, build metadata
 ├── tests/                    unittest suite (test_*.py) and ROS smoke helpers
 ├── validation/               Independent checks: dynamics, lidar, runtime, timeouts
@@ -45,6 +52,11 @@ while `*_node.py` only wires it to topics, parameters and timing.
 
 ## Engineering invariants
 
+- Every setting has exactly one home ([docs/configuration.md](docs/configuration.md)):
+  the vessel file, the scenario, `algorithms.yaml`, or `constants.py` for fixed
+  platform values. Read values from there; never hardcode a second copy in a
+  node, launch file, script or another YAML file. Each vessel file is
+  self-contained.
 - SI units, ENU world coordinates, ROS body/optical frames, timestamped TF.
 - Algorithms and scoring use `/clock` simulation time; infrastructure watchdogs use
   steady wall time. Never freshen stale sensor data by re-stamping it.
@@ -103,6 +115,7 @@ carries irrelevant detail. A small or single-area task is cheaper to do directly
 | Topic | File |
 | --- | --- |
 | Build and run commands, verification per change area, subagent roles | [docs/agent-workflows.md](docs/agent-workflows.md) |
+| Where settings live, file schemas, parameter precedence | [docs/configuration.md](docs/configuration.md) |
 | ROS topics, message types, frames, node ownership | [docs/interfaces.md](docs/interfaces.md) |
 | Running the simulator, rendering, recording, CI/CD | [docs/running.md](docs/running.md) |
 | Team workflows, sensor and parameter overrides, replay | [docs/team-integration.md](docs/team-integration.md) |

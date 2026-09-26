@@ -19,11 +19,19 @@ suite for the full check. Transport tests run in isolated ROS domains.
 Team integration regressions cover all eight controller/perception/mapping
 combinations, full external mode, parameter precedence, configuration snapshots,
 invalid settings and generation of a customized WAM-V sensor model. On 2026-09-10
-the container suite passed all 119 tests. A live lab smoke test with
-`sensors_low_bandwidth.yaml` received both 320×180 camera streams, finite lidar
-returns, estimated odometry and optical TF; the lab remained running after the
-inspection process exited. This verifies the tested sensor configuration and ROS
-connection, not race completion or the team's unpublished algorithms.
+a live lab smoke test with `examples/sensors_low_bandwidth.yaml` received both
+320×180 camera streams, finite lidar returns, estimated odometry and optical TF;
+the lab remained running after the inspection process exited. This verifies the
+tested sensor configuration and ROS connection, not race completion or the
+team's unpublished algorithms.
+
+Configuration regressions check schema validation, partial WAM-V overrides,
+speed-profile selection for every vessel and the `/config` lookup order.
+
+On 2026-09-26, after the configuration cleanup, the container suite passed all
+166 tests, the GPU selftest passed (both 640×360 cameras, lidar, navigation in
+`map`), and `./scripts/njord demo reference` (seed 1, calm, fast) completed 3/3
+gates in 111.5 s with no contact and 3.60 m minimum clearance.
 
 ## Slalom course
 

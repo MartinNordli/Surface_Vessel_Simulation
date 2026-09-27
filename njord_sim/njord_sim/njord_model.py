@@ -29,7 +29,7 @@ import math
 import xml.etree.ElementTree as ET
 import yaml
 from .configuration import sensor_settings, thruster_table
-from .constants import (BASE_FRAME, COMMAND_TIMEOUT_S, GPS_FRAME, GPS_RAW_TOPIC, GROUND_TRUTH_TOPIC,
+from .constants import (BASE_FRAME, COMMAND_TIMEOUT_S, PROCESS_LIVENESS_S, GPS_FRAME, GPS_RAW_TOPIC, GROUND_TRUTH_TOPIC,
                         GZ_MODEL_NAME, IMU_FRAME, IMU_RAW_TOPIC, LIDAR_FRAME, LIDAR_POINTS_TOPIC,
                         LIDAR_SCAN_TOPIC, camera_frame, camera_topic)
 from .vessel import set_text
@@ -254,8 +254,10 @@ def generate(output_dir, resolved_configuration):
         "wind_area_x": vessel["wind"]["reference_area_m2"][0],  # frontal, m^2
         "wind_area_y": vessel["wind"]["reference_area_m2"][1],  # lateral, m^2
         "wind_length": vessel["wind"]["reference_length_m"],    # yaw lever, m
-        # Steady wall-time command freshness; stale commands target zero thrust.
+        # Command freshness in simulation time, and process liveness in
+        # steady time; a stale or dead command targets zero thrust.
         "timeout_s": COMMAND_TIMEOUT_S,
+        "liveness_timeout_s": PROCESS_LIVENESS_S,
     }
     for k, v in fields.items():
         txt(p, k, v)

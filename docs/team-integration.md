@@ -104,7 +104,9 @@ base configuration does not give the team container a GPU.
 5. The controller must zero thrust itself on an empty, invalid or stale path, a
    stale map or stale odometry. The guard requires fresh planner, mission and
    navigation status plus the evaluator's race-active signal. Missing commands for
-   0.5 s of wall-clock time remove thrust; the boat keeps its momentum and can drift.
+   0.5 s of simulation time remove thrust (or 2 s of wall-clock time if
+   simulation time stalls); the boat keeps its momentum and can drift. Why the
+   guard currently passes or blocks thrust is published on `/njord/guard_status`.
 
 A concrete connection test without your own package is to run the reference
 controller as a separate process while `CONTROLLER=external` is set:

@@ -1,50 +1,54 @@
-"""Single actuator authority; source/process freshness uses steady time.
+"""Single actuator authority: data freshness on simulation time, liveness on steady time.
 
 The command guard is the only node allowed to drive the thrusters. It
 forwards the controller's thrust commands only while every required input is
 fresh and healthy, and otherwise publishes zero force. It does not look at
 paths, maps or odometry: controllers must zero their own commands on bad
 input, and the planner, mission and sensor adapter must report problems in
-their status heartbeats.
+their status heartbeats. The decision itself is ``guard_core.GuardCore``.
 
 Subscribes:
     ``thruster_topics`` (one ``std_msgs/Float64`` per thruster, in vessel-file
         order, e.g. ``/thruster_1/command``): thrust command in N along the
         thruster's axis; non-finite values count as invalid.
-    ``/njord/planner_status``, ``/njord/mission_status``,
-        ``/njord/navigation_status`` (``diagnostic_msgs/DiagnosticArray``):
-        health heartbeats. Each must hold exactly one status with the expected
-        name (``njord/planner``, ``mission``, ``navigation``) and level OK.
-    ``/njord/race_active`` (``std_msgs/Bool``, transient local): evaluator
-        heartbeat; thrust is only allowed while it is true and fresh.
+    ``/njord/{navigation,planner,mission}_status``
+        (``diagnostic_msgs/DiagnosticArray``): health heartbeats for the keys in
+        ``required_status``. Each must hold exactly one status with the
+        expected name (``navigation``, ``njord/planner``, ``mission``) and level OK.
+    ``/njord/race_active`` (``std_msgs/Bool``, transient local): the
+        evaluator's run-active signal, required if ``require_race_active``.
 
-Publishes (20 Hz, steady-time timer):
+Publishes:
     ``/njord/actuator_forces`` (``ros_gz_interfaces/Float32Array``): one force
         in N per thruster in ``data``, in vessel-file order (bridged to
-        ``gz.msgs.Float_V``). Consumed by the Gazebo actuator watchdog or Njord
-        physics plugin, which reject a length that does not match the vessel.
+        ``gz.msgs.Float_V``). Published as soon as every thruster has a new
+        command and all inputs are valid, so the controller's own rate passes
+        through without a guard-imposed rate or delay. Explicit zeros are
+        published on a 20 Hz steady-time timer while inputs are invalid, and
+        immediately when a heartbeat invalidates a driving state. Consumed by
+        the Gazebo actuator watchdog or Njord physics plugin, which reject a
+        length that does not match the vessel.
+    ``/njord/guard_status`` (``diagnostic_msgs/DiagnosticArray``, 20 Hz steady
+        time): status ``command_guard``, OK while thrust may pass, otherwise
+        WARN with the reason, e.g. ``planner status stale in simulation time``.
 
 Parameters:
-    ``thruster_topics``, ``timeout_s`` (max steady-time age of every input,
-    s), ``max_thrust`` (N), ``forward_limits`` / ``reverse_limits``
-    (per-thruster limits in N, reverse as magnitudes), from the vessel file
-    and ``algorithms.yaml`` through ``node_defaults``; ``require_mission``
-    (default True) makes the mission heartbeat mandatory.
+    ``thruster_topics``, ``timeout_s`` (simulation-time freshness of every
+    input, s), ``liveness_s`` (steady-time process liveness, s),
+    ``max_thrust`` (N), ``forward_limits`` / ``reverse_limits`` (per-thruster
+    limits in N, reverse as magnitudes), from the vessel file, algorithms.yaml
+    and constants.py through ``node_defaults``; ``required_status`` (default
+    all three heartbeats) and ``require_race_active`` (default True).
 
 Validity rules and failure behaviour:
-    * Receipt freshness uses steady wall time (``time.monotonic``) and a
-      steady-clock timer, so the guard keeps running and zeroes thrust even
-      if /clock stops or a publishing process hangs.
-    * Status content freshness uses /clock simulation time: the status
-      header stamp must be at most 1.0 s old and at most 0.1 s in the future.
-    * If any required input (every thruster command included) is missing,
-      invalid or older than ``timeout_s``, or the race is not active, all
-      forces are published as zero. They are published, not withheld, so
-      downstream actuators see an explicit zero command.
+    * An input is stale when it was received more than ``timeout_s`` ago in
+      simulation time, or more than ``liveness_s`` ago in steady time. The
+      steady-clock timer keeps deciding (and zeroing) even if /clock stops.
+    * Status content must be at most 1.0 s old and at most 0.1 s in the future
+      in simulation time. Simulation time moving backwards clears all inputs.
     * Valid commands are clamped to the forward/reverse limits and
       ``max_thrust``. On shutdown a final zero command is published.
 """
-import math
 import time
 import rclpy
 from rclpy.clock import Clock, ClockType
@@ -55,6 +59,12 @@ from ros_gz_interfaces.msg import Float32Array
 from std_msgs.msg import Float64, Bool
 
 from njord_sim.defaults import node_defaults
+from njord_sim.guard_core import GuardCore
+
+# Heartbeat key -> (topic, expected DiagnosticStatus name).
+STATUS_TOPICS = {'navigation': ('/njord/navigation_status', 'navigation'),
+                 'planner': ('/njord/planner_status', 'njord/planner'),
+                 'mission': ('/njord/mission_status', 'mission')}
 
 
 class CommandGuard(Node):
@@ -63,97 +73,81 @@ class CommandGuard(Node):
     def __init__(self, **kwargs):
         # kwargs go to rclpy's Node, e.g. parameter_overrides in tests.
         super().__init__('command_guard', **kwargs)
-        # thruster_topics, timeout_s, max_thrust and per-thruster limits come
+        # thruster_topics, timeouts, max_thrust and per-thruster limits come
         # from the vessel, algorithms.yaml and constants.py (see defaults.py).
-        self.declare_parameters('', [*node_defaults('command_guard'), ('require_mission', True)])
-        self.topics = list(self.get_parameter('thruster_topics').value)
-        if (not self.topics or len(set(self.topics)) != len(self.topics)
-                or len(self.get_parameter('forward_limits').value) != len(self.topics)
-                or len(self.get_parameter('reverse_limits').value) != len(self.topics)):
-            raise ValueError('thruster_topics must be unique and match the per-thruster limits')
-        # Latest input per key (thruster index, 'planner', 'mission',
-        # 'navigation'): (steady receipt time in s, value or None if invalid).
-        self.values = {}
-        self.status_stamps = {}
-        self.last_sim_time = None
-        self.race_active = False
-        self.race_received = 0.0  # steady receipt time (s) of the race heartbeat
+        self.declare_parameters('', [*node_defaults('command_guard'),
+                                     ('required_status', list(STATUS_TOPICS)),
+                                     ('require_race_active', True)])
+        p = lambda name: self.get_parameter(name).value
+        self.topics = list(p('thruster_topics'))
+        required = list(p('required_status'))
+        if len(set(self.topics)) != len(self.topics) or set(required) - set(STATUS_TOPICS):
+            raise ValueError('thruster_topics must be unique and required_status a subset of '
+                             f'{sorted(STATUS_TOPICS)}')
+        self.core = GuardCore(len(self.topics), required, p('require_race_active'), p('timeout_s'),
+                              p('liveness_s'), p('forward_limits'), p('reverse_limits'), p('max_thrust'))
+        self.driving = False  # the last published forces were a valid command
         self.create_subscription(Bool, '/njord/race_active', self.on_race,
                                  QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
         self.pub = self.create_publisher(Float32Array, '/njord/actuator_forces', 1)
+        self.status_pub = self.create_publisher(DiagnosticArray, '/njord/guard_status', 1)
         for index, topic in enumerate(self.topics):
             self.create_subscription(Float64, topic, lambda m, i=index: self.command(i, m), 1)
-        for component in ('planner', 'mission', 'navigation'):
-            self.create_subscription(DiagnosticArray, f'/njord/{component}_status',
-                                     lambda m, c=component: self.status(c, m), 1)
+        for key in required:
+            topic, name = STATUS_TOPICS[key]
+            self.create_subscription(DiagnosticArray, topic, lambda m, k=key, n=name: self.status(k, n, m), 1)
         # Steady-time timer: the guard must keep deciding (and zeroing) even
         # when simulation time is paused or no longer advancing.
         self.create_timer(0.05, self.step, clock=Clock(clock_type=ClockType.STEADY_TIME))
 
-    def command(self, key, msg):
-        """Record a thrust command in N; non-finite values are stored as invalid."""
-        self.values[key] = (time.monotonic(), msg.data if math.isfinite(msg.data) else None)
+    def now(self):
+        """(simulation time from /clock, steady time) in seconds."""
+        return self.get_clock().now().nanoseconds * 1e-9, time.monotonic()
+
+    def publish(self, valid):
+        """Publish forces: the clamped commands if ``valid``, otherwise zeros."""
+        msg = Float32Array()
+        msg.data = self.core.forces(valid)
+        self.pub.publish(msg)
+        self.driving = valid
+
+    def command(self, index, msg):
+        """Record a thrust command; forward the set once every thruster is new."""
+        sim, wall = self.now()
+        self.core.command(index, msg.data, sim, wall)
+        if self.core.take_complete_set():
+            self.publish(self.core.decide(sim, wall)[0])
 
     def on_race(self, msg):
-        """Record the evaluator's race-active heartbeat and its steady receipt time."""
-        self.race_active = msg.data
-        self.race_received = time.monotonic()
+        """Record the evaluator's run-active signal."""
+        self.core.set_run_active(msg.data, time.monotonic())
+        self.stop_if_invalid()
 
-    def status(self, key, msg):
-        """Record whether a health heartbeat is OK and its source stamp is current."""
-        # Age of the status content in /clock simulation time (s).
-        now = self.observe_clock()
+    def status(self, key, name, msg):
+        """Record whether a heartbeat holds exactly one OK status named ``name``."""
+        sim, wall = self.now()
+        matches = [s for s in msg.status if s.name == name]
+        ok = len(matches) == 1 and matches[0].level == DiagnosticStatus.OK
         stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
-        age = now - stamp
-        expected = 'njord/planner' if key == 'planner' else key
-        matches = [s for s in msg.status if s.name == expected]
-        valid = len(matches) == 1 and matches[0].level == DiagnosticStatus.OK
-        # Allow 0.1 s of clock skew into the future, and at most 1 s of age.
-        valid = valid and -0.1 <= age <= 1.0
-        if stamp <= self.status_stamps.get(key, -math.inf):
-            if not valid:
-                self.values[key] = (time.monotonic(), None)
-            return
-        self.status_stamps[key] = stamp
-        self.values[key] = (time.monotonic(), True if valid else None)
+        self.core.status(key, ok, stamp, sim, wall)
+        self.stop_if_invalid()
 
-    def observe_clock(self):
-        """Clear every previous-run input when simulation time moves backward."""
-        now = self.get_clock().now().nanoseconds * 1e-9
-        if self.last_sim_time is not None and now < self.last_sim_time:
-            self.values.clear()
-            self.status_stamps.clear()
-            self.race_active = False
-        self.last_sim_time = now
-        return now
-
-    def forces(self, valid):
-        """Forces message: clamped commands in N if ``valid``, otherwise zeros."""
-        msg = Float32Array()
-        msg.data = [0.0] * len(self.topics)
-        if valid:
-            limit = self.get_parameter('max_thrust').value
-            forward = self.get_parameter('forward_limits').value
-            reverse = self.get_parameter('reverse_limits').value
-            # Clamp each thruster to [-min(max_thrust, reverse), min(max_thrust, forward)] N.
-            msg.data = [max(-min(limit, reverse[i]), min(limit, forward[i], self.values[i][1]))
-                        for i in range(len(self.topics))]
-        return msg
+    def stop_if_invalid(self):
+        """Zero at once when a driving state became invalid, not at the next tick."""
+        if self.driving and not self.core.decide(*self.now())[0]:
+            self.publish(False)
 
     def step(self):
-        """Publish clamped commands if every required input is valid, else zero."""
-        self.observe_clock()
-        keys = [*range(len(self.topics)), 'planner', 'navigation']
-        if self.get_parameter('require_mission').value:
-            keys.append('mission')
-        now = time.monotonic()
-        timeout = self.get_parameter('timeout_s').value
-        # Every required input must have been received within timeout_s of
-        # steady time and be valid, and the race must be active.
-        valid = (self.race_active and now-self.race_received <= timeout
-                 and all(k in self.values and now-self.values[k][0] <= timeout
-                         and self.values[k][1] is not None for k in keys))
-        self.pub.publish(self.forces(valid))
+        """Steady tick: publish zeros while invalid, and the guard status."""
+        valid, reason = self.core.decide(*self.now())
+        if not valid:
+            self.publish(False)
+        status = DiagnosticArray()
+        status.header.stamp = self.get_clock().now().to_msg()
+        status.status = [DiagnosticStatus(name='command_guard', hardware_id='njord_sim',
+                                          level=DiagnosticStatus.OK if valid else DiagnosticStatus.WARN,
+                                          message=reason)]
+        self.status_pub.publish(status)
 
 
 def main():
@@ -164,6 +158,6 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
-        node.pub.publish(node.forces(False))
+        node.publish(False)
         node.destroy_node()
         rclpy.try_shutdown()

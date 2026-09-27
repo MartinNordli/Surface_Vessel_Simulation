@@ -3,7 +3,7 @@
 
 No guard/controller/other force publisher may run during this check. Applied
 force is simulation evidence, never an autonomy input. This checks actual plugin
-response, invalid-input behavior and steady-wall expiry; it does not establish
+response, invalid-input behavior and simulation-time expiry; it does not establish
 vessel inertia, hydrodynamic fidelity, or calibrated propeller response.
 
 Scope: the NjordPhysics Gazebo plugin (njord_gz_plugins) of the Njord vessel
@@ -31,9 +31,12 @@ Checks, in order:
                                        zeroes every target
     invalid_command_residual_decay     after that, the force decays to zero
                                        with the same lag (inertia, not a jump)
-    steady_wall_timeout                silence zeroes all targets after the
-                                       configured timeout (--timeout-s, steady
-                                       wall time), not before, within --slack-s
+    simulation_time_timeout            silence zeroes all targets after the
+                                       configured timeout (--timeout-s,
+                                       simulation time from the telemetry
+                                       stamps), not before, within --slack-s;
+                                       the wall deadline is --liveness-s +
+                                       --slack-s
     all_observed_forces_finite         no NaN/Inf in any telemetry
 
 Output: strict JSON in --output and on stdout, including the SHA-256 of the
@@ -136,6 +139,10 @@ class Probe:
             self.wait()
         raise RuntimeError("Simulation time did not advance enough to measure response")
 
+    def sim_at(self, wall):
+        """Simulation stamp (s) of the newest telemetry received at or before ``wall``."""
+        return max((s for s in self.snapshot() if s["wall"] <= wall), key=lambda s: s["wall"])["sim"]
+
     def wait_invalid(self, since, limit):
         """Return the first sample after ``since`` with live off and all targets zero.
 
@@ -208,7 +215,8 @@ def main():
     )
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--discovery-s", type=float, default=15.0)
-    parser.add_argument("--timeout-s", type=float, default=0.5)
+    parser.add_argument("--timeout-s", type=float, default=0.5, help="command timeout, simulation seconds")
+    parser.add_argument("--liveness-s", type=float, default=2.0, help="steady liveness limit, wall seconds")
     parser.add_argument("--slack-s", type=float, default=0.35)
     args = parser.parse_args()
     result = {
@@ -277,16 +285,22 @@ def main():
             "wall_delay_s": invalid["wall"] - sent
         }
         _, stopped = probe.hold(targets, max(0.4, 6 * max(taus)))
-        expired = probe.wait_invalid(stopped, args.timeout_s + args.slack_s)
-        delay = expired["wall"] - stopped
+        stopped_sim = probe.sim_at(stopped)
+        expired = probe.wait_invalid(stopped, args.liveness_s + args.slack_s)
+        delay = expired["sim"] - stopped_sim
         # Expiring clearly before the timeout means another publisher or a
-        # different configured timeout; 80 ms allows for scheduling jitter.
+        # different configured timeout; 80 ms allows for step and transport
+        # jitter. Late expiry beyond the slack means freshness is not measured
+        # in simulation time.
         if delay < args.timeout_s - 0.08:
             raise AssertionError(
                 "Premature expiry: competing command source or configured timeout mismatch"
             )
-        result["checks"]["steady_wall_timeout"] = {
-            "observed_s": delay,
+        if delay > args.timeout_s + args.slack_s:
+            raise AssertionError("Expiry later than the simulation-time timeout plus slack")
+        result["checks"]["simulation_time_timeout"] = {
+            "observed_sim_s": delay,
+            "observed_wall_s": expired["wall"] - stopped,
             "configured_s": args.timeout_s,
         }
         samples = probe.snapshot()

@@ -18,7 +18,9 @@
 //   <wind_velocity>    constant world ENU wind velocity (m/s)
 //   <wind_area_x/y>    frontal / lateral reference areas (m^2)
 //   <wind_length>      yaw-moment reference length (m)
-//   <timeout_s>        steady wall-clock command lifetime (s)
+//   <timeout_s>        command lifetime in simulation time (s)
+//   <liveness_timeout_s> steady wall-clock limit that catches a dead command
+//                      publisher while simulation time is stalled (s)
 //   <buoyancy_volume>  repeated; <vertex>x y z</vertex> (body frame, m) and
 //                      <triangle>i j k</triangle> (zero-based, outward winding)
 //   <thruster name>    two or more, in command order: <position>, <axis>
@@ -34,7 +36,8 @@
 //              (N), then 1 when the command was live, else 0
 //
 // Failure behavior: invalid configuration throws in Configure. A stale
-// (older than timeout_s in steady time) command, a non-finite value or a
+// command (received more than timeout_s of simulation time or
+// liveness_timeout_s of steady time ago), a non-finite value or a
 // wrong number of values sets every target to zero; the applied force then decays with the thruster time constant and
 // the hull keeps its momentum. Simulation time going backwards resets the
 // thruster state and invalidates the last command.
@@ -71,7 +74,7 @@ class Physics final : public gz::sim::System,
   std::vector<hydro::Mesh> meshes;
   V com, wind;
   std::string bodyFrame;
-  double density{}, level{}, areaX{}, areaY{}, length{}, timeout{};
+  double density{}, level{}, areaX{}, areaY{}, length{}, timeout{}, liveness{};
   std::vector<Thruster> motors;
   std::vector<Coefficient> table;
   gz::transport::Node node;
@@ -81,6 +84,10 @@ class Physics final : public gz::sim::System,
   // writes and the simulation thread reads.
   std::mutex mutex;
   Clock::time_point received{};  // steady time of the last command
+  // Simulation time of the first step after the last command arrived; the
+  // transport thread only flags the arrival (stampPending).
+  std::chrono::steady_clock::duration receivedSim{};
+  bool stampPending{};
   std::vector<double> commands;  // requested force per thruster (N)
   bool valid{};                  // one finite command per thruster
 
@@ -99,6 +106,12 @@ public:
     density = s->Get<double>("water_density");
     level = s->Get<double>("water_level");
     timeout = s->Get<double>("timeout_s");
+    liveness = s->Get<double>("liveness_timeout_s");
+    if (!s->HasElement("timeout_s") || !s->HasElement("liveness_timeout_s") ||
+        !(timeout > 0) || !(liveness > 0) || !std::isfinite(timeout) ||
+        !std::isfinite(liveness))
+      throw std::invalid_argument(
+          "Njord physics timeout_s and liveness_timeout_s must be positive");
     // Clone because Element iteration is mutable in sdformat's API.
     auto mutableS = s->Clone();
     for (auto volume = mutableS->GetElement("buoyancy_volume"); volume;
@@ -184,6 +197,7 @@ public:
       valid = valid && std::isfinite(commands[i]);
     }
     received = Clock::now();
+    stampPending = true;
   }
   void PreUpdate(const gz::sim::UpdateInfo &info,
                  gz::sim::EntityComponentManager &ecm) override {
@@ -223,11 +237,19 @@ public:
     // Compute at COM, then transport the wrench to the link origin below.
     {
       std::lock_guard<std::mutex> lock(mutex);
-      // Command freshness uses steady wall time, not simulation time.
+      // Freshness in simulation time bounds how long a command acts on the
+      // boat at any real-time factor; steady time only catches a dead
+      // publisher while simulation time is stalled.
+      if (stampPending) {
+        receivedSim = info.simTime;
+        stampPending = false;
+      }
       bool live =
           valid &&
+          std::chrono::duration<double>(info.simTime - receivedSim).count() <=
+              timeout &&
           std::chrono::duration<double>(Clock::now() - received).count() <=
-              timeout;
+              liveness;
       std::vector<double> targets(motors.size(), 0.0);
       V actuatorForce, actuatorMoment;
       for (unsigned i = 0; i < motors.size(); i++) {

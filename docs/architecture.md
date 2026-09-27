@@ -76,7 +76,7 @@ them to topics, parameters and timers.
 | Shared | `geometry.py` | Rigid transforms and timestamp helpers |
 
 Gazebo plugins in `njord_gz_plugins/`: `ActuatorWatchdog` (WAM-V thrust with a
-steady-time timeout), `NjordPhysics` (Njord hydrostatics, wind and thrusters)
+simulation-time timeout and a steady-time liveness limit), `NjordPhysics` (Njord hydrostatics, wind and thrusters)
 and `ContactMonitor` (contact heartbeat so silence never means "no contact").
 
 ## Configuration
@@ -101,8 +101,13 @@ bounded approach/crossing corridor; fresh camera frames, odometry and
 observed-free lidar guidance are still required.
 
 The command guard requires current planner, mission, navigation and evaluator
-heartbeats, and commands expire after `COMMAND_TIMEOUT_S` of steady time. A
-separate Gazebo plugin removes thrust if the ROS guard or bridge disappears.
+heartbeats. Commands and heartbeats expire after `COMMAND_TIMEOUT_S` (0.5 s) of
+simulation time, so a command acts on the boat for the same simulated time at
+any real-time factor; `PROCESS_LIVENESS_S` (2 s) of steady time only catches a
+stopped `/clock` or a dead process. The guard forwards each complete set of
+thruster commands as it arrives, without a rate of its own. A separate Gazebo
+plugin applies the same two limits and removes thrust if the ROS guard or
+bridge disappears.
 Zero thrust leaves momentum and wind drift; it is not an instant stop or a
 collision guarantee.
 

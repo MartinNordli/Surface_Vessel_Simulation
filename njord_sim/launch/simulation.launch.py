@@ -48,7 +48,7 @@ def _launch(context):
     sources = {'vessel': p('vessel_config'), 'scenario': p('scenario'), 'algorithms': p('algorithms_config')}
     resolved = resolve_configuration(sources['vessel'], sources['scenario'], sources['algorithms'],
                                      seed=int(p('seed')) if p('seed') else None, environment=p('environment'),
-                                     profile=p('profile'))
+                                     profile=p('profile'), real_time_factor=float(p('real_time_factor')))
     scenario = resolved['scenario']
     sources['localization'] = str(config_path('localization.yaml'))
     if os.environ.get('ROS_PARAMS_FILE'):
@@ -64,7 +64,7 @@ def _launch(context):
         urdf, _ = generate_njord(out, resolved)
     else:
         urdf, _ = generate_wamv(out, resolved_config=sensor_settings(resolved))
-    (out / 'njord_course.sdf').write_text(world_xml(scenario, resolved['vessel']['profile']) + '\n')
+    (out / 'njord_course.sdf').write_text(world_xml(scenario, resolved['vessel']['profile'], resolved['run']['real_time_factor']) + '\n')
     atomic_text(out / 'resolved_scenario.json', json.dumps(scenario, indent=2, allow_nan=False) + '\n')
     (out / 'scenario.sha256').write_text(scenario_digest(scenario) + '\n')
 
@@ -131,6 +131,8 @@ def generate_launch_description():
         DeclareLaunchArgument('seed', default_value=env('SEED', '')),
         DeclareLaunchArgument('environment', default_value=env('ENVIRONMENT', 'calm')),
         DeclareLaunchArgument('profile', default_value=env('PROFILE', 'fast')),
+        DeclareLaunchArgument('real_time_factor', default_value=env('REAL_TIME_FACTOR', '1.0'),
+                              description='Target simulated seconds per wall second'),
         DeclareLaunchArgument('output_dir', default_value=env('OUTPUT_DIR', '/outputs')),
         DeclareLaunchArgument('headless', default_value=env('HEADLESS', 'true')),
         DeclareLaunchArgument('vessel_config', default_value=env('VESSEL_CONFIG', str(config / 'vessels/wamv.yaml'))),

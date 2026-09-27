@@ -22,6 +22,7 @@ run. Nothing needs rebuilding unless noted.
 | EKF / GPS-transform settings | `njord_sim/config/localization.yaml` | always used |
 | World origin (GPS datum), command timeout, thruster command topic pattern, pinned WAM-V hull and thruster geometry | `njord_sim/njord_sim/constants.py` (then rebuild) | fixed platform constants |
 | Seed of a single run | — | `SEED=<n>` |
+| Simulated seconds per wall second | — | `REAL_TIME_FACTOR=<x>` (default `1.0`) |
 | Navigate on simulator ground truth instead of the GPS/IMU estimate | — | `STATE_SOURCE=truth` (default `estimate`) |
 
 Each vessel file is self-contained: the WAM-V and Njord files each hold their
@@ -47,6 +48,7 @@ changing them.
 | `SEED` | scenario seed (otherwise `1`) | Positive integer; gate jitter, wind and sensor noise |
 | `ENVIRONMENT` | `calm` | Preset name from the scenario's `environments` |
 | `PROFILE` | `fast` | Speed profile name from `algorithms.yaml` |
+| `REAL_TIME_FACTOR` | `1.0` | Gazebo's target of simulated seconds per wall second; a target, not a guarantee. Recorded as `run.real_time_factor` in `resolved_configuration.json` and as `real_time_factor_target` next to the achieved `real_time_factor` in `run_metrics.json`. See [the note on computation time](#real-time-factor-and-computation-time) |
 | `VESSEL_CONFIG` | `/config/vessels/wamv.yaml` | Vessel file or partial WAM-V override |
 | `ALGORITHMS_CONFIG` | `/config/algorithms.yaml` | Reference autonomy tuning |
 | `ROS_PARAMS_FILE` | empty | Extra ROS parameters for reference nodes |
@@ -56,6 +58,21 @@ changing them.
 
 Paths in `VESSEL_CONFIG`, `ALGORITHMS_CONFIG` and `ROS_PARAMS_FILE` are paths
 inside the container: use `/config/...` for files under `njord_sim/config/`.
+
+### Real-time factor and computation time
+
+Command and heartbeat freshness is measured in simulation time, so the guard,
+the actuator plugins and the evaluator behave the same at any real-time factor.
+Computation is not simulated: an algorithm that needs 100 ms of CPU takes
+100 ms of wall time, which is 30 ms of simulated time at `REAL_TIME_FACTOR=0.3`
+and 300 ms at 3. Below 1, algorithms therefore get more computation per
+simulated second than on the boat (optimistic latency); above 1, less
+(pessimistic). Only runs that achieve a factor near 1 on hardware comparable to
+the boat's represent its computation latency. Measured: the evaluator's
+steady-time budget scales as `max(wall_timeout_s, 2 × timeout_s / factor)` so a
+slow run is not cut short; a Njord reference run at 0.3 (seed 1, CPU
+rendering) reached 1 of 3 gates because the pure-Python planner spent up to
+15 s of wall time on infeasible searches, not because of actuation timing.
 
 ### Parameter precedence
 
@@ -182,8 +199,9 @@ thrusters:                       # list order = thruster index everywhere
   with the minimum-norm solution and scales all thrusters uniformly at a
   limit. With a layout that cannot set sway, only surge and yaw are solved.
 - Invalid or expired commands target zero thrust after `COMMAND_TIMEOUT_S` of
-  steady wall time; the configured response then decays the force in
-  simulation time. Body inertia and drift remain.
+  simulation time (or `PROCESS_LIVENESS_S` of steady time while simulation
+  time stalls); the configured response then decays the force in simulation
+  time. Body inertia and drift remain.
 
 Njord vessel files are `schema_version: 3`. A schema 1 file, which gave each
 thruster an `axis` unit vector instead of `yaw_deg`, is converted when loaded;
@@ -253,7 +271,8 @@ with a 10 m margin. A larger grid costs mapping and planning time.
 
 Values that belong to the pinned platform rather than to an experiment: the
 world origin shared by Gazebo and the GPS transform (63.4305 N, 10.3951 E), the
-0.5 s command timeout used by the guard and both actuator plugins, the thruster
+0.5 s simulation-time command timeout and 2 s steady-time liveness limit used by
+the guard, both actuator plugins and the evaluator, the thruster
 command topic pattern `/{name}/command`, and the VRX WAM-V hull envelope
 (6 × 3.3 m) and thruster layout: `thruster_1` (port) and `thruster_2`
 (starboard) at x = -2.373776 m, y = ±1.027135 m, pushing forward.
@@ -299,7 +318,7 @@ processing margin. Sensor periods round up to a physics tick, recorded in
 `resolved_configuration.json`; rates above the physics update rate fail.
 These reference constraints do not apply to a simulator-only run. Clock
 rollback clears freshness history; duplicate stamps never renew a measurement.
-Command expiry still uses monotonic wall time.
+Command expiry uses simulation time; steady time is only the liveness limit.
 
 The mapper uses the selected lidar range and message range limits. Its
 `self_geometry.json` contains actual generated visual surfaces, with each

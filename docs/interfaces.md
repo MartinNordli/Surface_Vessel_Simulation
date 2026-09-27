@@ -23,6 +23,7 @@ simulation time. Source stamps are preserved through sensing/mapping.
 | `/<thruster name>/command`, e.g. `/thruster_1/command` | `std_msgs/Float64` | Controller force per thruster in newtons along its axis, before guard; one topic per thruster in the vessel file (WAM-V: `thruster_1` port, `thruster_2` starboard) |
 | `/njord/actuator_forces` | `ros_gz_interfaces/Float32Array` | Internal force envelope: one force in N per thruster, in vessel-file order |
 | `/njord/race_active` | `std_msgs/Bool` | Evaluator heartbeat, transient local, 10 Hz |
+| `/njord/guard_status` | `diagnostic_msgs/DiagnosticArray` | Command guard, 20 Hz steady time: status `command_guard`, OK while thrust may pass, otherwise WARN with the reason |
 | `/sim/ground_truth/odometry` | `nav_msgs/Odometry` | Evaluation; fed to navigation only in explicit truth mode (`STATE_SOURCE=truth`) |
 | `/sim/sensors/{gps/fix_raw,imu/data_raw}` | `sensor_msgs/NavSatFix`, `sensor_msgs/Imu` | Gazebo GPS/IMU before the sensor adapter adds noise; simulator internal |
 | `/njord/contacts` | `ros_gz_interfaces/Contacts` | Physics-verified contact heartbeat, 20 Hz |
@@ -93,9 +94,12 @@ planner diagnostic name is `njord/planner`; mission is `mission`; navigation
 is `navigation`. Level OK means current valid inputs. Guard rejects non-OK,
 missing/expired heartbeats and expired or nonfinite commands. It checks diagnostic
 source stamps against simulation time (up to 1 s old, at most 0.1 s ahead), and
-requires receipt of every heartbeat and both commands within 0.5 s steady time.
-The evaluator requires all three health statuses within 0.5 s simulation and
-steady time before starting. Publish these at 10 Hz; forces normally at 20 Hz.
+requires receipt of every heartbeat and every thruster command within 0.5 s of
+simulation time and 2 s of steady time. The evaluator requires all three health
+statuses at most 0.5 s old in simulation time, received within 2 s of steady
+time, before starting. Publish these at 10 Hz of simulation time; forces
+normally at 20 Hz. The guard forwards a force set as soon as every thruster has
+a new command, so the controller's rate and timing pass through unchanged.
 A fresh evaluator race heartbeat is also required. The guard does not subscribe
 to paths, maps or odometry: the controller must zero commands on invalid, empty
 or stale input, and the planner must report invalid paths. Never publish
@@ -129,8 +133,8 @@ all of the interfaces above are unchanged. `njord::Physics` consumes the same at
 `/njord/actuator_forces` envelope as the WAM-V watchdog; exactly one of these
 plugins is loaded. Forces are newtons, applied at the configured thruster
 positions. Invalid or expired commands target zero thrust; the configured
-actuator response decays the force in simulation time, while expiry uses steady
-wall time.
+actuator response decays the force in simulation time, and expiry uses the same
+two limits as the guard (0.5 s of simulation time, 2 s of steady time).
 
 Gazebo-only `/njord/actuator_applied` (`gz.msgs.Float_V`) reports, for N
 thrusters, N applied forces, then N target forces (newtons, vessel-file order),

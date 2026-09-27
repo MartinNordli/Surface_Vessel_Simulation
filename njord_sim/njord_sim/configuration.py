@@ -28,7 +28,7 @@ import re
 
 import yaml
 
-from .constants import COMMAND_TIMEOUT_S, THRUSTER_COMMAND_TOPIC, WAMV_HULL, WAMV_THRUSTERS
+from .constants import COMMAND_TIMEOUT_S, PROCESS_LIVENESS_S, THRUSTER_COMMAND_TOPIC, WAMV_HULL, WAMV_THRUSTERS
 from .control_core import allocation_matrix, independent_rows
 from .mesh_geometry import geometry_vertices, geometry_volume, load_obj, validate_disjoint_volumes
 from .scenario_core import validate_scenario
@@ -598,15 +598,18 @@ def _resolve_algorithms(algorithms, profile):
 # --------------------------------------------------------------------------
 
 def resolve_configuration(vessel_file, scenario_file, algorithms_file, seed=None,
-                          environment=None, profile=None):
+                          environment=None, profile=None, real_time_factor=1.0):
     """Resolve and cross-check the vessel, scenario and algorithm files.
 
     A vessel file without ``schema_version`` is a partial WAM-V override: its
     keys replace those in vessels/wamv.yaml. ``profile`` selects a speed profile
-    from algorithms.yaml (default 'fast'). Returns a JSON-serializable dict with
-    ``vessel``, ``scenario``, ``algorithms`` and SHA256 digests of every source
-    file under ``resources``.
+    from algorithms.yaml (default 'fast'). ``real_time_factor`` is Gazebo's
+    target of simulated seconds per wall second (a run option,
+    REAL_TIME_FACTOR). Returns a JSON-serializable dict with ``vessel``,
+    ``scenario``, ``algorithms``, ``run`` (the run options) and SHA256 digests
+    of every source file under ``resources``.
     """
+    _number(real_time_factor, 'real_time_factor', positive=True)
     vessel_data = _read(vessel_file)
     source_files = [vessel_file, scenario_file, algorithms_file]
     if 'schema_version' not in vessel_data:
@@ -659,7 +662,8 @@ def resolve_configuration(vessel_file, scenario_file, algorithms_file, seed=None
     resources = {str(Path(p).resolve()): hashlib.sha256(Path(p).read_bytes()).hexdigest()
                  for p in source_files}
     resolved = {'schema_version': 1, 'vessel': vessel, 'scenario': scenario,
-                'algorithms': algorithms, 'resources': resources,
+                'algorithms': algorithms, 'run': {'real_time_factor': float(real_time_factor)},
+                'resources': resources,
                 'sensor_max_period_s': sensor_periods}
     json.dumps(resolved, allow_nan=False)  # reject NaN/Infinity anywhere
     return resolved
@@ -690,7 +694,7 @@ def autonomy_parameters(resolved):
     result['command_guard'] = {'thruster_topics': topics,
                                'forward_limits': forward, 'reverse_limits': reverse,
                                'max_thrust': result['guidance']['max_thrust'],
-                               'timeout_s': COMMAND_TIMEOUT_S}
+                               'timeout_s': COMMAND_TIMEOUT_S, 'liveness_s': PROCESS_LIVENESS_S}
     settings = sensor_settings(resolved)
     result['sensor_adapter'] = {'seed': resolved['scenario']['seed'],
                                 'orientation_noise_rad': settings['imu_orientation_noise_rad'],

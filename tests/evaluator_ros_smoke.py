@@ -20,8 +20,8 @@ from ros_gz_interfaces.msg import Contact, Contacts, Entity
 from std_msgs.msg import Bool, Float64
 from builtin_interfaces.msg import Time
 from test_sensor_runtime import local_node
-from njord_sim.constants import GZ_MODEL_NAME
-from njord_sim.evaluator_node import Evaluator
+from njord_sim.constants import GZ_MODEL_NAME, PROCESS_LIVENESS_S
+from njord_sim.evaluator_node import Evaluator, wall_budget_s
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -102,6 +102,13 @@ class EvaluatorReadinessTests(unittest.TestCase):
                 rclpy.shutdown()
 
 
+class WallBudgetTests(unittest.TestCase):
+    def test_budget_leaves_room_for_the_simulation_timeout_at_slow_factors(self):
+        self.assertEqual(wall_budget_s(600, 360, 1.0), 720)
+        self.assertAlmostEqual(wall_budget_s(600, 360, 0.3), 2400)
+        self.assertEqual(wall_budget_s(600, 100, 3.0), 600)
+
+
 class EvaluatorCallbackTests(unittest.TestCase):
     """Actual ROS messages; local doubles keep targeted checks free of DDS."""
     def setUp(self):
@@ -159,7 +166,7 @@ class EvaluatorCallbackTests(unittest.TestCase):
     def test_repeated_stamp_does_not_refresh_receipt_watchdog(self):
         self.contact(100.)
         received = self.node.contact_last_wall
-        with patch("njord_sim.evaluator_node.time.monotonic", return_value=received+0.6):
+        with patch("njord_sim.evaluator_node.time.monotonic", return_value=received+PROCESS_LIVENESS_S+0.1):
             self.contact(100.)
             self.assertEqual(self.node.contact_last_wall, received)
             self.assertEqual(self.node.scorer.contact_messages, 1)

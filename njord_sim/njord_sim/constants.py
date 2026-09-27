@@ -16,9 +16,16 @@ the autonomy launch from silently disagreeing.
 # otherwise GPS positions and the ENU map frame drift apart.
 WORLD_ORIGIN_WGS84 = (63.4305, 10.3951, 0.0)
 
-# Steady wall-clock time after which a missing thrust command is treated as
-# stale. Used by the ROS command guard and both Gazebo actuator plugins.
+# Actuation uses two clocks (docs/interfaces.md). A thrust command or health
+# heartbeat is stale once it is older than COMMAND_TIMEOUT_S of simulation
+# time: that decides how long it acts on the boat, at any real-time factor.
+# PROCESS_LIVENESS_S of steady wall time is only a watchdog for a stopped
+# /clock or a dead process; while simulation time stands still the boat does
+# not move either, so it can be generous. Heartbeats at 10 Hz of simulation
+# time stay live down to a real-time factor of about 0.05. Used by the ROS
+# command guard, both Gazebo actuator plugins and the evaluator.
 COMMAND_TIMEOUT_S = 0.5
+PROCESS_LIVENESS_S = 2.0
 
 # ROS topic on which the command guard receives one thruster's force in
 # newtons (std_msgs/Float64), formatted with the thruster name from the vessel

@@ -40,8 +40,16 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data, QoSProfile, DurabilityPolicy
 from std_msgs.msg import Float64, Bool
 
-from .constants import GROUND_TRUTH_TOPIC, GZ_MODEL_NAME
+from .constants import GROUND_TRUTH_TOPIC, GZ_MODEL_NAME, PROCESS_LIVENESS_S
 from .scenario_core import RaceScorer, load_scenario, scenario_digest
+
+
+def wall_budget_s(minimum_s, timeout_s, real_time_factor):
+    """Steady-time budget (s) for a run: never below ``minimum_s``, and room for
+    the scenario's ``timeout_s`` of simulation time at half the target
+    ``real_time_factor``, since a loaded host reaches less than the target.
+    It is an infrastructure watchdog; the race limit is the simulation timeout."""
+    return max(minimum_s, 2.0 * timeout_s / real_time_factor)
 
 
 class Evaluator(Node):
@@ -66,7 +74,8 @@ class Evaluator(Node):
             ("runner_git_commit", os.environ.get("RUNNER_GIT_COMMIT", "unknown")),
             ("image_identity", os.environ.get("IMAGE_ID", "unknown")),
         ])
-        # wall_timeout_s: steady-time budget for the whole run, startup included.
+        # wall_timeout_s: minimum steady-time budget for the whole run, startup
+        #   included; see wall_budget_s for the scaling with the real-time factor.
         # odom_wall_timeout_s: steady time without advancing odometry.
         # wait_for_ready: False starts scoring on the first odometry message.
         p = lambda name: self.get_parameter(name).value
@@ -76,6 +85,8 @@ class Evaluator(Node):
         self.first_odom_wall = None
         self.last_odom_wall = None
         self.output = FilePath(p("output"))
+        self.wall_budget_s = wall_budget_s(p("wall_timeout_s"), self.scenario["timeout_s"],
+                                           self.real_time_factor_target())
         self.done = False
         self.last_clock_s = None
         self.exit_code = 2  # nonzero unless the race completes
@@ -103,6 +114,13 @@ class Evaluator(Node):
         # /clock never starts or stops advancing.
         self.create_timer(0.1, self.check_timeout, clock=Clock(clock_type=ClockType.STEADY_TIME))
 
+    def real_time_factor_target(self):
+        """REAL_TIME_FACTOR of a managed run (resolved_configuration.json), else 1."""
+        resolved = self.output.parent / 'resolved_configuration.json'
+        if resolved.is_file():
+            return json.loads(resolved.read_text()).get('run', {}).get('real_time_factor', 1.0)
+        return 1.0
+
     def on_readiness(self, message):
         """Store (ok, sim stamp, steady receive time) per diagnostic status name."""
         stamp = message.header.stamp.sec + message.header.stamp.nanosec * 1e-9
@@ -113,27 +131,28 @@ class Evaluator(Node):
         """Require both acquisition freshness and a live advancing stream.
 
         The last accepted contact message must be at most 0.5 s old in
-        simulation time and have arrived within 0.5 s of steady time.
+        simulation time and have arrived within PROCESS_LIVENESS_S of steady
+        time; the steady limit only catches a dead stream while /clock stalls.
         """
         if self.contact_last_stamp is None or self.contact_last_wall is None:
             return False
         age = self.get_clock().now().nanoseconds * 1e-9 - self.contact_last_stamp
-        return 0 <= age <= 0.5 and time.monotonic() - self.contact_last_wall <= 0.5
+        return 0 <= age <= 0.5 and time.monotonic() - self.contact_last_wall <= PROCESS_LIVENESS_S
 
     def ready(self):
         """True when every input needed to score a race is live.
 
-        Odometry must have advanced within 0.5 s of steady time, contacts
-        must be fresh, and the ``njord/planner``, ``mission`` and
-        ``navigation`` diagnostics must be OK and at most 0.5 s old in both
-        simulation and steady time.
+        Odometry must have advanced within PROCESS_LIVENESS_S of steady time,
+        contacts must be fresh, and the ``njord/planner``, ``mission`` and
+        ``navigation`` diagnostics must be OK, at most 0.5 s old in
+        simulation time and received within PROCESS_LIVENESS_S of steady time.
         """
         now_sim = self.get_clock().now().nanoseconds * 1e-9
         now_wall = time.monotonic()
-        return self.latest_ground_truth is not None and self.last_odom_wall is not None and now_wall - self.last_odom_wall <= 0.5 and self.contact_fresh() and all(
+        return self.latest_ground_truth is not None and self.last_odom_wall is not None and now_wall - self.last_odom_wall <= PROCESS_LIVENESS_S and self.contact_fresh() and all(
             name in self.readiness and self.readiness[name][0]
             and 0 <= now_sim - self.readiness[name][1] <= 0.5
-            and now_wall - self.readiness[name][2] <= 0.5
+            and now_wall - self.readiness[name][2] <= PROCESS_LIVENESS_S
             for name in ("njord/planner", "mission", "navigation"))
 
     def on_path(self, _):
@@ -216,7 +235,7 @@ class Evaluator(Node):
             self.scorer.update(*self.latest_ground_truth)
             self.get_logger().info("Navigation, mission and planner ready; race started")
         self.active_pub.publish(Bool(data=self.started and self.scorer.status == "running"))
-        if now - self.wall_start >= self.get_parameter("wall_timeout_s").value:
+        if now - self.wall_start >= self.wall_budget_s:
             self.scorer.status = "wall_timeout"
         elif self.last_odom_wall is not None and now - self.last_odom_wall >= self.get_parameter("odom_wall_timeout_s").value:
             self.scorer.status = "odometry_timeout"
@@ -264,6 +283,8 @@ class Evaluator(Node):
         })
         # Tie the metrics to the sealed run inputs when a manifest exists.
         manifest = self.output.parent / 'run_manifest.json'
+        metrics['real_time_factor_target'] = self.real_time_factor_target()
+        metrics['wall_budget_s'] = self.wall_budget_s
         if manifest.is_file():
             from njord_sim.run_manifest import sha256
             metrics['manifest_sha256'] = sha256(manifest)

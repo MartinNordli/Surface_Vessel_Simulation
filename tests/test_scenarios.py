@@ -60,6 +60,9 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual(world.attrib["name"], "njord_course")
         self.assertEqual(world.find("include/uri").text, "coast_waves")
         self.assertNotIn("http", world_xml(self.scenario))
+        self.assertEqual(world.findtext("physics/real_time_factor"), "1.0")
+        fast = ET.fromstring(world_xml(self.scenario, real_time_factor=3.0)).find("world")
+        self.assertEqual(fast.findtext("physics/real_time_factor"), "3.0")
         models = {m.attrib["name"]: m for m in world.findall("model")}
         self.assertEqual(len(models), len(obstacles(self.scenario)))
         for obstacle in obstacles(self.scenario):

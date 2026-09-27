@@ -51,6 +51,10 @@ x-common: &common
     GZ_PARTITION: ${GZ_PARTITION:-njord-sim}
     # Named environment in the scenario (wind, waves, current), e.g. calm.
     ENVIRONMENT: ${ENVIRONMENT:-calm}
+    # Target simulated seconds per wall second. Command freshness is measured
+    # in simulation time, so the achieved factor does not change how long a
+    # thrust command acts on the boat.
+    REAL_TIME_FACTOR: ${REAL_TIME_FACTOR:-1.0}
     # Speed profile of the reference autonomy: fast or conservative.
     PROFILE: ${PROFILE:-fast}
     # Free-form label stored in the evaluator's metrics.

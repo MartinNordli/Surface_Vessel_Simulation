@@ -15,7 +15,7 @@ import xml.etree.ElementTree as ET
 
 import yaml
 
-from .constants import (BASE_FRAME, COMMAND_TIMEOUT_S, GPS_FRAME, GPS_RAW_TOPIC, GROUND_TRUTH_TOPIC,
+from .constants import (BASE_FRAME, COMMAND_TIMEOUT_S, PROCESS_LIVENESS_S, GPS_FRAME, GPS_RAW_TOPIC, GROUND_TRUTH_TOPIC,
                         GZ_MODEL_NAME, IMU_FRAME, IMU_RAW_TOPIC, LIDAR_FRAME, LIDAR_POINTS_TOPIC,
                         LIDAR_SCAN_TOPIC, CAMERAS, camera_frame, camera_topic)
 
@@ -239,7 +239,8 @@ def generate(output_dir, config_file=None, resolved_config=None):
     # The watchdog is the only path from /njord/actuator_forces to the VRX
     # thrusters; it zeroes thrust when commands stop arriving.
     watchdog = ET.SubElement(model, 'plugin', filename='libNjordActuatorWatchdog.so', name='njord::ActuatorWatchdog')
-    set_text(watchdog, 'timeout_s', COMMAND_TIMEOUT_S)
+    set_text(watchdog, 'timeout_s', COMMAND_TIMEOUT_S)  # simulation time
+    set_text(watchdog, 'liveness_timeout_s', PROCESS_LIVENESS_S)  # steady time
     set_text(watchdog, 'max_force_n', config['max_thrust_n'])
     bridge(GROUND_TRUTH_TOPIC, GROUND_TRUTH_TOPIC, 'nav_msgs/msg/Odometry', 'gz.msgs.Odometry')
     bridge('/clock', '/clock', 'rosgraph_msgs/msg/Clock', 'gz.msgs.Clock')

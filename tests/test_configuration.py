@@ -106,6 +106,13 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(self.resolve()['algorithms']['profile'],'fast')
         with self.assertRaisesRegex(ValueError,'PROFILE'):self.resolve(profile='typo')
 
+    def test_real_time_factor_is_a_validated_run_option(self):
+        self.assertEqual(self.resolve()['run'], {'real_time_factor': 1.0})
+        self.assertEqual(self.resolve(real_time_factor=3)['run'], {'real_time_factor': 3.0})
+        for bad in (0, -1, float('nan'), float('inf'), True):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                self.resolve(real_time_factor=bad)
+
     def test_enu_current_and_direction_conflict(self):
         scenario=yaml.safe_load((ROOT/'scenarios/reference.yaml').read_text())
         scenario['environments']['calm'].update(current_speed_mps=2.,current_direction_to_deg_enu=90.)

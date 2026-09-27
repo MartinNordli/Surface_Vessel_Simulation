@@ -33,11 +33,12 @@ def element(parent, tag, text=None, **attrs):
     return node
 
 
-def world_xml(scenario, vessel_profile='wamv_reference'):
+def world_xml(scenario, vessel_profile='wamv_reference', real_time_factor=1.0):
     """Return the SDF world text for a resolved ``scenario``.
 
     ``vessel_profile`` is ``'wamv_reference'`` (VRX wind and wave plugins) or
     ``'njord'`` (flat water, no upstream environment forces).
+    ``real_time_factor`` is the target of simulated seconds per wall second.
     """
     sdf = ET.Element("sdf", version="1.9")
     world = element(sdf, "world", name="njord_course")
@@ -45,12 +46,12 @@ def world_xml(scenario, vessel_profile='wamv_reference'):
         # Match the hydrostatics adapter's gravity constant. SDF otherwise
         # defaults to 9.8, producing a systematic displacement error.
         element(world, 'gravity', '0 0 -9.81')
-    # Fixed physics step in seconds; real_time_factor 1 is a target, not a
-    # guarantee (slow hosts run slower than real time, sim time stays exact).
+    # Fixed physics step in seconds; real_time_factor is a target, not a
+    # guarantee (slow hosts run slower, simulation time stays exact).
     step = scenario['environment'].get('physics_step_s', 0.004)
     physics = element(world, "physics", name=f"{step * 1000:g}ms", type="dart")
     element(physics, "max_step_size", step)
-    element(physics, "real_time_factor", 1.0)
+    element(physics, "real_time_factor", real_time_factor)
     # World systems: physics, entity spawning, GUI/scene state, rendered and
     # non-rendered sensors, and contact detection for the markers.
     for library, name in [("physics", "Physics"), ("user-commands", "UserCommands"),

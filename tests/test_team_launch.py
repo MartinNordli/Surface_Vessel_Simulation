@@ -5,6 +5,7 @@ they do not establish DDS delivery, sensor rendering, or vessel dynamics.
 """
 import importlib.util
 import itertools
+import json
 import os
 from pathlib import Path
 import sys
@@ -80,6 +81,16 @@ class TeamLaunchTests(unittest.TestCase):
         for argument in ['autonomy', 'controller', 'perception', 'mapping']:
             with self.subTest(argument=argument), self.assertRaises(ValueError):
                 self.launch(**{argument: 'typo'})
+
+    def test_profile_names_come_from_algorithms_or_the_simulator_handoff(self):
+        with self.assertRaisesRegex(ValueError, 'profile'):
+            self.launch(profile='typo')
+        with tempfile.TemporaryDirectory(prefix='njord-team-public-') as directory:
+            public = Path(directory) / 'public_parameters.json'
+            public.write_text(json.dumps({'_profile': 'survey'}))
+            self.launch(profile='survey', public_parameters=str(public))
+            with self.assertRaisesRegex(ValueError, 'profile'):
+                self.launch(profile='fast', public_parameters=str(public))
 
     def test_truth_mode_replaces_both_ekfs_with_the_truth_relay(self):
         for autonomy in ('reference', 'external'):

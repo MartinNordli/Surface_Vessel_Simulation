@@ -31,7 +31,7 @@ from launch.logging import get_logger
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
-from njord_sim.configuration import config_path, validate_reference_timing
+from njord_sim.configuration import DEFAULT_PROFILE, config_path, speed_profile_names, validate_reference_timing
 from njord_sim.constants import WORLD_ORIGIN_WGS84
 
 COMPONENTS = ('autonomy', 'controller', 'perception', 'mapping')
@@ -40,8 +40,6 @@ STATE_SOURCES = ('estimate', 'truth')
 
 def launch(context):
     p = lambda name: LaunchConfiguration(name).perform(context)
-    if p('profile') not in ('fast', 'conservative'):
-        raise ValueError('profile must be fast or conservative')
     for component in COMPONENTS:
         if p(component) not in ('reference', 'external'):
             raise ValueError(f'{component} must be reference or external')
@@ -49,6 +47,11 @@ def launch(context):
         raise ValueError('state_source must be estimate or truth')
     public_path = context.launch_configurations.get('public_parameters', '')
     public = json.loads(Path(public_path).read_text()) if public_path else {}
+    # The simulator resolved the profile against algorithms.yaml; without its
+    # handoff the nodes use the default algorithms.yaml, so check against that.
+    profiles = [public['_profile']] if '_profile' in public else speed_profile_names(config_path('algorithms.yaml'))
+    if p('profile') not in profiles:
+        raise ValueError(f'profile must be one of {profiles}')
     params_file = p('params_file')
     if params_file and not Path(params_file).is_file():
         raise ValueError(f'params_file does not exist: {params_file}')
@@ -105,7 +108,7 @@ def launch(context):
 def generate_launch_description():
     env = os.environ.get
     return LaunchDescription([
-        DeclareLaunchArgument('profile', default_value=env('PROFILE', 'fast'),
+        DeclareLaunchArgument('profile', default_value=env('PROFILE', DEFAULT_PROFILE),
                               description='Recorded speed profile; the speed itself comes from public_parameters'),
         DeclareLaunchArgument('seed', default_value=env('SEED', '1')),
         DeclareLaunchArgument('expected_gates', default_value='3'),

@@ -82,8 +82,9 @@ Courses are the files in `scenarios/`:
   required to complete every run.
 - **`dynamics`**: open water for dynamics measurements, not a race.
 
-All support `SEED`, `ENVIRONMENT` (`calm`, `moderate`) and `PROFILE`
-(`conservative`, `fast`). An explicit course name overrides `SCENARIO` for that
+All support `SEED`, `ENVIRONMENT` (`calm`, `moderate`) and `PROFILE` (a
+`speed_profiles_mps` name in `algorithms.yaml`: `conservative` or `fast` as
+shipped). An explicit course name overrides `SCENARIO` for that
 invocation; without one, `SCENARIO` (a path inside the container) still works.
 Additional arguments follow the course name, for example
 `./scripts/njord demo slalom recorder`.

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Run paired, isolated Docker races and report completion and time evidence.
 
-Defaults: 10 seeds x 2 environments x 2 profiles (40 races), one job at a time.
+Defaults: 10 seeds x 2 environments x every speed profile in algorithms.yaml
+(40 races with the shipped fast and conservative), one job at a time.
 Use --jobs 4 to run four races concurrently. Each race uses a
 fresh Compose project, Gazebo partition, ROS domain and output directory.
 COMPOSE_FILE supports additional platform overlays, e.g. compose.wsl.yaml.
@@ -47,7 +48,24 @@ import subprocess
 import sys
 import time
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def speed_profiles(environment):
+    """PROFILE names in the algorithms file the races read, or None if it is not on the host.
+
+    Races read ALGORITHMS_CONFIG (default /config/algorithms.yaml) inside the
+    container, where /config is the host's CONFIG_HOST (default
+    njord_sim/config). A file elsewhere in the container cannot be checked here;
+    the simulator still rejects an unknown profile before Gazebo starts.
+    """
+    container = environment.get("ALGORITHMS_CONFIG") or "/config/algorithms.yaml"
+    if not container.startswith("/config/"):
+        return None
+    path = ROOT / environment.get("CONFIG_HOST", "njord_sim/config") / container.removeprefix("/config/")
+    return sorted(yaml.safe_load(path.read_text())["speed_profiles_mps"])
 
 
 class DomainUnavailable(RuntimeError):
@@ -371,7 +389,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--seeds", type=int, nargs="+", default=list(range(1, 11)))
     parser.add_argument("--environments", choices=["calm", "moderate"], nargs="+", default=["calm", "moderate"])
-    parser.add_argument("--profiles", choices=["conservative", "fast"], nargs="+", default=["conservative", "fast"])
+    parser.add_argument("--profiles", nargs="+",
+                        help="speed_profiles_mps names from algorithms.yaml (default: all of them)")
     # Per-race steady wall-clock limit in seconds (the course has its own
     # simulation-time timeout inside the evaluator).
     parser.add_argument("--wall-timeout", type=float, default=600)
@@ -379,6 +398,13 @@ def main():
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
+    known_profiles = speed_profiles(os.environ)
+    if args.profiles is None:
+        if known_profiles is None:
+            parser.error("--profiles is required when ALGORITHMS_CONFIG is not under /config/")
+        args.profiles = known_profiles
+    elif known_profiles is not None and not set(args.profiles) <= set(known_profiles):
+        parser.error(f"unknown profiles; algorithms.yaml defines {known_profiles}")
     if any(seed <= 0 for seed in args.seeds) or args.wall_timeout <= 0:
         parser.error("seeds and timeout must be positive")
     if len(set(args.seeds)) != len(args.seeds):

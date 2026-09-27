@@ -112,6 +112,16 @@ class TeamRunnerTests(unittest.TestCase):
             runner.prepare(self.output, 'run-1', {'CONTROLLER': 'typo'})
         self.assertFalse((self.output / 'autonomy_config.json').exists())
 
+    def test_profile_names_come_from_algorithms_or_the_simulator_handoff(self):
+        with self.assertRaisesRegex(ValueError, 'profile'):
+            runner.prepare(self.output, 'run-1', {'PROFILE': 'typo'})
+        self.assertFalse((self.output / 'autonomy_config.json').exists())
+        # A profile the simulator resolved from a team's algorithms.yaml is
+        # accepted without a second list of names on the autonomy side.
+        (self.output / 'public_parameters.json').write_text(json.dumps({'_profile': 'survey'}))
+        runner.prepare(self.output, 'run-1', {'PROFILE': 'survey'})
+        self.assertEqual(self.metadata()['profile'], 'survey')
+
     def test_failed_handoff_never_starts_or_writes_team_configuration(self):
         with patch.object(runner, 'wait_ready', side_effect=TimeoutError('wrong run')) as wait:
             with self.assertRaises(TimeoutError):

@@ -16,9 +16,9 @@ run. Nothing needs rebuilding unless noted.
 | The four-thruster Munin placeholder (same schema; layout assumed until Naval decides) | `njord_sim/config/vessels/munin_v0.yaml` | `VESSEL_CONFIG=/config/vessels/munin_v0.yaml` |
 | Gates, obstacles, start pose, default seed, race time limit | `scenarios/<course>.yaml` | course name, e.g. `./scripts/njord demo slalom` |
 | Wind, waves, current, water, physics time step | `environments:` in `scenarios/<course>.yaml` | `ENVIRONMENT=calm\|moderate` |
-| Speed ceiling of each profile | `speed_profiles_mps` in `njord_sim/config/algorithms.yaml` | `PROFILE=fast\|conservative` |
-| Guidance gains, lookahead, operating thrust limit, stopping model, planner timing, map safety margin | `njord_sim/config/algorithms.yaml` | `ALGORITHMS_CONFIG` (default) |
-| Other reference-node parameters (perception thresholds, mission geometry, map size) | a ROS parameter file, e.g. `config/examples/team_params.yaml` | `ROS_PARAMS_FILE=/config/examples/…` |
+| Speed ceiling of each profile, and which profiles exist | `speed_profiles_mps` in `njord_sim/config/algorithms.yaml` | `PROFILE=<name>` (shipped: `fast`, `conservative`) |
+| Guidance gains, lookahead, operating thrust limit, stopping model, planner timing, map safety margin, occupancy grid size and position | `njord_sim/config/algorithms.yaml` | `ALGORITHMS_CONFIG` (default) |
+| Other reference-node parameters (perception thresholds, mission geometry) | a ROS parameter file, e.g. `config/examples/team_params.yaml` | `ROS_PARAMS_FILE=/config/examples/…` |
 | EKF / GPS-transform settings | `njord_sim/config/localization.yaml` | always used |
 | World origin (GPS datum), command timeout, thruster command topic pattern, pinned WAM-V hull and thruster geometry | `njord_sim/njord_sim/constants.py` (then rebuild) | fixed platform constants |
 | Seed of a single run | — | `SEED=<n>` |
@@ -239,6 +239,16 @@ the observed-free corridor. `guidance.max_thrust` is an operating limit and
 must not exceed the vessel's physical limit. The braking model (0.25 m/s²,
 1 s reaction) is an assumption until verified by dynamics measurements.
 
+A new speed profile only needs a new `speed_profiles_mps` entry; the launch,
+the autonomy runner and `benchmark --profiles` read the names from this file.
+
+`mapping.grid_resolution_m`, `grid_size_m` and `grid_origin_m` fix the reference
+mapper's square occupancy grid in the `map` frame (default 0.5 m cells, 160 m,
+lower-left corner at (-40, -40) m, so it reaches x, y = 120 m). Nothing outside
+it is mapped, so a course must fit inside with room for approach and exit;
+`tests/test_algorithms_config.py` checks every race course in `scenarios/`
+with a 10 m margin. A larger grid costs mapping and planning time.
+
 ## Fixed constants (`njord_sim/njord_sim/constants.py`)
 
 Values that belong to the pinned platform rather than to an experiment: the
@@ -281,6 +291,9 @@ Algorithms schema 2 adds `mapping.self_filter_margin_m` (0.02 m) and
 `navigation`: `stale_after_s` (0.5 s), `processing_margin_s` (0.1 s),
 `clock_stall_after_s` (0.5 wall seconds) and `sync_slop_s` (0.12 s).
 `convert_algorithm_schema` adds these explicit defaults to schema 1.
+Algorithms schema 3 adds `mapping.grid_resolution_m` (0.5 m), `grid_size_m`
+(160 m) and `grid_origin_m` ([-40, -40] m), the values the mapper previously
+built in; older files are converted step by step with those values.
 Reference startup requires freshness budgets of two sensor periods plus the
 processing margin. Sensor periods round up to a physics tick, recorded in
 `resolved_configuration.json`; rates above the physics update rate fail.

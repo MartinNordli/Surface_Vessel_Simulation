@@ -4,7 +4,7 @@
 # simulator run: the values are validated at launch and take precedence over
 # node defaults and ROS_PARAMS_FILE. Physical limits belong to the vessel file;
 # values here may be lower but never exceed them. All units are SI.
-schema_version: 2
+schema_version: 3
 
 # Speed ceiling (m/s) for each PROFILE (`PROFILE=fast ./scripts/njord demo`).
 # Guidance further reduces speed for heading error, clearance and braking room.
@@ -36,6 +36,11 @@ mapping:
   # obstacles. For the WAM-V envelope (6 x 3.3 m) this gives exactly 4.0 m.
   safety_margin_m: 0.5761863368460016
   self_filter_margin_m: 0.02        # surface blind band, plus 3 x lidar stddev
+  # Fixed occupancy grid in the map frame (ENU, origin at the world origin).
+  # Every race course must lie inside it with room for approach and exit.
+  grid_resolution_m: 0.5            # cell edge length
+  grid_size_m: 160.0                # edge length of the square grid
+  grid_origin_m: [-40.0, -40.0]     # map (x, y) of the grid's lower-left corner
 
 navigation:
   stale_after_s: 0.5

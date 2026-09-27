@@ -20,8 +20,9 @@ Publishes:
 Parameters:
     ``map_frame`` (``map``, ENU) and ``base_frame`` (vessel body, x forward,
     y left, z up); grid ``resolution``, ``size_m``, ``origin_x``/``origin_y``
-    [m]; ``inflation_m`` [m] (default from the vessel hull and
-    algorithms.yaml); ``observation_ttl_s`` [s]; ``min_height_m`` and
+    [m] (from ``mapping.grid_*`` in algorithms.yaml); ``inflation_m`` [m]
+    (default from the vessel hull and algorithms.yaml);
+    ``observation_ttl_s`` [s]; ``min_height_m`` and
     ``max_height_m`` [m, map z] for obstacle hits; ``max_range_m`` [m];
     ``self_geometry_path``: required visible surface triangle artifact in
     ``base_frame``; ``self_filter_margin_m`` plus three lidar noise standard
@@ -62,9 +63,9 @@ class Mapper(Node):
             ("points_topic", "/wamv/sensors/lidars/lidar_wamv_sensor/points"),
             ("scan_topic", "/wamv/sensors/lidars/lidar_wamv_sensor/scan"),
             ("grid_topic", "/njord/occupancy"), ("map_frame", "map"),
-            ("base_frame", "wamv/base_link"), ("resolution", 0.5), ("size_m", 160.0),
-            ("origin_x", -40.0), ("origin_y", -40.0),
-            *node_defaults("mapper"),  # inflation_m: hull radius + algorithms.yaml margin
+            ("base_frame", "wamv/base_link"),
+            # Grid and inflation_m (hull radius + margin) come from algorithms.yaml.
+            *node_defaults("mapper"),
             ("observation_ttl_s", 5.0), ("min_height_m", 0.2), ("max_height_m", 5.0),
             ("self_geometry_path", ""),
             ("publish_hz", 5.0),

@@ -66,8 +66,7 @@ class OccupancyMapper:
     time of arrival or processing.
     """
 
-    def __init__(self, resolution=0.5, size_m=160.0, origin=(-40., -40.),
-                 inflation_m=3.0, observation_ttl_s=5.0):
+    def __init__(self, resolution, size_m, origin, inflation_m=3.0, observation_ttl_s=5.0):
         if resolution <= 0 or size_m <= 0 or observation_ttl_s <= 0 or inflation_m < 0:
             raise ValueError("invalid map dimensions, inflation or observation lifetime")
         self.resolution = float(resolution)

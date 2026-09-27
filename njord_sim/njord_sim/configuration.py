@@ -59,6 +59,8 @@ ENVIRONMENT_KEYS = {
     'current_direction_to_deg_enu', 'water_density_kg_m3', 'water_level_m', 'physics_step_s',
 }
 DEFAULT_PROFILE = 'fast'
+# Fixed occupancy grid of the reference mapper, in algorithms.yaml ``mapping``.
+MAP_GRID_KEYS = {'grid_resolution_m', 'grid_size_m', 'grid_origin_m'}
 
 
 # --------------------------------------------------------------------------
@@ -530,24 +532,43 @@ def resolve_scenario(data, seed=None, environment=None):
 # --------------------------------------------------------------------------
 
 def convert_algorithm_schema(algorithms):
-    """Schema 1->2: explicitly introduce assumed timing and filter tolerances."""
+    """Upgrade an older algorithms file to schema 3, one version at a time.
+
+    1->2 introduces the assumed timing and filter tolerances. 2->3 makes the
+    occupancy grid explicit with the values the mapper used to build in:
+    0.5 m cells, a 160 m square, lower-left corner at (-40, -40) m.
+    """
     result = copy.deepcopy(algorithms)
-    _version(result, 1)
-    if 'navigation' in result or 'self_filter_margin_m' in result.get('mapping', {}):
-        raise ValueError('new timing/filter settings require algorithms schema 2')
-    result['schema_version'] = 2
-    result['mapping']['self_filter_margin_m'] = .02
-    result['navigation'] = dict(stale_after_s=.5, processing_margin_s=.1,
-                                clock_stall_after_s=.5, sync_slop_s=.12)
+    if result.get('schema_version') == 1:
+        if 'navigation' in result or 'self_filter_margin_m' in result.get('mapping', {}):
+            raise ValueError('new timing/filter settings require algorithms schema 2')
+        result['schema_version'] = 2
+        result['mapping']['self_filter_margin_m'] = .02
+        result['navigation'] = dict(stale_after_s=.5, processing_margin_s=.1,
+                                    clock_stall_after_s=.5, sync_slop_s=.12)
+    if result.get('schema_version') == 2:
+        if MAP_GRID_KEYS & set(result.get('mapping', {})):
+            raise ValueError('occupancy grid settings require algorithms schema 3')
+        result['schema_version'] = 3
+        result['mapping'].update(grid_resolution_m=.5, grid_size_m=160., grid_origin_m=[-40., -40.])
+    _version(result, 3)
     return result
+
+
+def speed_profile_names(algorithms_file):
+    """Sorted ``PROFILE`` names defined by ``speed_profiles_mps`` in an algorithms file."""
+    profiles = _read(algorithms_file).get('speed_profiles_mps')
+    if not isinstance(profiles, dict) or not profiles:
+        raise ValueError('speed_profiles_mps must map profile names to speeds')
+    return sorted(profiles)
 
 
 def _resolve_algorithms(algorithms, profile):
     """Validate algorithms.yaml and select the speed ceiling for ``profile``."""
     algorithms = copy.deepcopy(algorithms)
-    if algorithms.get('schema_version') == 1:
+    if algorithms.get('schema_version') in (1, 2):
         algorithms = convert_algorithm_schema(algorithms)
-    _version(algorithms, 2)
+    _version(algorithms, 3)
     _keys(algorithms, {'schema_version', 'speed_profiles_mps', 'guidance', 'planner', 'mapping', 'navigation'},
           where='algorithms')
     profiles = algorithms['speed_profiles_mps']
@@ -559,11 +580,14 @@ def _resolve_algorithms(algorithms, profile):
         raise ValueError(f'unknown PROFILE {profile!r}; algorithms.yaml defines {sorted(profiles)}')
     _keys(algorithms['guidance'], GUIDANCE_KEYS, where='guidance')
     _keys(algorithms['planner'], {'stale_after_s', 'publish_hz'}, where='planner')
-    _keys(algorithms['mapping'], {'safety_margin_m', 'self_filter_margin_m'}, where='mapping')
+    _keys(algorithms['mapping'], {'safety_margin_m', 'self_filter_margin_m', *MAP_GRID_KEYS}, where='mapping')
+    # The grid corner may be negative; every other algorithm value is a scalar >= 0.
+    _vector(algorithms['mapping']['grid_origin_m'], 2, 'grid_origin_m')
     _keys(algorithms['navigation'], {'stale_after_s', 'processing_margin_s', 'clock_stall_after_s', 'sync_slop_s'}, where='navigation')
     for group in ('guidance', 'planner', 'mapping', 'navigation'):
         for key, value in algorithms[group].items():
-            _number(value, key, 0, positive=key not in NONNEGATIVE_ALGORITHM_KEYS)
+            if key != 'grid_origin_m':
+                _number(value, key, 0, positive=key not in NONNEGATIVE_ALGORITHM_KEYS)
     algorithms['profile'] = profile
     algorithms['guidance']['max_speed'] = profiles[profile]
     return algorithms
@@ -677,11 +701,17 @@ def autonomy_parameters(resolved):
                                 'gps_xy_std_m': settings['gps_horizontal_noise_m'],
                                 'gps_z_std_m': settings['gps_vertical_noise_m']}
     # Inflate obstacles by the vessel's circumscribed radius plus the margin.
+    mapping = algorithms['mapping']
     result['mapper'] = {'inflation_m': math.hypot(hull['length_m'], hull['beam_m']) / 2
-                        + algorithms['mapping']['safety_margin_m'],
+                        + mapping['safety_margin_m'],
+                        # float(): a YAML integer would not match the declared ROS double.
+                        'resolution': float(mapping['grid_resolution_m']),
+                        'size_m': float(mapping['grid_size_m']),
+                        'origin_x': float(mapping['grid_origin_m'][0]),
+                        'origin_y': float(mapping['grid_origin_m'][1]),
                         'max_range_m': settings['lidar_range'],
                         'input_max_age_s': algorithms['navigation']['stale_after_s'],
-                        'self_filter_margin_m': algorithms['mapping']['self_filter_margin_m'],
+                        'self_filter_margin_m': mapping['self_filter_margin_m'],
                         'lidar_noise_stddev_m': settings['lidar_noise_stddev']}
     result['mission'] = {'camera_max_age_s': algorithms['navigation']['stale_after_s'],
                          'odometry_max_age_s': algorithms['navigation']['stale_after_s']}

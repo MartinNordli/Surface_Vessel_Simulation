@@ -10,7 +10,7 @@ run manifest checksums, then replaces itself with
 
 Inputs (environment): OUTPUT_DIR (default /outputs), RUN_ID (required),
 AUTONOMY / CONTROLLER / PERCEPTION / MAPPING ("reference" or "external"),
-STATE_SOURCE ("estimate" or "truth"), PROFILE ("fast" or "conservative"), SEED, ROS_PARAMS_FILE, ENVIRONMENT and the
+STATE_SOURCE ("estimate" or "truth"), PROFILE (a speed_profiles_mps name in algorithms.yaml), SEED, ROS_PARAMS_FILE, ENVIRONMENT and the
 provenance variables IMAGE_ID, NJORD_IMAGE_SOURCE_COMMIT,
 NJORD_IMAGE_SOURCE_DIGEST and RUNNER_GIT_COMMIT. Extra command-line arguments
 are passed to the launch; ``name:=value`` for one of the settings above
@@ -31,6 +31,7 @@ import json
 import os
 from pathlib import Path
 import sys
+from njord_sim.configuration import DEFAULT_PROFILE, config_path, speed_profile_names
 from njord_sim.run_manifest import atomic_text, wait_ready
 
 
@@ -56,7 +57,7 @@ def prepare(output, run_id, environment=None, args=()):
     settings = {name: environment.get(name.upper(), 'reference')
                 for name in ('autonomy', 'controller', 'perception', 'mapping')}
     settings.update(state_source=environment.get('STATE_SOURCE', 'estimate'),
-                    profile=environment.get('PROFILE', 'fast'),
+                    profile=environment.get('PROFILE', DEFAULT_PROFILE),
                     seed=str(metadata.get('seed', environment.get('SEED') or '1')),
                     params_file=environment.get('ROS_PARAMS_FILE', ''))
     extra_args = list(args)
@@ -67,8 +68,8 @@ def prepare(output, run_id, environment=None, args=()):
         if separator and name in settings:
             settings[name] = value
     # The simulator's sensor seed wins so the recorded seed is the one used.
-    if public_file.is_file():
-        public = json.loads(public_file.read_text())
+    public = json.loads(public_file.read_text()) if public_file.is_file() else {}
+    if public:
         settings['seed'] = str(public.get('sensor_adapter', {}).get('seed', settings['seed']))
         if '_profile' in public:
             if any(argument.startswith('profile:=') and argument.partition(':=')[2] != public['_profile'] for argument in extra_args):
@@ -79,8 +80,11 @@ def prepare(output, run_id, environment=None, args=()):
             raise ValueError(f'{name} must be reference or external')
     if settings['state_source'] not in ('estimate', 'truth'):
         raise ValueError('state_source must be estimate or truth')
-    if settings['profile'] not in ('fast', 'conservative'):
-        raise ValueError('profile must be fast or conservative')
+    # Profile names live in algorithms.yaml; the simulator's resolved profile wins.
+    profiles = ([public['_profile']] if '_profile' in public
+                else speed_profile_names(config_path('algorithms.yaml')))
+    if settings['profile'] not in profiles:
+        raise ValueError(f'profile must be one of {profiles}')
     if 'seed' in metadata and any(argument.startswith('seed:=') and argument.partition(':=')[2] != str(metadata['seed']) for argument in extra_args):
         raise ValueError('seed override conflicts with resolved simulation seed')
     settings['seed'] = str(metadata.get('seed', settings['seed']))

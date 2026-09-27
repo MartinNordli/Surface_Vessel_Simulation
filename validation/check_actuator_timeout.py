@@ -62,15 +62,15 @@ class WatchdogProbe:
         # Import after partition selection, before initializing Gazebo transport.
         from gz.transport13 import Node
         from gz.msgs10.double_pb2 import Double
-        from gz.msgs10.twist_pb2 import Twist
-        self.args, self.result, self.Twist = args, result, Twist
+        from gz.msgs10.float_v_pb2 import Float_V
+        self.args, self.result, self.Float_V = args, result, Float_V
         self.condition = threading.Condition()
         self.samples = {side: deque(maxlen=20000) for side in THRUSTERS}
         self.node = Node()
         for side, topic in THRUSTERS.items():
             if not self.node.subscribe(Double, topic, lambda msg, side=side: self.receive(side, msg.data)):
                 raise CheckFailure(f'Could not subscribe to {topic}')
-        self.publisher = self.node.advertise(FORCES, Twist)
+        self.publisher = self.node.advertise(FORCES, Float_V)
         self.last_publish = None
 
     def receive(self, side, value):
@@ -79,8 +79,8 @@ class WatchdogProbe:
             self.condition.notify_all()
 
     def publish(self, left, right):
-        msg = self.Twist()
-        msg.linear.x, msg.linear.y = float(left), float(right)
+        msg = self.Float_V()
+        msg.data.extend([float(left), float(right)])  # port, starboard
         sent = time.monotonic()
         if not self.publisher.publish(msg):
             raise CheckFailure('Gazebo rejected force publication')
@@ -92,7 +92,7 @@ class WatchdogProbe:
         with self.condition:
             return all(self.samples[side] and self.samples[side][-1][0] >= since
                        and math.isfinite(self.samples[side][-1][1])
-                       and abs(self.samples[side][-1][1] - target) <= 1e-6
+                       and abs(self.samples[side][-1][1] - target) <= 1e-6 * max(1.0, abs(target))  # float32 transport
                        for side, target in expected.items())
 
     def wait(self, seconds):

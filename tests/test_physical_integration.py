@@ -7,7 +7,7 @@ import sys
 import tempfile
 import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'njord_sim'))
-from njord_sim.control_core import allocate_thrusters
+from njord_sim.control_core import allocate_thrusters, allocation_matrix
 from njord_sim.run_manifest import write_manifest, publish_ready, wait_ready, verify_public_handoff, freeze_resources, sha256
 from njord_sim.configuration import resolve_configuration
 from njord_sim.scenario import world_xml
@@ -16,18 +16,45 @@ import xml.etree.ElementTree as ET
 class AllocationTests(unittest.TestCase):
     def test_asymmetric_arms_reproduce_requested_force_and_moment(self):
         positions=[-1., .8, 0., -.7, -.4, 0.]
-        left,right=allocate_thrusters(90., 12., positions,[1.,0.,0.]*2,[500.,400.],[200.,300.])
+        left,right=allocate_thrusters((90.,0.,12.),positions,[1.,0.,0.]*2,[500.,400.],[200.,300.])
         self.assertAlmostEqual(left+right,90.)
         self.assertAlmostEqual(-.8*left+.4*right,12.)
 
     def test_directional_limits_scale_wrench_without_exceeding_capacity(self):
-        left,right=allocate_thrusters(-600.,0.,[0.,1.,0.,0.,-1.,0.],[1.,0.,0.]*2,[500.,500.],[100.,200.])
+        left,right=allocate_thrusters((-600.,0.,0.),[0.,1.,0.,0.,-1.,0.],[1.,0.,0.]*2,[500.,500.],[100.,200.])
         self.assertEqual((left,right),(-100.,-100.))
 
     def test_singular_and_nonfinite_geometry_rejected(self):
         for positions in ([0.]*6,[float('nan')]*6):
             with self.assertRaises(ValueError):
-                allocate_thrusters(1.,0.,positions,[1.,0.,0.]*2,[500.]*2,[500.]*2)
+                allocate_thrusters((1.,0.,0.),positions,[1.,0.,0.]*2,[500.]*2,[500.]*2)
+
+    def test_four_thruster_x_layout_reproduces_every_wrench_component(self):
+        d=math.sqrt(.5)
+        positions=[1.1,.55,0.,1.1,-.55,0.,-1.1,.55,0.,-1.1,-.55,0.]
+        axes=[d,-d,0.,d,d,0.,d,d,0.,d,-d,0.]
+        rows=allocation_matrix(positions,axes)
+        for wrench in ((100.,0.,0.),(0.,80.,0.),(0.,0.,50.),(30.,-20.,10.)):
+            forces=allocate_thrusters(wrench,positions,axes,[500.]*4,[500.]*4)
+            for row,expected in zip(rows,wrench):
+                self.assertAlmostEqual(sum(r*f for r,f in zip(row,forces)),expected)
+
+    def test_saturation_keeps_wrench_direction(self):
+        d=math.sqrt(.5)
+        positions=[1.1,.55,0.,1.1,-.55,0.,-1.1,.55,0.,-1.1,-.55,0.]
+        axes=[d,-d,0.,d,d,0.,d,d,0.,d,-d,0.]
+        wrench=(900.,600.,300.)
+        forces=allocate_thrusters(wrench,positions,axes,[100.]*4,[80.]*4)
+        self.assertTrue(all(-80.-1e-9<=f<=100.+1e-9 for f in forces))
+        achieved=[sum(r*f for r,f in zip(row,forces)) for row in allocation_matrix(positions,axes)]
+        scale=achieved[0]/wrench[0]
+        self.assertLess(scale,1.)
+        for value,target in zip(achieved,wrench):
+            self.assertAlmostEqual(value,scale*target)
+
+    def test_length_mismatch_rejected(self):
+        with self.assertRaises(ValueError):
+            allocate_thrusters((1.,0.,0.),[0.,1.,0.,0.,-1.,0.],[1.,0.,0.]*2,[500.]*3,[500.]*2)
 
 class ManifestTests(unittest.TestCase):
     def test_resource_snapshot_is_used_and_changed_source_rejected(self):

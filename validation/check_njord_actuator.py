@@ -7,10 +7,11 @@ response, invalid-input behavior and steady-wall expiry; it does not establish
 vessel inertia, hydrodynamic fidelity, or calibrated propeller response.
 
 Scope: the NjordPhysics Gazebo plugin (njord_gz_plugins) of the Njord vessel
-profile. It reads commands from /njord/actuator_forces and publishes
-evaluation-only telemetry on /njord/actuator_applied (Twist: linear.x/y =
-applied left/right force in N, angular.x/y = current targets, angular.z = 1
-while the command is live). This tool uses Gazebo transport directly (no
+profile. It reads commands from /njord/actuator_forces (Float_V, one force
+in N per thruster) and publishes evaluation-only telemetry on
+/njord/actuator_applied (Float_V with 2N+1 values: N applied forces in N, N
+current targets in N, then 1 while the command is live). Any number of
+thrusters is supported; the count comes from --resolved. This tool uses Gazebo transport directly (no
 ROS), so run it in the container on the host network of a running Njord
 simulator, in that simulator's partition (--partition or GZ_PARTITION).
 
@@ -24,11 +25,13 @@ Checks, in order:
                                        lag of each thruster's response_time_s
                                        towards a modest target (<= 25 % of the
                                        forward limit), error <= 0.02 N
-    nonfinite_invalidates_both_targets NaN in one command zeroes both targets
+    nonfinite_invalidates_all_targets  NaN in one command zeroes every target
                                        within min(0.25 s, timeout/2) wall time
+    wrong_length_invalidates_targets   a command with one value too few also
+                                       zeroes every target
     invalid_command_residual_decay     after that, the force decays to zero
                                        with the same lag (inertia, not a jump)
-    steady_wall_timeout                silence zeroes both targets after the
+    steady_wall_timeout                silence zeroes all targets after the
                                        configured timeout (--timeout-s, steady
                                        wall time), not before, within --slack-s
     all_observed_forces_finite         no NaN/Inf in any telemetry
@@ -47,6 +50,7 @@ import hashlib
 import math
 import os
 from pathlib import Path
+import struct
 import threading
 import time
 import yaml
@@ -61,31 +65,35 @@ class Probe:
     """
     def __init__(self, args):
         from gz.transport13 import Node
-        from gz.msgs10.twist_pb2 import Twist
+        from gz.msgs10.float_v_pb2 import Float_V
 
-        self.args, self.Twist = args, Twist
+        self.args, self.Float_V = args, Float_V
+        self.count = args.thruster_count
         self.node = Node()
         self.condition = threading.Condition()
         self.samples = deque(maxlen=30000)
-        self.publisher = self.node.advertise("/njord/actuator_forces", Twist)
-        if not self.node.subscribe(Twist, "/njord/actuator_applied", self.receive):
+        self.publisher = self.node.advertise("/njord/actuator_forces", Float_V)
+        if not self.node.subscribe(Float_V, "/njord/actuator_applied", self.receive):
             raise RuntimeError("Cannot subscribe applied force telemetry")
 
     def receive(self, msg):
+        values = list(msg.data)
+        if len(values) != 2 * self.count + 1:
+            return  # telemetry of a different vessel; never matches a target
         sample = {
             "wall": time.monotonic(),
             "sim": msg.header.stamp.sec + msg.header.stamp.nsec * 1e-9,
-            "forces": [msg.linear.x, msg.linear.y],
-            "targets": [msg.angular.x, msg.angular.y],
-            "live": bool(msg.angular.z),
+            "forces": values[:self.count],
+            "targets": values[self.count:2 * self.count],
+            "live": bool(values[-1]),
         }
         with self.condition:
             self.samples.append(sample)
             self.condition.notify_all()
 
     def send(self, values):
-        msg = self.Twist()
-        msg.linear.x, msg.linear.y = values
+        msg = self.Float_V()
+        msg.data.extend(values)
         sent = time.monotonic()
         if not self.publisher.publish(msg):
             raise RuntimeError("Command publication failed")
@@ -129,7 +137,7 @@ class Probe:
         raise RuntimeError("Simulation time did not advance enough to measure response")
 
     def wait_invalid(self, since, limit):
-        """Return the first sample after ``since`` with live off and zero targets.
+        """Return the first sample after ``since`` with live off and all targets zero.
 
         Raises AssertionError if none arrives within ``limit`` wall seconds.
         """
@@ -139,12 +147,12 @@ class Probe:
                 if (
                     sample["wall"] >= since
                     and not sample["live"]
-                    and sample["targets"] == [0.0, 0.0]
+                    and sample["targets"] == [0.0] * self.count
                 ):
                     return sample
             self.wait()
         raise AssertionError(
-            "Both targets did not become invalid zero within wall deadline"
+            "Targets did not become invalid zero within wall deadline"
         )
 
     def response_errors(self, since, taus, target):
@@ -232,30 +240,42 @@ def main():
         taus = [t["response_time_s"] for t in vessel["thrusters"]]
         # Distinct small targets per thruster (80 N, 100 N, ...), capped at a
         # quarter of the forward limit.
+        # Rounded to float32, the precision of the Float_V transport, so the
+        # telemetry targets compare exactly.
         targets = [
-            min(80.0 + i * 20.0, t["forward_limit_n"] * 0.25)
+            struct.unpack("f", struct.pack("f", min(80.0 + i * 20.0, t["forward_limit_n"] * 0.25)))[0]
             for i, t in enumerate(vessel["thrusters"])
         ]
         result["response_time_s"], result["requested_force_n"] = taus, targets
+        args.thruster_count = len(taus)
+        zeros = [0.0] * len(taus)
+        # One NaN among otherwise valid values must invalidate the whole command.
+        nonfinite = [math.nan, *targets[1:]]
         probe = Probe(args)
         probe.connect()
         # Settle at zero first, then step to the targets (holds last several
         # time constants so the response is fully observed).
-        probe.hold([0.0, 0.0], max(0.3, 8 * max(taus)))
+        probe.hold(zeros, max(0.3, 8 * max(taus)))
         start, _ = probe.hold(targets, max(0.4, 6 * max(taus)))
         result["checks"]["configured_response"] = probe.response_errors(
             start, taus, targets
         )
-        sent = probe.send([math.nan, targets[1]])
+        sent = probe.send(nonfinite)
         invalid = probe.wait_invalid(sent, min(0.25, args.timeout_s * 0.5))
-        result["checks"]["nonfinite_invalidates_both_targets"] = {
+        result["checks"]["nonfinite_invalidates_all_targets"] = {
             "wall_delay_s": invalid["wall"] - sent
         }
         decay_start = invalid["wall"]
-        probe.hold([math.nan, targets[1]], max(0.4, 6 * max(taus)))
+        probe.hold(nonfinite, max(0.4, 6 * max(taus)))
         result["checks"]["invalid_command_residual_decay"] = probe.response_errors(
-            decay_start, taus, [0.0, 0.0]
+            decay_start, taus, zeros
         )
+        probe.hold(targets, max(0.4, 6 * max(taus)))
+        sent = probe.send(targets[:-1])
+        invalid = probe.wait_invalid(sent, min(0.25, args.timeout_s * 0.5))
+        result["checks"]["wrong_length_invalidates_targets"] = {
+            "wall_delay_s": invalid["wall"] - sent
+        }
         _, stopped = probe.hold(targets, max(0.4, 6 * max(taus)))
         expired = probe.wait_invalid(stopped, args.timeout_s + args.slack_s)
         delay = expired["wall"] - stopped
@@ -285,7 +305,7 @@ def main():
         if probe:
             for _ in range(3):
                 try:
-                    probe.send([0.0, 0.0])
+                    probe.send([0.0] * probe.count)
                 except Exception:
                     break
                 time.sleep(0.02)

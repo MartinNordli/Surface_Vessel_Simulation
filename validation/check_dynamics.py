@@ -11,10 +11,13 @@ node must be the only publisher of /njord/actuator_forces. See
 docs/validation.md and docs/njord-calibration.md for the full protocol, and
 scripts/dynamics_campaign.py, which automates fresh-process repetitions.
 
-Experiments (``experiment`` parameter): straight, reverse (both thrusters at
+Experiments (``experiment`` parameter): straight, reverse (every thruster at
 +/- thrust_n), turn_left, turn_right (20 % thrust on the inner side, 100 % on
 the outer), coast (accelerate straight, then cut thrust), drift and
-hydrostatic (zero thrust). The run goes through phases:
+hydrostatic (zero thrust). Sides come from the thruster positions in the
+run's resolved configuration: port thrusters (y > 0) get the left value,
+starboard thrusters (y < 0) the right value and centreline thrusters their
+mean. These open-loop experiments assume thrusters that push mainly forward. The run goes through phases:
 
     settle      zero thrust until a stationary window is observed
     accelerate  coast only: equal thrust until steady straight motion
@@ -24,7 +27,9 @@ Parameters: odom_topic (default ground truth), forces_topic, thrust_n (N per
 thruster, default 300), duration_s (simulation s, default 60),
 stabilization_timeout_s (simulation s per preparation phase, default 60),
 window_s (trailing stationarity window, default 10 s), fresh_start_limit_s
-(default 5 s), manifest_path, output_path and repetition.
+(default 5 s), manifest_path, resolved_path (default:
+resolved_configuration.json next to manifest_path; one of the two is
+required), output_path and repetition.
 
 Output: the JSON report on stdout and, if output_path is set, in that file,
 which must not already exist. It holds the metrics from
@@ -40,11 +45,13 @@ from pathlib import Path
 import time
 
 import rclpy
-from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from rclpy.clock import Clock, ClockType
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
+from ros_gz_interfaces.msg import Float32Array
+
+from njord_sim.configuration import thruster_table
 
 from dynamics_metrics import stationary, summarize_experiment
 
@@ -60,7 +67,7 @@ class DynamicsCheck(Node):
         defaults = {"odom_topic": "/wamv/ground_truth/odometry", "forces_topic": "/njord/actuator_forces",
                     "experiment": "straight", "thrust_n": 300.0, "duration_s": 60.0,
                     "stabilization_timeout_s": 60.0, "window_s": 10.0,
-                    "fresh_start_limit_s": 5.0, "manifest_path": "", "output_path": "",
+                    "fresh_start_limit_s": 5.0, "manifest_path": "", "resolved_path": "", "output_path": "",
                     "repetition": 0}
         for key, value in defaults.items():
             self.declare_parameter(key, value)
@@ -74,7 +81,14 @@ class DynamicsCheck(Node):
             if not math.isfinite(self.settings[key]) or self.settings[key] <= 0:
                 raise ValueError(f"{key} must be finite and positive")
         self.manifest = None
-        self.forces = self.create_publisher(Twist, self.settings["forces_topic"], 1)
+        resolved_path = self.settings["resolved_path"] or (
+            self.settings["manifest_path"] and str(Path(self.settings["manifest_path"]).parent / "resolved_configuration.json"))
+        if not resolved_path:
+            raise ValueError("resolved_path or manifest_path is required for the thruster layout")
+        # Side of each thruster in command order: +1 port, -1 starboard, 0 centreline.
+        table = thruster_table(json.loads(Path(resolved_path).read_text())["vessel"])
+        self.sides = [(t["position_m"][1] > 0) - (t["position_m"][1] < 0) for t in table]
+        self.forces = self.create_publisher(Float32Array, self.settings["forces_topic"], 1)
         self.create_subscription(Odometry, self.settings["odom_topic"], self.on_odom, qos_profile_sensor_data)
         self.samples, self.preparation = [], []
         self.t0 = self.phase_start = None
@@ -131,9 +145,10 @@ class DynamicsCheck(Node):
             self.finish("wall-time watchdog expired")
 
     def command(self, left, right):
-        """Publish left/right thrust in newtons (Twist linear.x / linear.y)."""
-        message = Twist()
-        message.linear.x, message.linear.y = float(left), float(right)
+        """Publish port/starboard thrust in newtons to every thruster by side."""
+        message = Float32Array()
+        message.data = [float(left) if side > 0 else float(right) if side < 0 else (left + right) / 2
+                        for side in self.sides]
         self.forces.publish(message)
 
     def step(self):

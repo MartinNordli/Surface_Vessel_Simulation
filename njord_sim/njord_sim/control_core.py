@@ -1,4 +1,4 @@
-"""Pure collision checks and differential-thrust guidance helpers.
+"""Pure collision checks, guidance helpers and thrust allocation.
 
 This module has no ROS dependency; ``guidance_node.py`` wires it to topics.
 It provides:
@@ -6,8 +6,10 @@ It provides:
 * corridor checks on the occupancy grid (``segment_is_free``,
   ``tracking_corridor``, ``clearance``),
 * the speed cap used by guidance (``speed_limit``),
-* two ways to turn a surge force (N) and yaw moment (N*m) into two thruster
-  forces in newtons (``mix_thrusters`` and ``allocate_thrusters``).
+* thrust allocation: ``allocate_thrusters`` turns a body wrench (surge,
+  sway, yaw) into one force in newtons per fixed thruster, for any number of
+  thrusters (``allocation_matrix`` and ``independent_rows`` describe what a
+  thruster layout can control).
 
 Occupancy values follow ``nav_msgs/OccupancyGrid``: -1 unknown, 0 free,
 100 occupied. Only cells that are exactly 0 (observed free) count as free
@@ -200,79 +202,106 @@ def speed_limit(max_speed, heading_error, free_distance, clearance_m,
     return min(max_speed, braking, turn, near_obstacles)
 
 
-def mix_thrusters(force, moment, separation, max_thrust):
-    """For thrusters at y=+/-separation/2, yaw moment = (R-L)*separation/2.
+def allocation_matrix(positions, axes):
+    """Body wrench per newton of each thruster, as rows (surge, sway, yaw).
 
-    Simple differential-thrust mixer for two parallel, forward-pointing
-    thrusters placed symmetrically about the body x axis (body frame:
-    x forward, y left, z up; left thruster at +y).
+    Thrust T_i along unit axis u_i at position r_i (relative to the point the
+    wrench is referred to, normally the COM) gives surge u_i.x * T_i, sway
+    u_i.y * T_i and yaw moment (r_i x u_i).z * T_i = (r_x u_y - r_y u_x) T_i.
 
     Args:
-        force: requested surge force in N (L + R).
-        moment: requested yaw moment in N*m, positive counter-clockwise (turn
-            left).
-        separation: lateral distance between the thrusters in m.
-        max_thrust: per-thruster magnitude limit in N (forward and reverse).
+        positions: flattened body-frame xyz thruster positions in m.
+        axes: flattened body-frame unit thrust directions, same order.
 
     Returns:
-        ``(left, right)`` thrust in N. If either exceeds ``max_thrust`` both are
-        scaled down by the same factor, which keeps the force/moment ratio (the
-        turning intent) instead of clipping one side.
-
-    Raises:
-        ValueError: for non-finite input or non-positive separation/limit.
+        ``[surge_row, sway_row, yaw_row]``, each a list with one entry per
+        thruster (N, N and N*m per newton of thrust).
     """
-    if not all(math.isfinite(v) for v in (force, moment, separation, max_thrust)) or separation <= 0 or max_thrust <= 0:
-        raise ValueError("invalid physical thruster parameters")
-    # Solve L + R = force and (R - L) * separation / 2 = moment.
-    left, right = force / 2 - moment / separation, force / 2 + moment / separation
-    scale = max(1.0, abs(left) / max_thrust, abs(right) / max_thrust)
-    return left / scale, right / scale
+    if len(positions) != len(axes) or len(positions) % 3 or not positions:
+        raise ValueError('thruster positions and axes need three values per thruster')
+    if not all(math.isfinite(v) for v in (*positions, *axes)):
+        raise ValueError('nonfinite thruster geometry')
+    count = len(positions) // 3
+    return [[axes[3 * i] for i in range(count)],
+            [axes[3 * i + 1] for i in range(count)],
+            [positions[3 * i] * axes[3 * i + 1] - positions[3 * i + 1] * axes[3 * i]
+             for i in range(count)]]
 
 
-def allocate_thrusters(force, moment, positions, axes, forward_limits, reverse_limits):
-    """Solve the physical surge/yaw allocation, then uniformly saturate in N.
+def independent_rows(rows, tolerance=1e-9):
+    """Number of linearly independent rows (Gram-Schmidt with a relative tolerance)."""
+    basis = []
+    for row in rows:
+        residual = list(row)
+        for unit in basis:
+            projection = sum(a * b for a, b in zip(residual, unit))
+            residual = [a - projection * b for a, b in zip(residual, unit)]
+        norm = math.sqrt(sum(v * v for v in residual))
+        if norm > tolerance * max(1.0, math.sqrt(sum(v * v for v in row))):
+            basis.append([v / norm for v in residual])
+    return len(basis)
 
-    Positions and axes are two flattened xyz vectors in the body frame, referred
-    to the same origin as the controller wrench. Reverse limits are magnitudes.
-    Any uncommanded sway from canted fixed thrusters remains physical.
+
+def _solve(matrix, rhs):
+    """Solve a small square linear system by Gaussian elimination with pivoting."""
+    n = len(rhs)
+    a = [list(matrix[i]) + [rhs[i]] for i in range(n)]
+    for column in range(n):
+        pivot = max(range(column, n), key=lambda r: abs(a[r][column]))
+        a[column], a[pivot] = a[pivot], a[column]
+        for row in range(n):
+            if row != column:
+                factor = a[row][column] / a[column][column]
+                a[row] = [x - factor * y for x, y in zip(a[row], a[column])]
+    return [a[i][n] / a[i][i] for i in range(n)]
+
+
+def allocate_thrusters(wrench, positions, axes, forward_limits, reverse_limits):
+    """Distribute a body wrench over N fixed thrusters, then saturate uniformly.
+
+    Uses the minimum-norm solution T = B^T (B B^T)^-1 tau of B T = tau, where
+    B is ``allocation_matrix``. A fully actuated layout (surge, sway and yaw
+    independent, e.g. four angled thrusters) reproduces all three components.
+    An underactuated layout (e.g. two parallel aft thrusters) cannot set sway:
+    the sway component is then ignored and only surge and yaw are solved; any
+    sway the thrusters produce as a side effect remains physical.
 
     Args:
-        force: requested surge force in N along body x.
-        moment: requested yaw moment in N*m about body z.
-        positions: ``[x0, y0, z0, x1, y1, z1]`` thruster positions in m
-            (thruster 0 is left, thruster 1 is right).
-        axes: ``[ax0, ay0, az0, ax1, ay1, az1]`` thrust directions (the
-            direction of force for positive thrust).
+        wrench: requested ``(surge N, sway N, yaw N*m)`` in the body frame
+            (x forward, y left, yaw positive counter-clockwise).
+        positions: flattened xyz thruster positions in m, referred to the same
+            origin as the wrench.
+        axes: flattened unit thrust directions (direction of positive thrust).
         forward_limits: maximum positive thrust per thruster in N.
         reverse_limits: maximum reverse thrust magnitude per thruster in N.
 
     Returns:
-        ``(thrust0, thrust1)`` in N. If either exceeds its limit for its sign,
-        both are scaled by the same factor so the force/moment ratio is kept.
+        A tuple of thrusts in N, one per thruster. If any exceeds its limit for
+        its sign, all are scaled by the same factor, which keeps the direction
+        of the requested wrench instead of clipping one thruster.
 
     Raises:
-        ValueError: for wrong vector lengths, non-finite values, non-positive
+        ValueError: for mismatched lengths, non-finite values, non-positive
             limits, or a geometry that cannot control surge and yaw
-            independently (singular allocation matrix).
+            independently.
     """
-    if len(positions) != 6 or len(axes) != 6 or len(forward_limits) != 2 or len(reverse_limits) != 2:
-        raise ValueError('allocation requires two physical thrusters')
-    if not all(math.isfinite(v) for v in (force, moment, *positions, *axes, *forward_limits, *reverse_limits)):
+    rows = allocation_matrix(positions, axes)
+    count = len(rows[0])
+    if len(wrench) != 3 or len(forward_limits) != count or len(reverse_limits) != count:
+        raise ValueError('allocation needs a 3-DOF wrench and one limit pair per thruster')
+    if not all(math.isfinite(v) for v in (*wrench, *forward_limits, *reverse_limits)):
         raise ValueError('nonfinite thruster allocation')
     if min(*forward_limits, *reverse_limits) <= 0:
         raise ValueError('thruster limits must be positive')
-    # Thrust T_i along axis u_i at position r_i gives surge u_i.x * T_i and yaw
-    # moment (r_i x u_i).z * T_i = (r_x * u_y - r_y * u_x) * T_i. That is the
-    # 2x2 system  [a b; c d] [T0; T1] = [force; moment]:
-    a, b = axes[0], axes[3]
-    c = positions[0] * axes[1] - positions[1] * axes[0]
-    d = positions[3] * axes[4] - positions[4] * axes[3]
-    determinant = a * d - b * c
-    if abs(determinant) < 1e-9:
-        raise ValueError('thruster geometry cannot independently control surge and yaw')
-    # Cramer's rule for the 2x2 system above.
-    forces = [(d * force - b * moment) / determinant, (a * moment - c * force) / determinant]
+    target = list(wrench)
+    if independent_rows(rows) < 3:
+        # Underactuated: solve only surge and yaw.
+        rows, target = [rows[0], rows[2]], [wrench[0], wrench[2]]
+        if independent_rows(rows) < 2:
+            raise ValueError('thruster geometry cannot independently control surge and yaw')
+    gram = [[sum(a * b for a, b in zip(r, s)) for s in rows] for r in rows]
+    multipliers = _solve(gram, target)
+    forces = [sum(row[i] * m for row, m in zip(rows, multipliers)) for i in range(count)]
     # Uniform saturation: the limit depends on the sign of each thrust.
     scale = max(1.0, *(abs(value) / (forward_limits[i] if value >= 0 else reverse_limits[i])
                        for i, value in enumerate(forces)))

@@ -21,7 +21,10 @@ Select one `experiment` parameter: `straight`, `reverse`, `turn_left`,
 measurement interval. Choose thrust within the resolved physical limits and
 record it; the script does not infer limits from an arbitrary manifest schema.
 A turn commands 20% thrust on one side and 100% on the other. A reverse commands
-negative equal thrust. Raw samples include speed magnitude and signed body surge;
+negative equal thrust. Sides follow the thruster positions in the resolved
+configuration: port thrusters (y > 0) get the left value, starboard thrusters
+(y < 0) the right value, centreline thrusters the mean. These experiments are
+meant for layouts whose thrusters push mainly forward. Raw samples include speed magnitude and signed body surge;
 straight/reverse completion additionally requires the corresponding surge sign.
 The initial two-second surge change is reported as observed acceleration.
 

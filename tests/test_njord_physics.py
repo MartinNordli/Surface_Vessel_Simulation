@@ -143,7 +143,11 @@ class PhysicsTests(unittest.TestCase):
             self.assertIsNotNone(link.find("inertial/fluid_added_mass/xx"))
             self.assertEqual(len(link.findall("sensor")), 5)
             self.assertIn("wamv/front_left_camera_link_optical", urdf)
-            self.assertEqual(config["thruster_separation_m"], 1.2)
+            thrusters = model.findall("plugin[@name='njord::Physics']/thruster")
+            self.assertEqual([t.get("name") for t in thrusters], ["thruster_1", "thruster_2"])
+            self.assertEqual(thrusters[1].findtext("position"), "-1.2 -0.6 -0.1")
+            self.assertEqual(thrusters[1].findtext("axis"), "1.0 0.0 0.0")
+            self.assertNotIn("thruster_separation_m", config)
             if shutil.which("gz"):
                 result = subprocess.run(
                     ["gz", "sdf", "-k", str(Path(d) / "wamv.sdf")],
@@ -163,6 +167,32 @@ class PhysicsTests(unittest.TestCase):
                     20.0,
                 )
                 self.assertNotIn("attribute", printed.stderr)
+
+    def test_four_thruster_model_and_bridge(self):
+        vessel = yaml.safe_load((ROOT / "njord_sim/config/vessels/munin_v0.yaml").read_text())
+        resolved = {
+            "vessel": vessel,
+            "scenario": {
+                "environment": {
+                    "water_density_kg_m3": 1000,
+                    "water_level_m": 0,
+                    "wind_velocity_enu": [0, 0, 0],
+                    "current_velocity_enu": [0, 0, 0],
+                }
+            },
+        }
+        with tempfile.TemporaryDirectory() as d:
+            generate(d, resolved)
+            thrusters = ET.parse(Path(d) / "wamv.sdf").findall(
+                "model/plugin[@name='njord::Physics']/thruster")
+            self.assertEqual(len(thrusters), 4)
+            axis = [float(v) for v in thrusters[0].findtext("axis").split()]
+            self.assertAlmostEqual(axis[0], math.sqrt(0.5))
+            self.assertAlmostEqual(axis[1], -math.sqrt(0.5))
+            bridges = yaml.safe_load((Path(d) / "bridges.yaml").read_text())
+            commands = [b for b in bridges if b["direction"] == "ROS_TO_GZ"]
+            self.assertEqual([(b["ros_topic_name"], b["ros_type_name"], b["gz_type_name"]) for b in commands],
+                             [("/njord/actuator_forces", "ros_gz_interfaces/msg/Float32Array", "gz.msgs.Float_V")])
 
 
 if __name__ == "__main__":

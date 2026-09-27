@@ -8,7 +8,8 @@ import yaml
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'njord_sim'))
 from njord_sim.configuration import (resolve_configuration, validate_vessel,
-    convert_legacy_scenario, autonomy_parameters, sensor_settings)
+    convert_legacy_scenario, convert_legacy_vessel, autonomy_parameters, sensor_settings,
+    thruster_table, fully_actuated)
 
 ROOT=Path(__file__).resolve().parents[1]
 CONFIG=ROOT/'njord_sim/config'
@@ -26,8 +27,9 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(len(a['resources']),3)
         public=autonomy_parameters(a)
         self.assertNotIn('scenario',public)
-        self.assertTrue(public['guidance']['physical_allocation'])
         self.assertEqual(public['guidance']['thruster_positions'],[-1.2,.6,-.1,-1.2,-.6,-.1])
+        self.assertEqual(public['guidance']['thruster_axes'],[1.,0.,0.]*2)
+        self.assertEqual(public['command_guard']['thruster_topics'],['/thruster_1/command','/thruster_2/command'])
         self.assertEqual(sensor_settings(a)['max_thrust_n'],500.)
 
     def test_unknown_and_missing_physics(self):
@@ -48,7 +50,8 @@ class ConfigurationTests(unittest.TestCase):
         original=yaml.safe_load((VESSELS/'njord_v1.yaml').read_text())
         cases=[]
         bad=copy.deepcopy(original);bad['hydrodynamics']['linear_damping'][0]=-1;cases.append(bad)
-        bad=copy.deepcopy(original);bad['thrusters'][0]['axis']=[0,0,0];cases.append(bad)
+        bad=copy.deepcopy(original);bad['thrusters'][0]['yaw_deg']=float('nan');cases.append(bad)
+        bad=copy.deepcopy(original);bad['thrusters'][0]['axis']=[1.,0.,0.];cases.append(bad)
         bad=copy.deepcopy(original);bad['geometry']['buoyancy']['type']='mesh';cases.append(bad)
         for bad in cases:
             with self.assertRaises(ValueError):validate_vessel(bad)
@@ -124,6 +127,9 @@ class ConfigurationTests(unittest.TestCase):
         params=autonomy_parameters(reference)
         self.assertEqual(params['command_guard']['max_thrust'],123.)
         self.assertEqual(params['command_guard']['forward_limits'],[500.,500.])
+        self.assertEqual(params['command_guard']['thruster_topics'],['/thruster_1/command','/thruster_2/command'])
+        # Port thruster of the pinned VRX 'H' layout, relative to a zero COM.
+        self.assertEqual(params['guidance']['thruster_positions'][:3],[-2.373776,1.027135,0.318237])
 
     def test_versioned_hull_conflict_rejected_legacy_replaced(self):
         scenario=yaml.safe_load((ROOT/'scenarios/reference.yaml').read_text())
@@ -228,13 +234,67 @@ class MeshConfigurationTests(unittest.TestCase):
 
     def test_splayed_axes_and_singular_allocation(self):
         import math
-        a=math.radians(5)
-        self.vessel['thrusters'][0]['axis']=[math.cos(a),math.sin(a),0.]
+        self.vessel['thrusters'][0]['yaw_deg']=5.
         validate_vessel(copy.deepcopy(self.vessel))
         for t in self.vessel['thrusters']:
-            x,y,_=t['position_m'];n=math.hypot(x,y)
-            t['axis']=[-x/n,-y/n,0.]
+            x,y,_=t['position_m']
+            # Every thrust line passes through the COM: no yaw moment at all.
+            t['yaw_deg']=math.degrees(math.atan2(-y,-x))
         with self.assertRaisesRegex(ValueError,'independently control'):validate_vessel(self.vessel)
+
+
+class ThrusterLayoutTests(unittest.TestCase):
+    def vessel(self,name='njord_v1.yaml'):
+        return yaml.safe_load((VESSELS/name).read_text())
+
+    def test_four_thruster_placeholder_resolves_with_one_topic_per_thruster(self):
+        resolved=resolve_configuration(VESSELS/'munin_v0.yaml',ROOT/'scenarios/reference.yaml',CONFIG/'algorithms.yaml')
+        public=autonomy_parameters(resolved)
+        topics=[f'/thruster_{i}/command' for i in range(1,5)]
+        self.assertEqual(public['command_guard']['thruster_topics'],topics)
+        self.assertEqual(public['guidance']['thruster_topics'],topics)
+        self.assertEqual(len(public['guidance']['thruster_axes']),12)
+        self.assertEqual(len(public['command_guard']['reverse_limits']),4)
+        self.assertTrue(fully_actuated(resolved['vessel']))
+
+    def test_actuation_of_common_layouts(self):
+        self.assertFalse(fully_actuated(validate_vessel(self.vessel())))
+        reference=resolve_configuration(VESSELS/'wamv.yaml',ROOT/'scenarios/reference.yaml',CONFIG/'algorithms.yaml')
+        self.assertFalse(fully_actuated(reference['vessel']))
+        # Two aft thrusters plus a bow and a stern tunnel thruster.
+        vessel=self.vessel()
+        tunnel={'forward_limit_n':500.,'reverse_limit_n':500.,'response_time_s':.1}
+        vessel['thrusters']+=[dict(tunnel,name='bow_tunnel',position_m=[1.2,0.,-.1],yaw_deg=90.),
+                              dict(tunnel,name='stern_tunnel',position_m=[-1.,0.,-.1],yaw_deg=90.)]
+        vessel=validate_vessel(vessel)
+        self.assertTrue(fully_actuated(vessel))
+        self.assertEqual(thruster_table(vessel)[2]['axis'],[0.,1.,0.])
+        self.assertEqual(thruster_table(vessel)[3]['topic'],'/stern_tunnel/command')
+
+    def test_count_name_and_duplicate_rules(self):
+        cases=[]
+        bad=self.vessel();bad['thrusters']=bad['thrusters'][:1];cases.append((bad,'at least two'))
+        bad=self.vessel();bad['thrusters'][1]['name']='thruster_1';cases.append((bad,'unique'))
+        for name in ('Thruster1','1st','port/aft','',5):
+            bad=self.vessel();bad['thrusters'][0]['name']=name;cases.append((bad,'name must match'))
+        bad=self.vessel();bad['thrusters'][0]['yaw_deg']=400.;cases.append((bad,'yaw_deg'))
+        for vessel,message in cases:
+            with self.subTest(message=message,thrusters=vessel['thrusters']):
+                with self.assertRaisesRegex(ValueError,message):validate_vessel(vessel)
+
+    def test_schema_1_axes_convert_to_yaw(self):
+        import math
+        legacy=self.vessel();legacy['schema_version']=1
+        for t,axis in zip(legacy['thrusters'],([1.,0.,0.],[math.sqrt(.5),-math.sqrt(.5),0.])):
+            t['axis']=axis;del t['yaw_deg']
+        converted=validate_vessel(copy.deepcopy(legacy))
+        self.assertEqual(converted['schema_version'],2)
+        self.assertEqual([t['yaw_deg'] for t in converted['thrusters']],[0.,-45.])
+        self.assertEqual(legacy['thrusters'][0]['axis'],[1.,0.,0.])  # input left untouched
+        legacy['thrusters'][0]['axis']=[.6,0.,.8]
+        with self.assertRaisesRegex(ValueError,'planar unit'):convert_legacy_vessel(legacy)
+        current=self.vessel();current['schema_version']=3
+        with self.assertRaisesRegex(ValueError,'schema_version'):validate_vessel(current)
 
 
 if __name__=='__main__':unittest.main()

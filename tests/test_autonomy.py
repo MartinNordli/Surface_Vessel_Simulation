@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'njord_sim'))
-from njord_sim.control_core import (clearance, mix_thrusters, segment_is_free,
+from njord_sim.control_core import (allocate_thrusters, clearance, segment_is_free,
                                     speed_limit, tracking_corridor)
 from njord_sim.dstar_lite import DStarLite, Grid, INF, astar
 from njord_sim.planner_core import Geometry, IncrementalPlanner, fresh
@@ -131,15 +131,18 @@ class GuidanceSafetyTests(unittest.TestCase):
         self.data[10 * 20 + 12] = 100
         self.assertLess(clearance(self.geometry, self.data, (10.5, 10.5)), 2)
 
-    def test_thruster_moment_uses_physical_separation_and_saturation(self):
-        left, right = mix_thrusters(100, 40, 2.4, 500)
+    def test_parallel_aft_thrusters_split_surge_and_moment_with_saturation(self):
+        # Two forward thrusters 2.4 m apart (the old differential mixer case).
+        positions, axes = [-2., 1.2, 0., -2., -1.2, 0.], [1., 0., 0.] * 2
+        left, right = allocate_thrusters((100, 0, 40), positions, axes, [500] * 2, [500] * 2)
         self.assertAlmostEqual(left + right, 100)
         self.assertAlmostEqual((right - left) * 1.2, 40)
-        left, right = mix_thrusters(1000, 1000, 2.4, 100)
+        left, right = allocate_thrusters((1000, 0, 1000), positions, axes, [100] * 2, [100] * 2)
         self.assertLessEqual(max(abs(left), abs(right)), 100)
         self.assertAlmostEqual((right - left) * 1.2 / (left + right), 1)
-        with self.assertRaises(ValueError):
-            mix_thrusters(1, 1, 0, 500)
+        # Sway cannot be produced by parallel thrusters; it is ignored, not faked.
+        self.assertEqual(allocate_thrusters((100, 50, 40), positions, axes, [500] * 2, [500] * 2),
+                         allocate_thrusters((100, 0, 40), positions, axes, [500] * 2, [500] * 2))
 
 
 class NodeCallbackTests(unittest.TestCase):
@@ -166,7 +169,7 @@ class NodeCallbackTests(unittest.TestCase):
         self.node.p = lambda name: {'map_frame': 'map', 'base_frame': 'wamv/base_link',
                                    'stale_after_s': 1.0}[name]
         self.commands = []
-        self.node.left = self.node.right = NS(publish=lambda msg: self.commands.append(msg.data))
+        self.node.thrusters = [NS(publish=lambda msg: self.commands.append(msg.data))] * 2
 
     def test_empty_path_removes_previous_route_and_zeroes_commands(self):
         self.node.path = [(1, 1), (2, 2)]

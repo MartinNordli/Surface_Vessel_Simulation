@@ -15,7 +15,7 @@ import xml.etree.ElementTree as ET
 
 import yaml
 
-from .constants import COMMAND_TIMEOUT_S, WAMV_THRUSTER_SEPARATION_M
+from .constants import COMMAND_TIMEOUT_S
 
 # Integer-valued settings; every other setting is stored as float.
 COUNT_KEYS = ('camera_width', 'camera_height', 'lidar_samples', 'lidar_vertical_samples')
@@ -88,7 +88,6 @@ def generate(output_dir, config_file=None, resolved_config=None):
         config = resolved_config
     else:
         config = load_config(config_file, share / 'config/vessels/wamv.yaml')
-        config['thruster_separation_m'] = WAMV_THRUSTER_SEPARATION_M
 
     # Expand the upstream VRX WAM-V with our sensor mounting poses, then let
     # Gazebo convert URDF to SDF so we can edit the sensor elements below.
@@ -173,7 +172,9 @@ def generate(output_dir, config_file=None, resolved_config=None):
     bridge('/wamv/ground_truth/odometry', '/wamv/ground_truth/odometry', 'nav_msgs/msg/Odometry', 'gz.msgs.Odometry')
     bridge('/clock', '/clock', 'rosgraph_msgs/msg/Clock', 'gz.msgs.Clock')
     bridge('/njord/contacts', '/njord/contacts', 'ros_gz_interfaces/msg/Contacts', 'gz.msgs.Contacts')
-    bridge('/njord/actuator_forces', '/njord/actuator_forces', 'geometry_msgs/msg/Twist', 'gz.msgs.Twist', 'ROS_TO_GZ')
+    # Two forces in newtons, port then starboard (constants.WAMV_THRUSTERS).
+    bridge('/njord/actuator_forces', '/njord/actuator_forces', 'ros_gz_interfaces/msg/Float32Array',
+           'gz.msgs.Float_V', 'ROS_TO_GZ')
     # Only physical joint states are published; they contain no world pose.
     bridge('/world/njord_course/model/wamv/joint_state', '/wamv/joint_states', 'sensor_msgs/msg/JointState', 'gz.msgs.Model')
     # Upstream plugins that would leak ground-truth pose or detach parts.

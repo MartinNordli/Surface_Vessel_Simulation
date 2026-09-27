@@ -85,6 +85,7 @@ needed.
 |---|---|---|
 | WAM-V sensors (resolution, rate, range, noise) and thrust limit | `njord_sim/config/vessels/wamv.yaml` | default vessel |
 | The Njord boat (geometry, mass, damping, thrusters, sensors) | `njord_sim/config/vessels/njord_v1.yaml` | `VESSEL_CONFIG=/config/vessels/njord_v1.yaml` |
+| Four-thruster Munin placeholder (assumed layout, uncalibrated) | `njord_sim/config/vessels/munin_v0.yaml` | `VESSEL_CONFIG=/config/vessels/munin_v0.yaml` |
 | Gates, obstacles, start pose, time limit, wind/waves/current | `scenarios/<course>.yaml` | course name, `ENVIRONMENT` |
 | Speed profiles, guidance gains, planner and map tuning | `njord_sim/config/algorithms.yaml` | `PROFILE` |
 | Fixed platform constants (GPS datum, command timeout) | `njord_sim/njord_sim/constants.py` | rebuild |
@@ -97,7 +98,7 @@ The full table, file formats and parameter precedence are in
 Leave out reference nodes and connect your own over ROS 2 (domain 42, `use_sim_time`):
 
 ```bash
-CONTROLLER=external ./scripts/njord demo slalom   # publish left/right thrust in newtons
+CONTROLLER=external ./scripts/njord demo slalom   # publish /thruster_<i>/command in newtons
 PERCEPTION=external ./scripts/njord demo slalom   # publish buoy detections
 MAPPING=external    ./scripts/njord demo slalom   # publish an occupancy grid
 AUTONOMY=external   ./scripts/njord lab slalom    # sensors only, no race

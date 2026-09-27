@@ -10,6 +10,10 @@
 ![VRX v3.1.0](https://img.shields.io/badge/VRX-v3.1.0-0A7BBB)
 ![Docker](https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white)
 
+<img src="docs/media/slalom.gif" width="640" alt="The WAM-V reference boat running the slalom course in Gazebo, seen from a chase camera">
+<br><sub>The reference autonomy completing the slalom course in Gazebo, 20× speed. WAM-V reference vessel, not a calibrated Njord model.
+Made with <code>./scripts/njord film slalom</code>.</sub>
+
 </div>
 
 A boat in Gazebo races through red-left/green-right buoy gates using only its

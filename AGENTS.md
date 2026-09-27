@@ -16,7 +16,7 @@ linked guides, not here.
 ├── AGENTS.md                 This file: rules that apply to all work
 ├── README.md                 Project overview and quick start
 ├── Dockerfile                ROS 2 Jazzy + Gazebo Harmonic + VRX image
-├── compose*.yaml             Base stack plus gui / wsl / cpu / record / team overlays
+├── compose*.yaml             Base stack plus gui / wsl / cpu / record / film / team overlays
 ├── .codex/agents/            Sub-agent role definitions (see docs/agent-workflows.md)
 ├── .github/workflows/        CI/CD: unit suite, image build, container tests, GHCR publish
 ├── docker/                   Image dependencies, lock file, entrypoint, VRX license

@@ -1,0 +1,11 @@
+# Overlay adding the chase-camera filmer (scripts/run_filmer.py) used for the
+# README animation. Added automatically by ./scripts/njord film [course].
+# Frames go to <run output>/film; scripts/make_film_gif.py builds the GIF.
+services:
+  filmer:
+    # Same image, user, network, environment and volumes as the autonomy service.
+    extends:
+      file: compose.yaml
+      service: autonomy
+    profiles: [film]
+    command: [python3, /opt/njord/scripts/run_filmer.py]

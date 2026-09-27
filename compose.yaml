@@ -5,6 +5,7 @@
 #   compose.wsl.yaml     GPU rendering through WSLg on Windows (auto-selected)
 #   compose.cpu.yaml     software rendering without a GPU (NJORD_CPU=1, CI)
 #   compose.record.yaml  optional MCAP recorder service
+#   compose.film.yaml    chase-camera filmer for the README GIF (./scripts/njord film)
 #   compose.team.yaml    shell for building/running team ROS 2 packages
 # Every ${VAR:-default} can be overridden from the host environment.
 

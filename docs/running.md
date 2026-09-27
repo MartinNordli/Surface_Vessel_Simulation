@@ -55,6 +55,7 @@ services.
 | `gui [course]` | Same race with the Gazebo window and RViz |
 | `lab [course]` | Simulator, estimation and selected reference nodes, no evaluator |
 | `benchmark [course]` | Seed × environment × profile matrix, e.g. `--jobs 2` or `--dry-run` |
+| `film [course]` | Headless race filmed by a chase camera, then a sped-up GIF (see [Filming](#filming)) |
 | `simulator` | Simulator service only |
 | `smoke` | `validation/check_runtime.py` against an already running stack |
 
@@ -145,6 +146,29 @@ This writes compressed MCAP bags under the run directory, including `/clock`, TF
 sensors, navigation, commands and evaluation topics. `recording.json` records
 topic selection and image/source provenance. Existing bags are never overwritten.
 See [team integration](team-integration.md#7-record-and-compare-trials) for replay.
+
+## Filming
+
+The animation at the top of the README is made with:
+
+```bash
+./scripts/njord film slalom --output docs/media/slalom.gif
+```
+
+This runs the normal headless race plus a `filmer` service (`compose.film.yaml`,
+`scripts/run_filmer.py`). The filmer spawns a camera into the world and moves it
+behind and above the vessel, following its ground-truth pose. The camera is
+presentation only: it is not on the vessel and is not bridged to ROS, so autonomy
+never sees it. It adds a rendered 960×540 camera at 10 Hz, so the race can run
+slower than real time; simulation time is unaffected. Frames and `frames.jsonl`
+land in `<run>/film/`.
+
+Only when the evaluator reports a completed course does `scripts/make_film_gif.py`
+run on the host (Python 3 with numpy and Pillow). It skips the wait before the
+vessel moves, plays at 20× simulation time and 12 frames per second, and uses one
+shared palette. `--speed`, `--fps`, `--width` and `--colors` change this. A
+race can fail on a heavily loaded host; the reference slalom does not complete
+every run, so rerun it rather than committing a GIF of a failed race.
 
 ## Continuous integration and delivery
 

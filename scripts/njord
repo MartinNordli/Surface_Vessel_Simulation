@@ -51,6 +51,8 @@ Run (course defaults to SCENARIO, else reference)
   lab [course]        Simulator + autonomy without an evaluator; keeps running for inspection
   simulator [course]  Simulator service only
   benchmark [course]  Seed x environment x profile race matrix (see --help)
+  film [course] [gif options]  Race filmed by a chase camera, then an animated GIF
+                      (options: python3 scripts/make_film_gif.py --help)
 
 Test
   test            Full unit/integration suite inside the container
@@ -106,7 +108,7 @@ prepare_run() {
 # A first argument naming a file in scenarios/ selects that course; it
 # overrides SCENARIO. Scenarios are copied into the image at build time.
 case "$action" in
-  demo|gui|lab|simulator|benchmark)
+  demo|gui|lab|simulator|benchmark|film)
     if [ -n "${1:-}" ] && [ -f "scenarios/$1.yaml" ]; then
       export SCENARIO="/opt/njord/scenarios/$1.yaml"
       shift
@@ -181,6 +183,15 @@ case "$action" in
       # The evaluator's exit code (0 = course completed) becomes ours.
       docker compose up --abort-on-container-exit --exit-code-from evaluator simulator autonomy evaluator "$@"
     fi
+    ;;
+  film)
+    # Same headless race plus the filmer; the GIF is built on the host only
+    # when the evaluator reports a completed course.
+    export COMPOSE_FILE="$COMPOSE_FILE:compose.film.yaml"
+    prepare_run film
+    trap 'docker compose down --timeout 10' EXIT INT TERM
+    docker compose up --abort-on-container-exit --exit-code-from evaluator simulator autonomy evaluator filmer
+    python3 scripts/make_film_gif.py "$OUTPUT_HOST/film" "$@"
     ;;
   benchmark) exec python3 scripts/benchmark.py "$@" ;;
   smoke) docker compose run --rm autonomy python3 /opt/njord/validation/check_runtime.py "$@" ;;

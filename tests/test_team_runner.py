@@ -93,6 +93,16 @@ class TeamRunnerTests(unittest.TestCase):
             runner.prepare(self.output, 'run-1', {'ROS_PARAMS_FILE': '/missing/team.yaml'})
         self.assertFalse((self.output / 'autonomy_config.json').exists())
 
+    def test_state_source_defaults_to_estimate_and_truth_is_recorded(self):
+        command = runner.prepare(self.output, 'run-1', {})
+        self.assertIn('state_source:=estimate', command)
+        self.assertEqual(self.metadata()['state_source'], 'estimate')
+        command = runner.prepare(self.output, 'run-1', {'STATE_SOURCE': 'truth', 'CONTROLLER': 'external'})
+        self.assertIn('state_source:=truth', command)
+        self.assertEqual(self.metadata()['state_source'], 'truth')
+        with self.assertRaisesRegex(ValueError, 'state_source'):
+            runner.prepare(self.output, 'run-1', {'STATE_SOURCE': 'perfect'})
+
     def test_invalid_mode_fails_without_provenance(self):
         with self.assertRaisesRegex(ValueError, 'controller'):
             runner.prepare(self.output, 'run-1', {'CONTROLLER': 'typo'})

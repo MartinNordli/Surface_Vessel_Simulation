@@ -60,8 +60,9 @@ from njord_sim.defaults import node_defaults
 class CommandGuard(Node):
     """Gate between controller thrust commands and the actuators."""
 
-    def __init__(self):
-        super().__init__('command_guard')
+    def __init__(self, **kwargs):
+        # kwargs go to rclpy's Node, e.g. parameter_overrides in tests.
+        super().__init__('command_guard', **kwargs)
         # thruster_topics, timeout_s, max_thrust and per-thruster limits come
         # from the vessel, algorithms.yaml and constants.py (see defaults.py).
         self.declare_parameters('', [*node_defaults('command_guard'), ('require_mission', True)])

@@ -14,7 +14,7 @@ simulation time. Source stamps are preserved through sensing/mapping.
 | same lidar prefix + `/scan` | `sensor_msgs/LaserScan` | Planar no-return free-space supplement |
 | `/wamv/sensors/gps/gps/fix` | `sensor_msgs/NavSatFix` | Metric Gaussian GPS measurement noise |
 | `/wamv/sensors/imu/imu/data` | `sensor_msgs/Imu` | Noisy ENU attitude/angular velocity/acceleration |
-| `/njord/odometry` | `nav_msgs/Odometry` | GPS/IMU EKF, `map` → `wamv/base_link` |
+| `/njord/odometry` | `nav_msgs/Odometry` | Navigation state, `map` → `wamv/base_link`: GPS/IMU EKF by default; ground truth with `STATE_SOURCE=truth` |
 | `/njord/occupancy` | `nav_msgs/OccupancyGrid` | -1 unknown, 0 observed free, 100 inflated obstacle |
 | `/njord/buoys` | `vision_msgs/Detection3DArray` | Fused red/green buoy tracks in map |
 | `/njord/goal` | `geometry_msgs/PoseStamped` | Mission waypoint in map |
@@ -23,7 +23,7 @@ simulation time. Source stamps are preserved through sensing/mapping.
 | `/<thruster name>/command`, e.g. `/thruster_1/command` | `std_msgs/Float64` | Controller force per thruster in newtons along its axis, before guard; one topic per thruster in the vessel file (WAM-V: `thruster_1` port, `thruster_2` starboard) |
 | `/njord/actuator_forces` | `ros_gz_interfaces/Float32Array` | Internal force envelope: one force in N per thruster, in vessel-file order |
 | `/njord/race_active` | `std_msgs/Bool` | Evaluator heartbeat, transient local, 10 Hz |
-| `/wamv/ground_truth/odometry` | `nav_msgs/Odometry` | Evaluation only; never fed to navigation |
+| `/wamv/ground_truth/odometry` | `nav_msgs/Odometry` | Evaluation; fed to navigation only in explicit truth mode (`STATE_SOURCE=truth`) |
 | `/njord/contacts` | `ros_gz_interfaces/Contacts` | Physics-verified contact heartbeat, 20 Hz |
 | `/njord/plan_ms` | `std_msgs/Float64` | Monotonic wall-time search latency |
 
@@ -33,11 +33,22 @@ unguarded WAM-V thruster commands. Launch only one force-envelope authority:
 the autonomy guard for races, or the standalone dynamics measurement script.
 
 Sensor subscriptions use best-effort sensor QoS. Mission/status/control topics
-are reliable. TF comes from robot_state_publisher and the two EKFs; no Gazebo
-world-pose TF publisher is connected. The local EKF supplies attitude in `odom`;
-the global EKF supplies position/velocity from GPS plus IMU attitude/rates in
-`map`. Integrating uncorrected accelerometer bias into a velocity pseudo-sensor
-is deliberately avoided. This is a baseline estimator, not a calibrated INS.
+are reliable. TF comes from robot_state_publisher and the navigation state
+source; no Gazebo world-pose TF publisher is connected.
+
+- `STATE_SOURCE=estimate` (default): the local EKF supplies attitude in `odom`
+  (`odom` → `wamv/base_link`); the global EKF supplies position/velocity from
+  GPS plus IMU attitude/rates in `map` (`map` → `odom`). Integrating
+  uncorrected accelerometer bias into a velocity pseudo-sensor is deliberately
+  avoided. This is a baseline estimator, not a calibrated INS.
+- `STATE_SOURCE=truth`: `truth_relay` replaces both EKFs. It republishes
+  `/wamv/ground_truth/odometry` unchanged (same stamp, frames and body-frame
+  twist) on `/njord/odometry`, broadcasts `odom` → `wamv/base_link` from it and
+  a static identity `map` → `odom`. Invalid truth is dropped, so navigation goes
+  stale and the guard zeroes thrust. Noisy GPS/IMU and `/njord/gps/odometry`
+  are still published for a team's own estimator. The mode is recorded as
+  `state_source` in `autonomy_config.json` and `run_metrics.json`; a truth run
+  says nothing about estimation.
 
 ## Replace the reference algorithms
 

@@ -118,6 +118,71 @@ This command takes the place of the team controller in the test. Stop the proces
 after the race before starting another controller. It demonstrates the ROS
 connection; the team's actual controller must be tested separately.
 
+### Control & Autonomy: Munin, state source and frames
+
+Open interface questions and the answers so far are kept in
+[control-autonomy-questions.md](control-autonomy-questions.md).
+
+**Minimal run.** Run your allocation node without a namespace and with
+`use_sim_time:=true`, then start a race with the four-thruster placeholder:
+
+```bash
+CONTROLLER=external VESSEL_CONFIG=/config/vessels/munin_v0.yaml ./scripts/njord demo
+# The same, with the exact simulated state instead of the GPS/IMU estimate:
+STATE_SOURCE=truth CONTROLLER=external VESSEL_CONFIG=/config/vessels/munin_v0.yaml ./scripts/njord demo
+```
+
+The reference mission and planner still run and supply `/njord/goal`,
+`/njord/path` and the health status the guard needs, so the controller only
+has to publish thrust. `munin_v0.yaml` is an assumed layout with invented
+physics, not Munin.
+
+| Direction | Topic | Type | Content |
+| --- | --- | --- | --- |
+| to the controller | `/njord/odometry` | `nav_msgs/Odometry` | Pose of `wamv/base_link` in `map`; twist in the body frame. EKF estimate, or ground truth with `STATE_SOURCE=truth` |
+| to the controller | `/njord/path`, `/njord/goal` | `nav_msgs/Path`, `geometry_msgs/PoseStamped` | Planned route and current mission goal in `map` |
+| to the controller | `/wamv/sensors/gps/gps/fix` | `sensor_msgs/NavSatFix` | Noisy GNSS fix, for your own estimator |
+| to the controller | `/wamv/sensors/imu/imu/data` | `sensor_msgs/Imu` | Noisy attitude, angular rate and acceleration, for your own estimator |
+| to the controller | `/clock` | `rosgraph_msgs/Clock` | Simulation time; use `use_sim_time:=true` |
+| from the controller | `/thruster_1/command` … `/thruster_4/command` | `std_msgs/Float64` | Force in newtons along each thruster's direction |
+
+Use `use_sim_time:=true` in every node. Stamps and timers then follow the
+simulation. Without it, freshness checks compare simulation stamps with wall
+time and the controller will see stale or future data.
+
+**Frames.** A TF frame is a named coordinate system. TF is the ROS service that
+knows the transform between frames at every time stamp, so a node can ask for
+"where is the lidar in `map` at the time this scan was taken" instead of doing
+the geometry by hand.
+
+- `map`: fixed world frame, ENU (x east, y north, z up), origin at the GPS datum
+  in `constants.py`. Poses, paths and goals are in `map`.
+- `odom`: continuous local frame between `map` and the boat. In truth mode it
+  coincides with `map`.
+- `wamv/base_link`: the boat body, FLU (x forward, y left/port, z up). Thruster
+  positions in the vessel file and the odometry twist are in this frame.
+- Sensor frames such as `wamv/imu_wamv_link` hang below `wamv/base_link` at the
+  mounting poses from the vessel file (robot_state_publisher).
+
+The tree is `map` → `odom` → `wamv/base_link` → sensors. Heading (yaw) in
+`map` is counter-clockwise from east.
+
+**ENU/FLU and NED/FRD.** The simulator uses the ROS convention (REP 103). If
+your mathematics uses NED (x north, y east, z down) and a FRD body (x forward,
+y right, z down), convert at the boundary of your node:
+
+| Quantity | From the simulator (ENU / FLU) | In NED / FRD |
+| --- | --- | --- |
+| Position | (x, y, z) | (y, x, -z) |
+| Heading | ψ, counter-clockwise from east | π/2 − ψ, clockwise from north (wrap to [-π, π)) |
+| Body velocity | (u, v, w) | (u, -v, -w) |
+| Body angular rate | (p, q, r) | (p, -q, -r) |
+| Body force or moment | (X, Y, N) | (X, -Y, -N) |
+
+Thruster commands are scalars along each thruster's own direction, so they do
+not change between conventions. Whether the simulator should provide a NED
+adapter is open question 8.
+
 ## 5. Test your own computer vision or map
 
 To inspect sensors without a race ending while you develop:

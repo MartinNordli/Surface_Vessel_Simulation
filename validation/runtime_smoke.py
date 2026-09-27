@@ -269,6 +269,37 @@ class PlannerGuidanceTransportTests(RosCase):
         self.assert_zero()
 
 
+class ExternalFourThrusterControllerTests(RosCase):
+    """An external controller drives four thrusters through the guard unchanged.
+
+    Mirrors Control & Autonomy's allocation node: one std_msgs/Float64 per
+    thruster on /thruster_<i>/command, in newtons.
+    """
+    def test_forces_pass_in_order_and_one_silent_thruster_zeroes_all(self):
+        topics = [f'/thruster_{i}/command' for i in range(1, 5)]
+        guard = self.add(CommandGuard(parameter_overrides=[
+            Parameter('thruster_topics', value=topics),
+            Parameter('forward_limits', value=[500.0] * 4),
+            Parameter('reverse_limits', value=[500.0] * 4)]))
+        publishers = [self.driver.create_publisher(Float64, topic, 1) for topic in topics]
+        planner = self.driver.create_publisher(DiagnosticArray, '/njord/planner_status', 1)
+        forces = [10.0, -20.0, 30.0, -40.0]
+        silent = []
+
+        def feed():
+            for index, (publisher, force) in enumerate(zip(publishers, forces)):
+                if index not in silent:
+                    publisher.publish(Float64(data=force))
+            self.status(planner, 'njord/planner')
+            self.authority()
+
+        self.until(lambda: self.outputs and self.outputs[-1] == tuple(forces), feed)
+        self.assertEqual(guard.topics, topics)
+        silent.append(3)  # thruster_4's publisher stops
+        self.pump(0.85, feed)
+        self.assertTrue(all(values == (0.0,) * 4 for values in self.outputs[-3:]), self.outputs[-5:])
+
+
 class GuardSteadyClockTests(RosCase):
     """The guard's watchdog must use steady time, not the (frozen) ROS clock."""
     def test_source_timeout_with_frozen_ros_clock(self):

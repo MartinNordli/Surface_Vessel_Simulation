@@ -120,6 +120,7 @@ walkthrough and [interfaces](docs/interfaces.md) for every topic and frame.
 | [Njord calibration](docs/njord-calibration.md) | Calibration protocol for the Njord model |
 | [Njord model evidence](docs/njord-model-evidence.md) | What the Njord physics model implements and how it was verified |
 | [Platform choice](docs/simulatorplattform-vrx-vs-pygemini.md) | Why VRX/Gazebo (Norwegian) |
+| [Open questions for C&A](docs/control-autonomy-questions.md) | Interface and model questions for Control & Autonomy and Naval, with answers (Norwegian) |
 | [AGENTS.md](AGENTS.md) | Engineering rules and contributor workflow |
 
 ## Project structure

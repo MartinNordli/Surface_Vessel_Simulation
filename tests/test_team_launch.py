@@ -47,7 +47,7 @@ class TeamLaunchTests(unittest.TestCase):
             'profile': 'fast', 'seed': '7', 'expected_gates': '5',
             'autonomy': 'reference', 'controller': 'reference',
             'perception': 'reference', 'mapping': 'reference',
-            'params_file': '', 'vessel_config': str(SHARE / 'config/vessels/wamv.yaml'),
+            'state_source': 'estimate', 'params_file': '', 'vessel_config': str(SHARE / 'config/vessels/wamv.yaml'),
             **overrides,
         })
         with patch.object(self.module, 'Node', side_effect=lambda **kwargs: kwargs):
@@ -80,6 +80,18 @@ class TeamLaunchTests(unittest.TestCase):
         for argument in ['autonomy', 'controller', 'perception', 'mapping']:
             with self.subTest(argument=argument), self.assertRaises(ValueError):
                 self.launch(**{argument: 'typo'})
+
+    def test_truth_mode_replaces_both_ekfs_with_the_truth_relay(self):
+        for autonomy in ('reference', 'external'):
+            with self.subTest(autonomy=autonomy):
+                executables = [node['executable'] for node in self.launch(state_source='truth', autonomy=autonomy)]
+                self.assertEqual(executables.count('ekf_node'), 0)
+                self.assertEqual(executables.count('truth_relay'), 1)
+                for executable in ('sensor_adapter', 'navsat_transform_node', 'command_guard'):
+                    self.assertEqual(executables.count(executable), 1)
+        self.assertNotIn('truth_relay', [node['executable'] for node in self.launch()])
+        with self.assertRaisesRegex(ValueError, 'state_source'):
+            self.launch(state_source='ground_truth')
 
     def test_bad_component_mode_is_rejected_even_for_full_external_stack(self):
         for argument in ['controller', 'perception', 'mapping']:

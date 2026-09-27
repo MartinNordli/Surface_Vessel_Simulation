@@ -66,6 +66,7 @@ them to topics, parameters and timers.
 | | `run_manifest.py` | Atomic, checksummed handoff between the services |
 | Scoring | `scenario_core.py`, `evaluator_node.py` | Gate crossing, clearance and race status from ground truth |
 | Estimation | `sensor_adapter_node.py` | GPS/IMU noise and the navigation health heartbeat |
+| | `truth_relay_node.py` | Explicit truth mode: ground truth as `/njord/odometry` and TF |
 | Perception | `perception_core.py`, `perception_node.py` | Colour blobs + lidar depth → buoy tracks |
 | Mapping | `mapping_core.py`, `mapper_node.py` | Ray-traced occupancy grid with aging and inflation |
 | Planning | `dstar_lite.py`, `planner_core.py`, `planner_node.py` | Incremental D* Lite on the occupancy grid |

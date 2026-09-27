@@ -30,6 +30,7 @@ linked guides, not here.
 │   ├── njord-calibration.md  Calibration protocol for the Njord model
 │   ├── njord-model-evidence.md  Measured evidence for the Njord model
 │   ├── simulatorplattform-vrx-vs-pygemini.md  Why VRX/Gazebo (Norwegian)
+│   ├── control-autonomy-questions.md  Open questions for C&A and Naval (Norwegian)
 │   └── agent-workflows.md    How to build, verify, delegate and commit
 ├── njord_sim/                ROS 2 Python package (main simulator logic)
 │   ├── config/               algorithms.yaml, localization.yaml, RViz

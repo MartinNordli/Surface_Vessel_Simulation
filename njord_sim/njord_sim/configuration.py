@@ -39,6 +39,7 @@ SENSOR_KEYS = {
     'camera_noise_stddev', 'lidar_range', 'lidar_samples', 'lidar_vertical_samples',
     'lidar_rate', 'lidar_noise_stddev', 'gps_rate', 'imu_rate', 'gps_horizontal_noise_m',
     'gps_vertical_noise_m', 'imu_orientation_noise_rad',
+    'imu_angular_velocity_noise_rad_s', 'imu_linear_acceleration_noise_m_s2',
 }
 # The WAM-V profile exposes the sensors plus its thrust limit (vessels/wamv.yaml).
 WAMV_SETTING_KEYS = SENSOR_KEYS | {'max_thrust_n'}
@@ -50,6 +51,7 @@ GUIDANCE_KEYS = {
 # Algorithm values that may legitimately be zero; everything else must be > 0.
 NONNEGATIVE_ALGORITHM_KEYS = {
     'kp_yaw', 'kd_yaw', 'kp_surge', 'reaction_time_s', 'stopping_margin_m', 'safety_margin_m',
+    'self_filter_margin_m',
 }
 ENVIRONMENT_KEYS = {
     'wind_speed_mps', 'wind_direction_to_deg_enu', 'wind_variance_gain', 'wave_gain',
@@ -120,14 +122,16 @@ def _read(path):
 def config_path(relative):
     """Locate a file under njord_sim/config, preferring the editable copy.
 
-    Search order: $NJORD_CONFIG_DIR (compose.yaml sets /config, the host's
-    njord_sim/config mounted read-only), the source tree, then the installed
-    package. Host edits therefore apply to the next run without a rebuild,
-    and a team CONFIG_HOST without the file falls back to the image's copy.
+    When NJORD_CONFIG_DIR is set, require the file there. Managed runs use
+    the frozen workspace defaults. Unmanaged host tools can use the source
+    tree or installed package when no configuration directory was specified.
     """
     candidates = []
     if os.environ.get('NJORD_CONFIG_DIR'):
-        candidates.append(Path(os.environ['NJORD_CONFIG_DIR']) / relative)
+        path = Path(os.environ['NJORD_CONFIG_DIR']) / relative
+        if not path.is_file():
+            raise ValueError(f'required mounted configuration is missing: {path}')
+        return path
     candidates.append(Path(__file__).resolve().parents[1] / 'config' / relative)
     for path in candidates:
         if path.exists():
@@ -148,7 +152,7 @@ def wamv_defaults_file():
 def wamv_profile_from_settings(settings):
     """Wrap complete flat WAM-V settings in the versioned vessel structure."""
     _keys(settings, WAMV_SETTING_KEYS, where='WAM-V settings')
-    return {'schema_version': 1, 'profile': 'wamv_reference', 'settings': copy.deepcopy(settings)}
+    return {'schema_version': 2, 'profile': 'wamv_reference', 'settings': copy.deepcopy(settings)}
 
 
 def _validate_sensors(settings):
@@ -354,17 +358,39 @@ def fully_actuated(vessel):
     return independent_rows(allocation_matrix(positions, [v for t in table for v in t['axis']])) == 3
 
 
+def convert_sensor_schema(vessel):
+    """Explicit upgrade: WAM-V 1->2, Njord 2->3; new noise is assumed.
+
+    Values reproduce prior nominal Gazebo IMU noise, with bias removed. They
+    are engineering defaults, never a claim of measured vessel calibration.
+    """
+    result = copy.deepcopy(vessel)
+    old = 2 if result.get('profile') == 'njord' else 1
+    if result.get('schema_version') != old:
+        raise ValueError('sensor conversion expects the previous vessel schema')
+    settings = result['sensors']['settings'] if old == 2 else result['settings']
+    for key, value in {'imu_angular_velocity_noise_rad_s': .009,
+                       'imu_linear_acceleration_noise_m_s2': .021}.items():
+        if key in settings:
+            raise ValueError(f'{key} requires the new vessel schema')
+        settings[key] = value
+    result['schema_version'] = old + 1
+    return result
+
+
 def validate_vessel(vessel, resource_base=None, resource_files=None):
     """Validate a versioned vessel (``wamv_reference`` or ``njord``) in place.
 
     ``resource_base`` resolves relative mesh paths; loaded mesh paths are
     appended to ``resource_files`` so the run manifest can checksum them.
-    WAM-V files are schema 1 and Njord files schema 2; a schema 1 Njord file
-    is converted by ``convert_legacy_vessel`` and the converted copy returned.
+    WAM-V files are schema 2 and Njord files schema 3. Previous schemas
+    are explicitly converted on copies, preserving the source files.
     """
     if vessel.get('profile') == 'njord' and vessel.get('schema_version') == 1:
         vessel = convert_legacy_vessel(vessel)
-    _version(vessel, 2 if vessel.get('profile') == 'njord' else 1)
+    if vessel.get('schema_version') == (2 if vessel.get('profile') == 'njord' else 1):
+        vessel = convert_sensor_schema(vessel)
+    _version(vessel, 3 if vessel.get('profile') == 'njord' else 2)
     if vessel.get('profile') == 'wamv_reference':
         _keys(vessel, {'schema_version', 'profile', 'settings'}, where='WAM-V vessel')
         _keys(vessel['settings'], WAMV_SETTING_KEYS, where='WAM-V settings')
@@ -503,10 +529,26 @@ def resolve_scenario(data, seed=None, environment=None):
 # Algorithms
 # --------------------------------------------------------------------------
 
+def convert_algorithm_schema(algorithms):
+    """Schema 1->2: explicitly introduce assumed timing and filter tolerances."""
+    result = copy.deepcopy(algorithms)
+    _version(result, 1)
+    if 'navigation' in result or 'self_filter_margin_m' in result.get('mapping', {}):
+        raise ValueError('new timing/filter settings require algorithms schema 2')
+    result['schema_version'] = 2
+    result['mapping']['self_filter_margin_m'] = .02
+    result['navigation'] = dict(stale_after_s=.5, processing_margin_s=.1,
+                                clock_stall_after_s=.5, sync_slop_s=.12)
+    return result
+
+
 def _resolve_algorithms(algorithms, profile):
     """Validate algorithms.yaml and select the speed ceiling for ``profile``."""
-    _version(algorithms)
-    _keys(algorithms, {'schema_version', 'speed_profiles_mps', 'guidance', 'planner', 'mapping'},
+    algorithms = copy.deepcopy(algorithms)
+    if algorithms.get('schema_version') == 1:
+        algorithms = convert_algorithm_schema(algorithms)
+    _version(algorithms, 2)
+    _keys(algorithms, {'schema_version', 'speed_profiles_mps', 'guidance', 'planner', 'mapping', 'navigation'},
           where='algorithms')
     profiles = algorithms['speed_profiles_mps']
     if not isinstance(profiles, dict) or not profiles:
@@ -517,8 +559,9 @@ def _resolve_algorithms(algorithms, profile):
         raise ValueError(f'unknown PROFILE {profile!r}; algorithms.yaml defines {sorted(profiles)}')
     _keys(algorithms['guidance'], GUIDANCE_KEYS, where='guidance')
     _keys(algorithms['planner'], {'stale_after_s', 'publish_hz'}, where='planner')
-    _keys(algorithms['mapping'], {'safety_margin_m'}, where='mapping')
-    for group in ('guidance', 'planner', 'mapping'):
+    _keys(algorithms['mapping'], {'safety_margin_m', 'self_filter_margin_m'}, where='mapping')
+    _keys(algorithms['navigation'], {'stale_after_s', 'processing_margin_s', 'clock_stall_after_s', 'sync_slop_s'}, where='navigation')
+    for group in ('guidance', 'planner', 'mapping', 'navigation'):
         for key, value in algorithms[group].items():
             _number(value, key, 0, positive=key not in NONNEGATIVE_ALGORITHM_KEYS)
     algorithms['profile'] = profile
@@ -554,6 +597,8 @@ def resolve_configuration(vessel_file, scenario_file, algorithms_file, seed=None
     scenario = resolve_scenario(scenario_data, seed, environment)
     algorithms = _resolve_algorithms(_read(algorithms_file), profile or DEFAULT_PROFILE)
     env = scenario['environment']
+    settings = vessel['settings'] if vessel['profile'] == 'wamv_reference' else vessel['sensors']['settings']
+    sensor_periods = sensor_timing(settings, env['physics_step_s'])
 
     if vessel['profile'] == 'njord':
         # The Njord force model supports flat water with constant wind only.
@@ -590,7 +635,8 @@ def resolve_configuration(vessel_file, scenario_file, algorithms_file, seed=None
     resources = {str(Path(p).resolve()): hashlib.sha256(Path(p).read_bytes()).hexdigest()
                  for p in source_files}
     resolved = {'schema_version': 1, 'vessel': vessel, 'scenario': scenario,
-                'algorithms': algorithms, 'resources': resources}
+                'algorithms': algorithms, 'resources': resources,
+                'sensor_max_period_s': sensor_periods}
     json.dumps(resolved, allow_nan=False)  # reject NaN/Infinity anywhere
     return resolved
 
@@ -624,11 +670,23 @@ def autonomy_parameters(resolved):
     settings = sensor_settings(resolved)
     result['sensor_adapter'] = {'seed': resolved['scenario']['seed'],
                                 'orientation_noise_rad': settings['imu_orientation_noise_rad'],
+                                'angular_velocity_noise_rad_s': settings['imu_angular_velocity_noise_rad_s'],
+                                'linear_acceleration_noise_m_s2': settings['imu_linear_acceleration_noise_m_s2'],
+                                'stale_after_s': algorithms['navigation']['stale_after_s'],
+                                'clock_stall_after_s': algorithms['navigation']['clock_stall_after_s'],
                                 'gps_xy_std_m': settings['gps_horizontal_noise_m'],
                                 'gps_z_std_m': settings['gps_vertical_noise_m']}
     # Inflate obstacles by the vessel's circumscribed radius plus the margin.
     result['mapper'] = {'inflation_m': math.hypot(hull['length_m'], hull['beam_m']) / 2
-                        + algorithms['mapping']['safety_margin_m']}
+                        + algorithms['mapping']['safety_margin_m'],
+                        'max_range_m': settings['lidar_range'],
+                        'input_max_age_s': algorithms['navigation']['stale_after_s'],
+                        'self_filter_margin_m': algorithms['mapping']['self_filter_margin_m'],
+                        'lidar_noise_stddev_m': settings['lidar_noise_stddev']}
+    result['mission'] = {'camera_max_age_s': algorithms['navigation']['stale_after_s'],
+                         'odometry_max_age_s': algorithms['navigation']['stale_after_s']}
+    result['perception'] = {'sync_tolerance_s': algorithms['navigation']['sync_slop_s'],
+                            'input_max_age_s': algorithms['navigation']['stale_after_s']}
     return result
 
 
@@ -644,3 +702,45 @@ def sensor_settings(resolved):
     settings = copy.deepcopy(vessel['sensors']['settings'])
     settings['max_thrust_n'] = min(t[k] for t in vessel['thrusters'] for k in ('forward_limit_n', 'reverse_limit_n'))
     return settings
+
+
+def sensor_timing(settings, physics_step):
+    """Bound quantized sensor periods; rates above physics rate are invalid.
+
+    Nonintegral periods are allowed; the bound rounds up to the next physics
+    tick. Thus 100 Hz at 4 ms has a conservative 12 ms acquisition interval.
+    """
+    result = {}
+    for sensor in ('camera', 'lidar', 'gps', 'imu'):
+        rate = settings[sensor + '_rate']
+        if rate * physics_step > 1 + 1e-9:
+            raise ValueError(f'{sensor}_rate={rate} Hz cannot be represented with physics_step_s={physics_step}')
+        result[sensor] = math.ceil(1 / (rate * physics_step) - 1e-9) * physics_step
+    return result
+
+
+def validate_reference_timing(public, periods, navigation, components):
+    """Check effective ROS parameters only for reference components being used."""
+    margin = navigation['processing_margin_s']
+    def budget(node, key, sensor):
+        actual = public[node][key]
+        required = 2 * periods[sensor] + margin
+        if actual + 1e-12 < required:
+            raise ValueError(f'{node}.{key}={actual}s incompatible with {sensor} period<={periods[sensor]}s: requires {required}s (two periods + processing_margin_s={margin})')
+    for sensor in ('gps', 'imu'):
+        budget('sensor_adapter', 'stale_after_s', sensor)
+    if components.get('autonomy') != 'reference':
+        return
+    budget('mission', 'odometry_max_age_s', 'imu')
+    if components.get('perception') == 'reference':
+        budget('mission', 'camera_max_age_s', 'camera')
+        for sensor in ('camera', 'lidar'):
+            budget('perception', 'input_max_age_s', sensor)
+        tolerance = public['perception']['sync_tolerance_s']
+        if tolerance < max(periods['camera'], periods['lidar']):
+            raise ValueError(f'perception.sync_tolerance_s={tolerance} cannot cover camera/lidar periods {periods}')
+    if components.get('mapping') == 'reference':
+        budget('mapper', 'input_max_age_s', 'lidar')
+        budget('planner', 'stale_after_s', 'lidar')
+        if components.get('controller') == 'reference':
+            budget('guidance', 'stale_after_s', 'lidar')

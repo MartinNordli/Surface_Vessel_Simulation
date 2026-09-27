@@ -7,7 +7,7 @@
 # A team can override a subset of `settings` without copying this file: write a
 # flat YAML with only the keys to change (see ../examples/sensors_low_bandwidth.yaml)
 # and select it with VESSEL_CONFIG. Unknown keys are rejected.
-schema_version: 1
+schema_version: 2
 profile: wamv_reference
 settings:
   # Front left and right RGB cameras (both use the same settings).
@@ -29,6 +29,9 @@ settings:
   gps_horizontal_noise_m: 0.3           # standard deviation
   gps_vertical_noise_m: 0.5             # standard deviation
   imu_orientation_noise_rad: 0.005      # standard deviation
+  # Assumed standard deviations; not measured boat calibration.
+  imu_angular_velocity_noise_rad_s: 0.009
+  imu_linear_acceleration_noise_m_s2: 0.021
   # Physical thrust limit per engine, forward and reverse. The Gazebo actuator
   # watchdog clamps to this; algorithms.yaml may choose a lower operating limit.
   max_thrust_n: 500.0

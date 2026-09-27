@@ -47,7 +47,7 @@ class TeamLaunchTests(unittest.TestCase):
             'profile': 'fast', 'seed': '7', 'expected_gates': '5',
             'autonomy': 'reference', 'controller': 'reference',
             'perception': 'reference', 'mapping': 'reference',
-            'state_source': 'estimate', 'params_file': '', 'vessel_config': str(SHARE / 'config/vessels/wamv.yaml'),
+            'state_source': 'estimate', 'localization_config': '', 'params_file': '', 'vessel_config': str(SHARE / 'config/vessels/wamv.yaml'),
             **overrides,
         })
         with patch.object(self.module, 'Node', side_effect=lambda **kwargs: kwargs):

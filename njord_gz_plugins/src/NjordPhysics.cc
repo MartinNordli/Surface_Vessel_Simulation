@@ -41,6 +41,7 @@
 #include "njord/Hydrostatics.hh"
 #include <chrono>
 #include <gz/msgs/float_v.pb.h>
+#include <gz/msgs/wrench.pb.h>
 #include <gz/plugin/Register.hh>
 #include <gz/sim/Link.hh>
 #include <gz/sim/Model.hh>
@@ -69,11 +70,12 @@ class Physics final : public gz::sim::System,
   gz::sim::Link link;
   std::vector<hydro::Mesh> meshes;
   V com, wind;
+  std::string bodyFrame;
   double density{}, level{}, areaX{}, areaY{}, length{}, timeout{};
   std::vector<Thruster> motors;
   std::vector<Coefficient> table;
   gz::transport::Node node;
-  gz::transport::Node::Publisher telemetry;
+  gz::transport::Node::Publisher telemetry, wrenchTelemetry;
   std::chrono::steady_clock::duration lastTelemetry{};  // simulation time
   // Guards the command state below, which the transport callback thread
   // writes and the simulation thread reads.
@@ -87,8 +89,8 @@ public:
                  const std::shared_ptr<const sdf::Element> &s,
                  gz::sim::EntityComponentManager &ecm,
                  gz::sim::EventManager &) override {
-    link = gz::sim::Link(gz::sim::Model(entity).LinkByName(
-        ecm, s->Get<std::string>("link_name")));
+    bodyFrame = s->Get<std::string>("link_name");
+    link = gz::sim::Link(gz::sim::Model(entity).LinkByName(ecm, bodyFrame));
     if (!link.Valid(ecm))
       throw std::invalid_argument("Njord physics link missing");
     link.EnableVelocityChecks(ecm);
@@ -170,6 +172,7 @@ public:
       throw std::invalid_argument("wind table requires two angles");
     node.Subscribe("/njord/actuator_forces", &Physics::Command, this);
     telemetry = node.Advertise<gz::msgs::Float_V>("/njord/actuator_applied");
+    wrenchTelemetry = node.Advertise<gz::msgs::Wrench>("/njord/actuator_wrench");
   }
   // Transport callback: store the raw forces; limits are applied per step.
   // A command must hold exactly one finite value per thruster.
@@ -226,6 +229,7 @@ public:
           std::chrono::duration<double>(Clock::now() - received).count() <=
               timeout;
       std::vector<double> targets(motors.size(), 0.0);
+      V actuatorForce, actuatorMoment;
       for (unsigned i = 0; i < motors.size(); i++) {
         auto &t = motors[i];
         double target =
@@ -236,6 +240,8 @@ public:
             std::max(0., std::chrono::duration<double>(info.dt).count()),
             t.tau);
         // Thrust acts along the body-fixed axis at the thruster position.
+        actuatorForce += t.axis * t.force;
+        actuatorMoment += (t.position - com).Cross(t.axis * t.force);
         auto f = rot.RotateVector(t.axis * t.force);
         force += f;
         torque += rot.RotateVector(t.position - com).Cross(f);
@@ -255,6 +261,18 @@ public:
           msg.add_data(target);
         msg.add_data(live ? 1 : 0);
         telemetry.Publish(msg);
+        gz::msgs::Wrench wrench;
+        *wrench.mutable_header() = msg.header();
+        auto frame = wrench.mutable_header()->add_data();
+        frame->set_key("frame_id");
+        frame->add_value(bodyFrame);
+        wrench.mutable_force()->set_x(actuatorForce.X());
+        wrench.mutable_force()->set_y(actuatorForce.Y());
+        wrench.mutable_force()->set_z(actuatorForce.Z());
+        wrench.mutable_torque()->set_x(actuatorMoment.X());
+        wrench.mutable_torque()->set_y(actuatorMoment.Y());
+        wrench.mutable_torque()->set_z(actuatorMoment.Z());
+        wrenchTelemetry.Publish(wrench);
         lastTelemetry = stamp;
       }
     }

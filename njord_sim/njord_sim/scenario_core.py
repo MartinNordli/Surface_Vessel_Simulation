@@ -262,7 +262,8 @@ class RaceScorer:
             self.status = "geometric_overlap"
         elif self.status == "running":
             if self.next_gate == len(self.scenario["gates"]):
-                self.status = "completed"
+                self.status = ("completed" if self.gate_events[-1]["time_s"] < self.scenario["timeout_s"]
+                               else "simulation_timeout")
                 # Race time ends at the interpolated final gate crossing.
                 self.elapsed = self.gate_events[-1]["time_s"]
             elif self.elapsed >= self.scenario["timeout_s"]:

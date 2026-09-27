@@ -193,7 +193,11 @@ def summarize(runs):
             "fast_improves_median_without_failures": bool(paired) and len(safe_pairs) == len(paired)
             and statistics.median(fast) < statistics.median(conservative),
         }
+    sources = sorted({r.get("state_source", "unknown") for r in runs})
     return {"groups": summary, "comparisons": comparisons,
+            "state_source": sources[0] if len(sources) == 1 else "mixed",
+            "estimator_validation_passed": sources == ["estimate"] and bool(runs) and all(safe_run(r) for r in runs),
+            "truth_course_validation_passed": sources == ["truth"] and bool(runs) and all(safe_run(r) for r in runs),
             "all_runs_verified": bool(runs) and all(safe_run(r) for r in runs)}
 
 
@@ -203,6 +207,16 @@ def command_output(args, env=None):
     Raises subprocess.CalledProcessError on a nonzero exit.
     """
     return subprocess.check_output(args, cwd=ROOT, env=env, text=True, stderr=subprocess.STDOUT).strip()
+
+
+def default_compose_files(environment):
+    """Apply the same renderer overlay as scripts/njord for direct entrypoints."""
+    paths = [ROOT / 'compose.yaml']
+    if environment.get('NJORD_CPU') == '1':
+        paths.append(ROOT / 'compose.cpu.yaml')
+    elif 'microsoft' in Path('/proc/sys/kernel/osrelease').read_text().lower():
+        paths.append(ROOT / 'compose.wsl.yaml')
+    return ':'.join(map(str, paths))
 
 
 def pin_image(environment):
@@ -228,6 +242,9 @@ def pin_image(environment):
     inspection = json.loads(command_output(['docker', 'image', 'inspect', images.pop()], environment))[0]
     image_id = inspection['Id']
     labels = inspection.get('Config', {}).get('Labels') or {}
+    sys.path.insert(0, str(ROOT / "scripts"))
+    from build_metadata import verify_executable
+    verify_executable(labels, ROOT)
     environment['NJORD_IMAGE'] = image_id
     environment['IMAGE_ID'] = image_id
     # Re-resolve with the pinned ID to prove every service now uses it.
@@ -236,7 +253,8 @@ def pin_image(environment):
     return {'image_identity': image_id,
             'image_source_commit': labels.get('org.opencontainers.image.revision', 'unknown')
             if 'io.njord.source.digest' in labels else 'unknown',
-            'image_source_digest': labels.get('io.njord.source.digest', 'unknown')}
+            'image_source_digest': labels.get('io.njord.source.digest', 'unknown'),
+            'image_executable_digest': labels['io.njord.executable.digest']}
 
 
 def run_one(index, item, total, output, base_env, wall_timeout, domain_id, cancelled):
@@ -340,6 +358,7 @@ def run_one(index, item, total, output, base_env, wall_timeout, domain_id, cance
         # No usable evaluator output: record an explicitly unsafe placeholder.
         metrics = {"status": reason or "missing_metrics", "collision": None,
                    "contact_status": "unavailable", "geometric_overlap": None}
+    metrics.setdefault("state_source", base_env.get("STATE_SOURCE", "estimate"))
     metrics.update({"label": label, "environment": environment, "seed": seed, "profile": profile,
                     "runner_git_commit": base_env.get("RUNNER_GIT_COMMIT", "unknown"),
                     "image_identity": base_env.get("IMAGE_ID", "unknown"),
@@ -400,7 +419,7 @@ def run_benchmark(args, matrix, output, stamp, leased_domains):
     # exist_ok=False: never mix results into an earlier benchmark directory.
     output.mkdir(parents=True, exist_ok=False)
     base_env = os.environ.copy()
-    base_env.setdefault("COMPOSE_FILE", str(ROOT / "compose.yaml"))
+    base_env.setdefault("COMPOSE_FILE", default_compose_files(base_env))
     base_env["RUNNER_GIT_COMMIT"] = command_output(["git", "rev-parse", "HEAD"])
     image_metadata = pin_image(base_env)
     # Provenance: which code, image, matrix and domains produced these results.

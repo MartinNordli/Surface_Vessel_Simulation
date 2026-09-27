@@ -16,6 +16,8 @@ to 1, so a smoke run does not see or disturb a live simulator on domain 42.
 ROS logs go to a temporary directory. Exit code: unittest's (0 = all passed).
 """
 import math
+import json
+from unittest.mock import patch
 import os
 from pathlib import Path
 import sys
@@ -333,7 +335,15 @@ class GuardSteadyClockTests(RosCase):
 class MapperTransportTests(RosCase):
     """Mapper turns a timestamped lidar cloud into occupied, free and unknown cells."""
     def test_timestamped_tf_cloud_obstacle_and_map_heartbeat(self):
-        mapper = self.add(Mapper())
+        geometry = Path(_ros_logs.name) / 'synthetic_self_geometry.json'
+        geometry.write_text(json.dumps({'version': 1, 'frame': 'wamv/base_link', 'surfaces': [
+            {'vertices': [[-1.,-1.,-1.],[1.,-1.,-1.],[0.,1.,-1.]], 'faces': [[0,1,2]]}]}))
+        original = Mapper.declare_parameters
+        def declare(node, namespace, values, *args, **kwargs):
+            values = [(value[0], str(geometry), *value[2:]) if value[0] == 'self_geometry_path' else value for value in values]
+            return original(node, namespace, values, *args, **kwargs)
+        with patch.object(Mapper, 'declare_parameters', declare):
+            mapper = self.add(Mapper())
         publisher = self.driver.create_publisher(PointCloud2,
                     '/wamv/sensors/lidars/lidar_wamv_sensor/points', 1)
         grids = []

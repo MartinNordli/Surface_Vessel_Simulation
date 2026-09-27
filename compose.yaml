@@ -46,7 +46,7 @@ x-common: &common
     ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-42}
     # Course file inside the image; `./scripts/njord demo <course>` sets it.
     SCENARIO: ${SCENARIO:-/opt/njord/scenarios/reference.yaml}
-    SEED: ${SEED:-1}
+    SEED: ${SEED:-}
     # Gazebo transport isolation, the Gazebo counterpart of ROS_DOMAIN_ID.
     GZ_PARTITION: ${GZ_PARTITION:-njord-sim}
     # Named environment in the scenario (wind, waves, current), e.g. calm.
@@ -74,7 +74,7 @@ x-common: &common
     # Other configuration files (localization.yaml, the partial-override
     # base, node fallback defaults) are read from here first, falling back to
     # the copies built into the image (njord_sim/configuration.py:config_path).
-    NJORD_CONFIG_DIR: /config
+    NJORD_CONFIG_DIR: /workspace-config
     # Optional extra ROS parameter file for the reference autonomy nodes.
     ROS_PARAMS_FILE: ${ROS_PARAMS_FILE:-}
     # Where services write run artifacts inside the container (mounted below).
@@ -89,6 +89,7 @@ x-common: &common
     - ${OUTPUT_HOST:-./outputs/demo}:/outputs
     # Host configuration, read-only: njord_sim/config/, or a team directory
     # via CONFIG_HOST (then point VESSEL_CONFIG/ALGORITHMS_CONFIG into it).
+    - ./njord_sim/config:/workspace-config:ro
     - ${CONFIG_HOST:-./njord_sim/config}:/config:ro
   # Time for a clean shutdown after SIGTERM before Docker kills the service.
   stop_grace_period: 10s

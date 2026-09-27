@@ -118,6 +118,19 @@ class ScenarioTests(unittest.TestCase):
         self.assertIs(scorer.metrics()["collision"], True)
         self.assertIsNone(scorer.metrics()["min_clearance_m"])
 
+    def test_final_gate_deadline_uses_interpolated_passage(self):
+        import copy
+        for crossing, expected in ((9.9, 'completed'), (10., 'simulation_timeout'), (10.1, 'simulation_timeout')):
+            scenario = copy.deepcopy(self.scenario)
+            scenario['gates'] = [dict(name='final', red=[10., 7.], green=[10., -7.], radius_m=.5)]
+            scenario['obstacles'] = []
+            scenario['timeout_s'] = 10.
+            scorer = RaceScorer(scenario)
+            scorer.update(0., 0., 0., 0.)
+            scorer.update(crossing * 2, 20., 0., 0.)
+            self.assertEqual(scorer.status, expected)
+            self.assertAlmostEqual(scorer.elapsed, crossing)
+
     def test_clock_reset_duplicate_and_timeout(self):
         scorer = RaceScorer(self.scenario)
         scorer.update(10, 0, 0, 0)
@@ -188,7 +201,7 @@ class ScenarioTests(unittest.TestCase):
                 return json.dumps({"services": {name: {"image": env.get("NJORD_IMAGE", "njord-sim:local")}
                                                 for name in ("simulator", "autonomy", "evaluator")}})
             if command[:3] == ["docker", "image", "inspect"]:
-                return json.dumps([{"Id": "sha256:" + "a"*64, "Config": {"Labels": {}}}])
+                return json.dumps([{"Id": "sha256:" + "a"*64, "Config": {"Labels": {"io.njord.executable.digest": "fixture-digest", "io.njord.source.digest": "a"*64}}}])
             return "test-identity"
 
         with tempfile.TemporaryDirectory() as temporary:
@@ -196,7 +209,7 @@ class ScenarioTests(unittest.TestCase):
             argv = ["benchmark.py", "--jobs", "2", "--seeds", "1", "2",
                     "--environments", "calm", "--output-dir", str(output)]
             with patch.object(sys, "argv", argv), patch.object(benchmark, "run_one", fake_run), \
-                    patch.object(benchmark, "command_output", fake_output), redirect_stdout(io.StringIO()):
+                    patch.object(benchmark, "command_output", fake_output), patch("build_metadata.executable_digest", return_value="fixture-digest"), redirect_stdout(io.StringIO()):
                 self.assertEqual(benchmark.main(), 0)
             report = json.loads((output / "summary.json").read_text())
             self.assertEqual(len(report["runs"]), 4)

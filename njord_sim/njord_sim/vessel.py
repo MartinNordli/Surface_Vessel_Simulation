@@ -73,6 +73,40 @@ def set_text(parent, path, value):
     parent.text = str(value)
 
 
+def remove_sensor_noise(sensor):
+    """Remove all upstream noise/bias distributions; adapter owns IMU/GPS."""
+    for parent in sensor.iter():
+        for child in list(parent):
+            if child.tag == 'noise':
+                parent.remove(child)
+
+
+def configure_thrusters(model, limit):
+    """Fail closed on upstream contract drift and set symmetric force limits."""
+    plugins = [p for p in model.findall('plugin')
+               if p.get('name') == 'gz::sim::systems::Thruster']
+    expected = {'thrusters/left/thrust': 'wamv/left_engine_propeller_joint',
+                'thrusters/right/thrust': 'wamv/right_engine_propeller_joint'}
+    if len(plugins) != len(expected):
+        raise ValueError('WAM-V requires exactly two upstream Thruster plugins')
+    joints = {j.get('name'): j for j in model.findall('joint')}
+    links = {l.get('name') for l in model.findall('link')}
+    seen = set()
+    for plugin in plugins:
+        topic, joint = plugin.findtext('topic'), plugin.findtext('joint_name')
+        if (topic in seen or expected.get(topic) != joint or joint not in joints
+                or joints[joint].findtext('child') not in links
+                or plugin.get('filename') != 'gz-sim-thruster-system'
+                or plugin.findtext('namespace') != 'wamv'
+                or plugin.findtext('use_angvel_cmd', 'false').lower() not in ('false', '0')
+                or plugin.findtext('velocity_control') not in ('true', '1')):
+            raise ValueError(f'upstream WAM-V force thruster contract changed: {topic}, {joint}')
+        seen.add(topic)
+        set_text(plugin, 'use_angvel_cmd', 'false')
+        set_text(plugin, 'max_thrust_cmd', limit)
+        set_text(plugin, 'min_thrust_cmd', -limit)
+
+
 def generate(output_dir, config_file=None, resolved_config=None):
     """Write the WAM-V model files into ``output_dir``; return (urdf, settings).
 
@@ -101,6 +135,7 @@ def generate(output_dir, config_file=None, resolved_config=None):
     root = ET.fromstring(raw_sdf)
     model = root.find('model')
     model.set('name', 'wamv')
+    configure_thrusters(model, config['max_thrust_n'])
     bridges = []
 
     def bridge(gz_topic, ros_topic, ros_type, gz_type, direction='GZ_TO_ROS'):
@@ -139,12 +174,14 @@ def generate(output_dir, config_file=None, resolved_config=None):
             bridge(prefix + '/scan', prefix + '/scan', 'sensor_msgs/msg/LaserScan', 'gz.msgs.LaserScan')
             bridge(prefix + '/scan/points', prefix + '/points', 'sensor_msgs/msg/PointCloud2', 'gz.msgs.PointCloudPacked')
         elif kind == 'imu':
+            remove_sensor_noise(sensor)
             topic = '/wamv/sensors/imu/imu/data_raw'
             set_text(sensor, 'topic', topic)
             set_text(sensor, 'gz_frame_id', 'wamv/imu_wamv_link')
             set_text(sensor, 'update_rate', config['imu_rate'])
             bridge(topic, topic, 'sensor_msgs/msg/Imu', 'gz.msgs.IMU')
         elif kind == 'navsat':
+            remove_sensor_noise(sensor)
             topic = '/wamv/sensors/gps/gps/fix_raw'
             set_text(sensor, 'topic', topic)
             set_text(sensor, 'gz_frame_id', 'wamv/gps_wamv_link')
@@ -183,6 +220,8 @@ def generate(output_dir, config_file=None, resolved_config=None):
             model.remove(plugin)
     ET.indent(root)
     (out / 'wamv.sdf').write_text(ET.tostring(root, encoding='unicode'))
+    from .visual_geometry import export_visual_geometry
+    export_visual_geometry(model, out)
     (out / 'bridges.yaml').write_text(yaml.safe_dump(bridges))
     (out / 'vessel_config.yaml').write_text(yaml.safe_dump(config, sort_keys=True))
     return urdf, config

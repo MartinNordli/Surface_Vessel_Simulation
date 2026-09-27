@@ -327,6 +327,7 @@ def generate(output_dir, resolved_configuration):
         txt(odom, k, v)
     bridge("/wamv/ground_truth/odometry", "nav_msgs/msg/Odometry", "gz.msgs.Odometry")
     bridge("/clock", "rosgraph_msgs/msg/Clock", "gz.msgs.Clock")
+    bridge("/njord/actuator_wrench", "geometry_msgs/msg/WrenchStamped", "gz.msgs.Wrench")
     bridge("/njord/contacts", "ros_gz_interfaces/msg/Contacts", "gz.msgs.Contacts")
     # The only ROS -> Gazebo path: one thrust force in newtons per thruster,
     # in vessel-file order, never a velocity command.
@@ -341,6 +342,8 @@ def generate(output_dir, resolved_configuration):
     urdf_text = ET.tostring(urdf, encoding="unicode")
     (out / "wamv.urdf").write_text(urdf_text)
     (out / "wamv.sdf").write_text(ET.tostring(root, encoding="unicode"))
+    from .visual_geometry import export_visual_geometry
+    export_visual_geometry(model, out)
     (out / "bridges.yaml").write_text(yaml.safe_dump(bridges))
     (out / "vessel_config.yaml").write_text(yaml.safe_dump(config))
     return urdf_text, config

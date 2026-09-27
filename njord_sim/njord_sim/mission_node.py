@@ -59,6 +59,7 @@ from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from vision_msgs.msg import Detection3DArray
 
+from njord_sim.defaults import node_defaults
 from njord_sim.geometry import stamp_seconds, yaw_from_quaternion
 from njord_sim.perception_core import choose_gate
 
@@ -74,8 +75,7 @@ class Mission(Node):
             ("map_frame", "map"), ("initial_heading_rad", 0.0), ("expected_gates", 3),
             ("min_gate_width_m", 8.0), ("max_gate_width_m", 30.0),
             ("approach_m", 5.0), ("exit_m", 6.0), ("arrival_tolerance_m", 2.0),
-            ("detection_max_age_s", 2.0), ("camera_max_age_s", 0.5),
-            ("odometry_max_age_s", 0.5), ("crossing_memory_s", 45.0),
+            ("detection_max_age_s", 2.0), *node_defaults("mission"), ("crossing_memory_s", 45.0),
             ("crossing_entry_m", 15.0),
         ])
         self.p = lambda name: self.get_parameter(name).value

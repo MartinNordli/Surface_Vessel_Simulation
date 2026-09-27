@@ -31,7 +31,7 @@ from launch.logging import get_logger
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
-from njord_sim.configuration import config_path
+from njord_sim.configuration import config_path, validate_reference_timing
 from njord_sim.constants import WORLD_ORIGIN_WGS84
 
 COMPONENTS = ('autonomy', 'controller', 'perception', 'mapping')
@@ -52,6 +52,10 @@ def launch(context):
     params_file = p('params_file')
     if params_file and not Path(params_file).is_file():
         raise ValueError(f'params_file does not exist: {params_file}')
+    if public.get('_timing'):
+        validate_reference_timing(public, public['_timing']['periods'],
+                                  public['_timing']['navigation'],
+                                  {name: p(name) for name in COMPONENTS})
     common = {'use_sim_time': True}  # always last: nodes must run on /clock
     overrides = [params_file] if params_file else []
     actions = []
@@ -66,7 +70,7 @@ def launch(context):
 
     # Navigation state (always runs, also with a fully external autonomy stack).
     actions.append(node('sensor_adapter', {'seed': int(p('seed'))}))
-    localization = str(config_path('localization.yaml'))
+    localization = context.launch_configurations.get('localization_config', '') or str(config_path('localization.yaml'))
     if p('state_source') == 'truth':
         # Explicit truth mode: ground truth replaces the EKF estimate.
         actions.append(node('truth_relay'))
@@ -111,6 +115,7 @@ def generate_launch_description():
                               description='estimate (EKFs) or truth (simulator ground truth on /njord/odometry)'),
         DeclareLaunchArgument('params_file', default_value=env('ROS_PARAMS_FILE', '')),
         DeclareLaunchArgument('public_parameters', default_value=''),
+        DeclareLaunchArgument('localization_config', default_value=''),
         DeclareLaunchArgument('vessel_config', default_value='',
                               description="The run's resolved vessel_config.yaml (provenance only)"),
         OpaqueFunction(function=launch)])

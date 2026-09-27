@@ -23,8 +23,9 @@ Parameters:
     [m]; ``inflation_m`` [m] (default from the vessel hull and
     algorithms.yaml); ``observation_ttl_s`` [s]; ``min_height_m`` and
     ``max_height_m`` [m, map z] for obstacle hits; ``max_range_m`` [m];
-    ``self_length_m``/``self_width_m`` [m], the body-frame box around
-    ``base_frame`` whose returns are discarded as the vessel itself;
+    ``self_geometry_path``: required visible surface triangle artifact in
+    ``base_frame``; ``self_filter_margin_m`` plus three lidar noise standard
+    deviations determines the surface-distance rejection tolerance;
     ``input_max_age_s`` [s]; ``publish_hz`` [Hz].
 
 Timing and failure behaviour:
@@ -46,9 +47,10 @@ from sensor_msgs.msg import LaserScan, PointCloud2
 from sensor_msgs_py import point_cloud2
 from tf2_ros import Buffer, TransformException, TransformListener
 
-from njord_sim.geometry import stamp_seconds, transform_from_ros, yaw_from_quaternion
+from njord_sim.geometry import stamp_seconds, transform_from_ros
 from njord_sim.defaults import node_defaults
 from njord_sim.mapping_core import OccupancyMapper
+from njord_sim.self_geometry import SelfGeometry
 
 
 class Mapper(Node):
@@ -64,10 +66,14 @@ class Mapper(Node):
             ("origin_x", -40.0), ("origin_y", -40.0),
             *node_defaults("mapper"),  # inflation_m: hull radius + algorithms.yaml margin
             ("observation_ttl_s", 5.0), ("min_height_m", 0.2), ("max_height_m", 5.0),
-            ("max_range_m", 80.0), ("self_length_m", 5.0), ("self_width_m", 2.8),
-            ("input_max_age_s", 0.5), ("publish_hz", 5.0),
+            ("self_geometry_path", ""),
+            ("publish_hz", 5.0),
         ])
         self.p = lambda name: self.get_parameter(name).value
+        self.self_geometry = SelfGeometry.load_frames(
+            self.p("self_geometry_path"),
+            self.p("self_filter_margin_m") + 3*self.p("lidar_noise_stddev_m"),
+            self.p("base_frame"))
         # Kept so the grid can be rebuilt identically after a simulation reset.
         self.config = dict(resolution=self.p("resolution"), size_m=self.p("size_m"),
                            origin=(self.p("origin_x"), self.p("origin_y")),
@@ -112,8 +118,7 @@ class Mapper(Node):
         Filtering, in order:
 
         * keep finite points with range from the lidar in (0.1, max_range_m];
-        * drop self returns: points inside the ``self_length_m`` x
-          ``self_width_m`` box around ``base_frame`` (body x forward, y left);
+        * drop self returns near actual visible vessel surfaces in ``base_frame``;
         * drop points higher than ``max_height_m`` in map z;
         * a remaining point is a hit if it is at least ``min_height_m`` high
           in map z and is a real return (range below ``max_range_m`` - 1 cm).
@@ -128,7 +133,8 @@ class Mapper(Node):
             # Both transforms at the cloud acquisition time, not "now".
             when = Time.from_msg(msg.header.stamp)
             to_map = self.tf.lookup_transform(self.p("map_frame"), msg.header.frame_id, when)
-            to_base = self.tf.lookup_transform(self.p("base_frame"), msg.header.frame_id, when)
+            to_surfaces = {frame: self.tf.lookup_transform(frame, msg.header.frame_id, when)
+                           for frame in self.self_geometry}
         except TransformException:
             return
         raw = point_cloud2.read_points_numpy(msg, field_names=("x", "y", "z"), skip_nans=True)
@@ -140,10 +146,11 @@ class Mapper(Node):
         raw = raw[np.isfinite(raw).all(axis=1) & (ranges > 0.1) & (ranges <= self.p("max_range_m"))]
         if not len(raw):
             return
-        body = transform_from_ros(raw, to_base)
         # Reject self returns, without declaring the surrounding footprint free.
-        outside_self = ((np.abs(body[:, 0]) > self.p("self_length_m")/2)
-                        | (np.abs(body[:, 1]) > self.p("self_width_m")/2))
+        outside_self = np.ones(len(raw), dtype=bool)
+        for frame, geometry in self.self_geometry.items():
+            body = transform_from_ros(raw, to_surfaces[frame])
+            outside_self &= ~geometry.contains_returns(body)
         filtered = raw[outside_self]
         world = transform_from_ros(filtered, to_map)
         # Points at (within 1 cm of) max range are treated as "no return".
@@ -177,8 +184,10 @@ class Mapper(Node):
         if not msg.header.frame_id or not 0 <= now-stamp <= self.p("input_max_age_s"):
             return
         try:
-            transform = self.tf.lookup_transform(self.p("map_frame"), msg.header.frame_id,
-                                                 Time.from_msg(msg.header.stamp))
+            when = Time.from_msg(msg.header.stamp)
+            transform = self.tf.lookup_transform(self.p("map_frame"), msg.header.frame_id, when)
+            for frame in self.self_geometry:
+                self.tf.lookup_transform(frame, msg.header.frame_id, when)
         except TransformException:
             return
         ranges = np.asarray(msg.ranges, dtype=float)

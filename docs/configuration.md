@@ -31,8 +31,9 @@ once per project.
 `njord_sim/config/` on the host is mounted read-only at `/config` in every
 container, and the defaults point there, so edits apply to the next run without
 rebuilding. Code that needs a configuration file (the partial-override base,
-node fallback defaults, `localization.yaml`) looks in `$NJORD_CONFIG_DIR`
-(`/config`) first and falls back to the copy built into the image. Scenarios,
+node fallback defaults, `localization.yaml`) requires the mounted workspace
+defaults at `/workspace-config`; after startup it reads their frozen run copies.
+Missing mounted files fail explicitly. Scenarios,
 `constants.py` and `wamv_sensors.xacro` are part of the image: rebuild after
 changing them.
 
@@ -43,7 +44,7 @@ changing them.
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `SCENARIO` | `/opt/njord/scenarios/reference.yaml` | Course file; a course name on the command line overrides it |
-| `SEED` | `1` | Positive integer; gate jitter, wind and sensor noise |
+| `SEED` | scenario seed (otherwise `1`) | Positive integer; gate jitter, wind and sensor noise |
 | `ENVIRONMENT` | `calm` | Preset name from the scenario's `environments` |
 | `PROFILE` | `fast` | Speed profile name from `algorithms.yaml` |
 | `VESSEL_CONFIG` | `/config/vessels/wamv.yaml` | Vessel file or partial WAM-V override |
@@ -84,7 +85,7 @@ error, never a no-op.
 ### WAM-V (`vessels/wamv.yaml`)
 
 ```yaml
-schema_version: 1
+schema_version: 2
 profile: wamv_reference
 settings:
   camera_width: 640
@@ -150,7 +151,7 @@ Relative-water damping and the added-mass Coriolis correction rely on the
 verified Gazebo release pair that the Docker build pins.
 
 **Wind.** Ordered unique angles in [0, 360) with signed `cx`, `cy`, `cn`.
-Angles describe the relative airflow velocity toward the body; interpolation
+Angles describe the direction the relative air moves toward in body axes; interpolation
 wraps periodically. Loads use dynamic pressure, the two reference areas and
 the yaw reference length, with air density fixed at 1.225 kg/m³.
 
@@ -184,14 +185,14 @@ thrusters:                       # list order = thruster index everywhere
   steady wall time; the configured response then decays the force in
   simulation time. Body inertia and drift remain.
 
-Njord vessel files are `schema_version: 2`. A schema 1 file, which gave each
+Njord vessel files are `schema_version: 3`. A schema 1 file, which gave each
 thruster an `axis` unit vector instead of `yaw_deg`, is converted when loaded;
 names and order are kept.
 
 **Limits of the Njord model.** Flat water and constant wind only: waves or
 wind variance in the selected environment are rejected. The reference autonomy
-is tuned for the WAM-V, and the mapper's self-filter (5 × 2.8 m) is still
-WAM-V sized.
+is tuned for the WAM-V; changing the vessel does not constitute controller
+tuning or physical calibration. Self filtering follows the actual visual surfaces.
 
 ## Scenario files (`scenarios/<course>.yaml`)
 
@@ -261,3 +262,60 @@ evaluator and recorder record the same digest.
 The run directory is not an access-control boundary: a team process with
 filesystem access can read evaluation files. Use separate mounts if that
 matters.
+
+
+## Parameter fidelity contracts
+
+WAM-V schema 2 and Njord schema 3 explicitly own IMU rate noise
+(`imu_angular_velocity_noise_rad_s`, assumed 0.009 rad/s) and acceleration
+noise (`imu_linear_acceleration_noise_m_s2`, assumed 0.021 m/s²).
+`convert_sensor_schema` upgrades WAM-V 1 or Njord 2 by adding these assumed
+values; Njord 1 first converts its thruster axes to yaw angles. Existing files
+are not overwritten. Neither conversion constitutes calibration. GPS,
+orientation, gyro and acceleration noise are applied only in the sensor
+adapter, with independent seeded streams and variance-derived covariance.
+Raw Gazebo IMU/GPS noise and bias are removed; camera and lidar noise remain
+in Gazebo. Acquisition timestamps and frames are retained.
+
+Algorithms schema 2 adds `mapping.self_filter_margin_m` (0.02 m) and
+`navigation`: `stale_after_s` (0.5 s), `processing_margin_s` (0.1 s),
+`clock_stall_after_s` (0.5 wall seconds) and `sync_slop_s` (0.12 s).
+`convert_algorithm_schema` adds these explicit defaults to schema 1.
+Reference startup requires freshness budgets of two sensor periods plus the
+processing margin. Sensor periods round up to a physics tick, recorded in
+`resolved_configuration.json`; rates above the physics update rate fail.
+These reference constraints do not apply to a simulator-only run. Clock
+rollback clears freshness history; duplicate stamps never renew a measurement.
+Command expiry still uses monotonic wall time.
+
+The mapper uses the selected lidar range and message range limits. Its
+`self_geometry.json` contains actual generated visual surfaces, with each
+component's frame, scale and pose preserved. Meshes are loaded with Gazebo's
+mesh loader, retaining spaces between pontoons. A point within
+`self_filter_margin_m + 3 * lidar_noise_stddev` of a surface is discarded
+before ray clearing. This is a narrow blind band: an external object inside
+it cannot be distinguished from a self return. Missing geometry prevents
+mapper startup; missing acquisition-time TF discards the observation.
+Collision geometry remains authoritative for contacts and navigation margin;
+changing visual geometry never changes mass, inertia or damping automatically.
+
+The WAM-V generator verifies both expected force-mode plugins and joints,
+and sets their Gazebo command bounds to ±`max_thrust_n` (default 500 N), as
+well as setting the watchdog limit. Njord retains individual forward/reverse
+limits, yaw and actuator response times. Wind direction specifies the
+direction the air **moves toward**, measured counterclockwise from ENU east
+(or body forward in the coefficient table).
+
+Managed runs mount workspace defaults at `/workspace-config` and selected
+configuration at `/config`, both read-only. A configured mount missing a file
+fails; no image YAML fallback is allowed. Before readiness, the simulator
+freezes default YAML under `frozen_config/` and selected inputs, localization
+and optional ROS overrides under `source_config/`. Nodes read the snapshots.
+The manifest hashes these inputs, generated visual geometry and mesh resources.
+
+Full image verification (`check-image`, `test`, CI) uses all build inputs.
+Runtime verification uses an additional digest excluding only regular YAML
+under `njord_sim/config`; code, Xacro, mesh and built-in scenario changes
+require a rebuild. Missing labels or mismatches fail with no validation bypass.
+The wrapper and direct benchmark/campaign entrypoints pin an immutable image
+ID before checking and starting the run.

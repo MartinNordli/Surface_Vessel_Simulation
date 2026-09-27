@@ -167,6 +167,19 @@ class EvaluatorCallbackTests(unittest.TestCase):
         self.assertEqual(self.node.exit_code, 2)
         self.assertEqual(json.loads(self.result.read_text())["status"], "contact_monitor_timeout")
 
+    def test_clock_rollback_ends_scoring_and_replayed_odom_is_ignored(self):
+        previous = self.node.latest_ground_truth
+        truth = Odometry()
+        truth.header.stamp = Time(sec=99)
+        truth.pose.pose.orientation.w = 1.
+        self.node.on_odom(truth)
+        self.assertEqual(self.node.latest_ground_truth, previous)
+        self.contact(100.)
+        self.node.check_timeout()
+        self.clock.seconds = 90.
+        self.node.check_timeout()
+        self.assertEqual(json.loads(self.result.read_text())["status"], "clock_reset")
+
     def test_path_messages_and_computations_are_counted_separately(self):
         for _ in range(5):
             self.node.on_path(None)

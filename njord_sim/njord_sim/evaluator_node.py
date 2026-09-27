@@ -76,6 +76,7 @@ class Evaluator(Node):
         self.last_odom_wall = None
         self.output = FilePath(p("output"))
         self.done = False
+        self.last_clock_s = None
         self.exit_code = 2  # nonzero unless the race completes
         self.path_messages = 0
         self.latencies = []
@@ -172,8 +173,9 @@ class Evaluator(Node):
         stamp = message.header.stamp.sec + message.header.stamp.nanosec * 1e-9
         # Only an advancing stamp proves the simulation is alive; a repeated
         # stamp (paused or frozen simulator) must not reset the watchdog.
-        if self.latest_ground_truth is None or stamp > self.latest_ground_truth[0]:
-            self.last_odom_wall = wall
+        if self.latest_ground_truth is not None and stamp <= self.latest_ground_truth[0]:
+            return  # Reordered/replayed transport samples cannot reset scoring or liveness.
+        self.last_odom_wall = wall
         q = message.pose.pose.orientation
         # Yaw (rotation about world z, ENU) from the orientation quaternion.
         yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
@@ -198,6 +200,12 @@ class Evaluator(Node):
         if self.done:
             return
         now = time.monotonic()
+        now_sim = self.get_clock().now().nanoseconds * 1e-9
+        if self.last_clock_s is not None and now_sim < self.last_clock_s:
+            self.scorer.status = "clock_reset"
+            self.finish()
+            return
+        self.last_clock_s = now_sim
         if not self.started and self.ready():
             self.started = True
             self.first_odom_wall = now
@@ -234,6 +242,9 @@ class Evaluator(Node):
             "profile": self.get_parameter("profile").value,
             # 'truth' means autonomy navigated on ground truth, not on sensors.
             "state_source": self.get_parameter("state_source").value,
+            "estimator_accuracy_validated": False,
+            "evidence_scope": ("truth_navigation_scoring" if self.get_parameter("state_source").value == "truth"
+                               else "sensor_navigation_scoring"),
             "seed": self.scenario["seed"], "environment": self.scenario["environment_name"],
             "scenario": self.scenario, "scenario_sha256": scenario_digest(self.scenario),
             "git_commit": self.get_parameter("git_commit").value,

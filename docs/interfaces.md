@@ -122,3 +122,13 @@ generated file) and, last and atomically, `run_ready.json` with the run ID, gate
 count and manifest digest. Autonomy, evaluator and recorder verify the public
 artifacts against the manifest and record its digest. The full configuration
 and scenario files are evaluation data, not autonomy inputs.
+
+
+The Njord physics plugin additionally publishes `/njord/actuator_wrench`
+(`geometry_msgs/msg/WrenchStamped`, bridged from `gz.msgs.Wrench`). It is
+**evaluation-only**: actual summed actuator force (N) and moment (N m) about
+the configured center of mass, in body-parallel axes, stamped at the physics
+step. It must not feed reference autonomy. The existing command topics and
+newton units are unchanged. Sensor adapter outputs preserve raw acquisition
+stamps and frames; IMU covariance follows the configured orientation, gyro
+and accelerometer variances.

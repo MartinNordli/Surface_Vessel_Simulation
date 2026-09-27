@@ -26,9 +26,9 @@ right Compose overlay (including WSL) and stamps run provenance.
 
 `NJORD_CPU=1` adds `compose.cpu.yaml` (Mesa software rendering, no GPU devices) for
 hosts without a usable GPU; CI uses it. It shows that sensors work, not rendering
-performance. Image commands warn when the image's source digest differs from the
-checkout: pull again after changing commits, or build after local edits to files
-copied into the image.
+performance. Image commands reject mismatched executable digests; `check-image` and `test`
+also require full source agreement. YAML under `njord_sim/config` is editable
+without rebuilding for runs, but not for the full container test.
 
 Each `demo`/`gui`/`lab` run writes to a fresh `OUTPUT_HOST` under `outputs/`; the
 wrapper refuses to reuse a directory that already holds a finished run.

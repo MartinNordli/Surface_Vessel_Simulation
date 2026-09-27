@@ -74,6 +74,8 @@ class CommandGuard(Node):
         # Latest input per key (thruster index, 'planner', 'mission',
         # 'navigation'): (steady receipt time in s, value or None if invalid).
         self.values = {}
+        self.status_stamps = {}
+        self.last_sim_time = None
         self.race_active = False
         self.race_received = 0.0  # steady receipt time (s) of the race heartbeat
         self.create_subscription(Bool, '/njord/race_active', self.on_race,
@@ -100,14 +102,30 @@ class CommandGuard(Node):
     def status(self, key, msg):
         """Record whether a health heartbeat is OK and its source stamp is current."""
         # Age of the status content in /clock simulation time (s).
-        age = (self.get_clock().now().nanoseconds * 1e-9 -
-               (msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9))
+        now = self.observe_clock()
+        stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        age = now - stamp
         expected = 'njord/planner' if key == 'planner' else key
         matches = [s for s in msg.status if s.name == expected]
         valid = len(matches) == 1 and matches[0].level == DiagnosticStatus.OK
         # Allow 0.1 s of clock skew into the future, and at most 1 s of age.
         valid = valid and -0.1 <= age <= 1.0
+        if stamp <= self.status_stamps.get(key, -math.inf):
+            if not valid:
+                self.values[key] = (time.monotonic(), None)
+            return
+        self.status_stamps[key] = stamp
         self.values[key] = (time.monotonic(), True if valid else None)
+
+    def observe_clock(self):
+        """Clear every previous-run input when simulation time moves backward."""
+        now = self.get_clock().now().nanoseconds * 1e-9
+        if self.last_sim_time is not None and now < self.last_sim_time:
+            self.values.clear()
+            self.status_stamps.clear()
+            self.race_active = False
+        self.last_sim_time = now
+        return now
 
     def forces(self, valid):
         """Forces message: clamped commands in N if ``valid``, otherwise zeros."""
@@ -124,6 +142,7 @@ class CommandGuard(Node):
 
     def step(self):
         """Publish clamped commands if every required input is valid, else zero."""
+        self.observe_clock()
         keys = [*range(len(self.topics)), 'planner', 'navigation']
         if self.get_parameter('require_mission').value:
             keys.append('mission')

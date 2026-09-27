@@ -89,6 +89,7 @@ class Guidance(Node):
         # state: ((x, y) m, yaw rad, surge m/s, yaw rate rad/s) in map frame.
         self.state = self.geometry = self.data = None
         self.path_stamp = self.odom_stamp = self.grid_stamp = self.status_stamp = None
+        self.last_sim_time = None
         self.status_valid = False
         self.create_subscription(Path, self.p('path_topic'), self.on_path, 1)
         self.create_subscription(Odometry, self.p('odom_topic'), self.on_odom, qos_profile_sensor_data)
@@ -153,6 +154,12 @@ class Guidance(Node):
     def step(self):
         """One control cycle: validate inputs, pick a target, publish thrust."""
         now = self.get_clock().now().nanoseconds * 1e-9  # /clock simulation time, s
+        if self.last_sim_time is not None and now < self.last_sim_time:
+            self.path = []
+            self.state = self.geometry = self.data = None
+            self.path_stamp = self.odom_stamp = self.grid_stamp = self.status_stamp = None
+            self.status_valid = False
+        self.last_sim_time = now
         # Every input must be present and fresh by its own acquisition stamp.
         if (not self.path or self.state is None or self.geometry is None or not self.status_valid
                 or not all(fresh(now, stamp, self.p('stale_after_s')) for stamp in

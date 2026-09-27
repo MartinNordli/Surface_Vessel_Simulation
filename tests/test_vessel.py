@@ -125,6 +125,39 @@ class VesselGenerationTests(unittest.TestCase):
         self.assertEqual(commands[0]["gz_type_name"], "gz.msgs.Float_V")
         self.assertFalse(any(bridge["ros_topic_name"] in ("/tf", "/tf_static") for bridge in self.bridges))
 
+    def test_generated_gazebo_force_limits_and_raw_imu(self):
+        from njord_sim.vessel import generate
+        for limit in (125., 500., 3000.):
+            with self.subTest(limit=limit), tempfile.TemporaryDirectory() as directory:
+                generate(directory, resolved_config=dict(self.config, max_thrust_n=limit))
+                model = ET.parse(Path(directory)/'wamv.sdf').find('model')
+                thrusters = [p for p in model.findall('plugin') if p.get('name') == 'gz::sim::systems::Thruster']
+                self.assertEqual(len(thrusters), 2)
+                for plugin in thrusters:
+                    self.assertEqual(float(plugin.findtext('max_thrust_cmd')), limit)
+                    self.assertEqual(float(plugin.findtext('min_thrust_cmd')), -limit)
+                    self.assertEqual(plugin.findtext('use_angvel_cmd'), 'false')
+                watchdog = model.find("plugin[@name='njord::ActuatorWatchdog']")
+                self.assertEqual(float(watchdog.findtext('max_force_n')), limit)
+                for sensor in model.findall('.//sensor'):
+                    if sensor.get('type') == 'imu':
+                        self.assertFalse(sensor.findall('.//noise'))
+
+    def test_actual_visual_resource_artifact(self):
+        import hashlib
+        import json
+        from njord_sim.self_geometry import SelfGeometry
+        artifact = json.loads((self.out/'self_geometry.json').read_text())
+        self.assertEqual(artifact['version'], 1)
+        self.assertEqual(len(artifact['surfaces']), len(self.model.findall('.//visual')))
+        self.assertTrue(artifact['resources'])
+        for source, digest in artifact['resources'].items():
+            self.assertEqual(hashlib.sha256(Path(source).read_bytes()).hexdigest(), digest)
+        groups = SelfGeometry.load_frames(self.out/'self_geometry.json', .05)
+        self.assertIn('wamv/base_link', groups)
+        self.assertIn('wamv/left_propeller_link', groups)
+        self.assertIn('wamv/right_propeller_link', groups)
+
     def test_custom_configuration_changes_generated_sensors_and_snapshot(self):
         import yaml
         from njord_sim.vessel import generate

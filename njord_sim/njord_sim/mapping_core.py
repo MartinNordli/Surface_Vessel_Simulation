@@ -96,7 +96,7 @@ class OccupancyMapper:
     def update(self, sensor_origin, endpoints, occupied, stamp, stream="cloud"):
         """Integrate already filtered world-space rays; occupied=False clears to endpoint.
 
-        Reject regressions within each input stream, not between scan and cloud.
+        Reject duplicate stamps and regressions within each input stream, not between scan and cloud.
         Each cell retains the acquisition time of its free and occupied evidence;
         hits win over free evidence up to 0.3 seconds newer, independent of arrival
         order. A clock reset explicitly resets this instance in the adapter.
@@ -120,7 +120,7 @@ class OccupancyMapper:
         call, a cell that is a hit for any ray is not also counted as free.
         """
         stamp = float(stamp)
-        if not math.isfinite(stamp) or stamp < self.stream_stamps.get(stream, -math.inf):
+        if not math.isfinite(stamp) or stamp <= self.stream_stamps.get(stream, -math.inf):
             return False
         start = self.cell(sensor_origin)
         if not self.inside(start):

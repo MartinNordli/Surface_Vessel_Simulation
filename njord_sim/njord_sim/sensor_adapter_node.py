@@ -16,7 +16,7 @@ Subscribes (best-effort sensor QoS):
 
 Publishes:
     ``/wamv/sensors/imu/imu/data`` (sensor_msgs/Imu): orientation with added
-        noise; rates and accelerations unchanged; diagonal covariances.
+        noise in attitude, angular rate and acceleration; diagonal covariances.
     ``/wamv/sensors/gps/gps/fix`` (sensor_msgs/NavSatFix): position with
         added metric Gaussian noise and a known diagonal covariance.
     ``/njord/navigation_status`` (diagnostic_msgs/DiagnosticArray): status
@@ -36,7 +36,6 @@ quaternion) are dropped, which lets the status go stale and turn ERROR.
 """
 import copy
 import math
-import random
 import time
 import rclpy
 from rclpy.node import Node
@@ -47,6 +46,8 @@ from nav_msgs.msg import Odometry
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus
 
 from njord_sim.defaults import node_defaults
+from njord_sim.geometry import valid_odometry
+from njord_sim.sensor_noise_core import SensorNoise, covariance, noisy_orientation, noisy_fix
 
 
 class SensorAdapter(Node):
@@ -57,12 +58,10 @@ class SensorAdapter(Node):
         # Noise levels come from the vessel file (see defaults.py); the launch
         # always sets the seed from the scenario.
         self.declare_parameters('', [('seed', 0), *node_defaults('sensor_adapter')])
-        # Separate, reproducible random streams for IMU and GPS, so the GPS
-        # noise sequence does not depend on how many IMU messages arrived.
-        self.rng = random.Random(self.get_parameter('seed').value)
-        self.gps_rng = random.Random(self.get_parameter('seed').value + 10000)
-        # name -> (steady receipt time [s], message stamp [s, simulation time])
+        self.noise = SensorNoise(self.get_parameter('seed').value)
         self.received = {}
+        self.last_clock = None
+        self.clock_progress_wall = time.monotonic()
         self.imu_pub = self.create_publisher(Imu, '/wamv/sensors/imu/imu/data',
                                              qos_profile_sensor_data)
         self.gps_pub = self.create_publisher(NavSatFix, '/wamv/sensors/gps/gps/fix',
@@ -79,10 +78,25 @@ class SensorAdapter(Node):
         # /clock stops.
         self.create_timer(0.1, self.status, clock=Clock(clock_type=ClockType.STEADY_TIME))
 
+    def observe_clock(self):
+        now = self.get_clock().now().nanoseconds*1e-9
+        if self.last_clock is None or now != self.last_clock:
+            if self.last_clock is not None and now < self.last_clock:
+                self.received.clear()
+                self.noise = SensorNoise(self.get_parameter('seed').value)
+            self.clock_progress_wall = time.monotonic()
+        self.last_clock = now
+        return now
+
     def record(self, name, msg):
-        """Note when input ``name`` was received (steady) and its stamp (simulation)."""
+        """Accept advancing acquisition stamps; duplicates never renew health."""
+        now = self.observe_clock()
         stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        if (not 0 <= now-stamp <= self.get_parameter('stale_after_s').value
+                or stamp <= self.received.get(name, (0., -math.inf))[1]):
+            return False
         self.received[name] = (time.monotonic(), stamp)
+        return True
 
     def estimate(self, msg):
         """Record the EKF estimate only if it looks initialised.
@@ -90,22 +104,17 @@ class SensorAdapter(Node):
         Requires frame ``map``, a finite position and x/y position variances
         in [0, 4) m^2 (standard deviation below 2 m).
         """
-        pos = msg.pose.pose.position
         # Pose covariance is a row-major 6x6: [0] is var(x), [7] is var(y).
-        if (msg.header.frame_id == 'map' and all(math.isfinite(v) for v in (pos.x,pos.y,pos.z))
+        if (valid_odometry(msg, 'map', 'wamv/base_link')
                 and 0 <= msg.pose.covariance[0] < 4 and 0 <= msg.pose.covariance[7] < 4):
             self.record('estimate', msg)
 
     def imu(self, raw):
         """Add attitude noise to a raw IMU message and republish it.
 
-        The noise is a small random rotation with independent per-axis angles
-        ``N(0, orientation_noise_rad)``, drawn fresh for each message (white
-        noise, no bias). It is built as the small-angle quaternion
-        ``dq = (ax/2, ay/2, az/2, 1)`` and applied on the left,
-        ``q_noisy = normalize(dq * q)``, i.e. about the axes of the ENU world
-        frame. Angular velocity and linear acceleration pass through
-        unchanged; only their covariances are filled in.
+        Independent streams add Gaussian rotation-vector, rate and acceleration
+        errors. Covariance diagonals are exactly the configured SI variances.
+        Headers and raw inputs are preserved.
         """
         q = raw.orientation
         values = [q.x, q.y, q.z, q.w, raw.angular_velocity.x, raw.angular_velocity.y,
@@ -114,25 +123,23 @@ class SensorAdapter(Node):
         # Drop non-finite data and near-zero (uninitialised) quaternions.
         if not all(math.isfinite(v) for v in values) or sum(v*v for v in values[:4]) < 0.5:
             return
-        # Deep copy keeps the raw header: same acquisition stamp and frame.
+        if not self.record('imu', raw):
+            return
         msg = copy.deepcopy(raw)
         std = self.get_parameter('orientation_noise_rad').value
-        # Small isotropic rotation applied to the measured ENU orientation.
-        # A rotation by angle a has quaternion (sin(a/2) axis, cos(a/2)),
-        # approximately (a/2 axis, 1) for small a.
-        x, y, z = [self.rng.gauss(0, std) / 2 for _ in range(3)]
-        w = 1.0
-        # Hamilton product dq * q, with dq = (x, y, z, w).
-        noisy = [w*q.x+x*q.w+y*q.z-z*q.y, w*q.y-x*q.z+y*q.w+z*q.x,
-                 w*q.z+x*q.y-y*q.x+z*q.w, w*q.w-x*q.x-y*q.y-z*q.z]
-        norm = math.sqrt(sum(v*v for v in noisy))
-        msg.orientation.x, msg.orientation.y, msg.orientation.z, msg.orientation.w = [v/norm for v in noisy]
-        # Row-major 3x3 covariances; indices 0, 4, 8 are the diagonal.
-        # Orientation [rad^2], angular velocity [(rad/s)^2], acceleration [(m/s^2)^2].
-        msg.orientation_covariance = [std*std if i in (0,4,8) else 0.0 for i in range(9)]
-        msg.angular_velocity_covariance = [0.009**2 if i in (0,4,8) else 0.0 for i in range(9)]
-        msg.linear_acceleration_covariance = [0.021**2 if i in (0,4,8) else 0.0 for i in range(9)]
-        self.record('imu', msg)
+        angular = self.get_parameter('angular_velocity_noise_rad_s').value
+        acceleration = self.get_parameter('linear_acceleration_noise_m_s2').value
+        errors = self.noise.sample('orientation', (std,)*3)
+        (msg.orientation.x, msg.orientation.y, msg.orientation.z, msg.orientation.w) = noisy_orientation(
+            (q.x, q.y, q.z, q.w), errors)
+        for channel, vector, sigma in (
+                ('angular_velocity', msg.angular_velocity, angular),
+                ('linear_acceleration', msg.linear_acceleration, acceleration)):
+            for axis, error in zip(('x', 'y', 'z'), self.noise.sample(channel, (sigma,)*3)):
+                setattr(vector, axis, getattr(vector, axis)+error)
+        msg.orientation_covariance = covariance((std,)*3)
+        msg.angular_velocity_covariance = covariance((angular,)*3)
+        msg.linear_acceleration_covariance = covariance((acceleration,)*3)
         self.imu_pub.publish(msg)
 
     def gps(self, raw):
@@ -155,41 +162,30 @@ class SensorAdapter(Node):
         if raw.status.status < 0 or not all(math.isfinite(v)
                                             for v in (raw.latitude, raw.longitude, raw.altitude)):
             return
-        # Deep copy keeps the raw header: same acquisition stamp and frame.
+        if not self.record('gps', raw):
+            return
         msg = copy.deepcopy(raw)
-        # Variances [m^2].
-        xy = self.get_parameter('gps_xy_std_m').value**2
-        z = self.get_parameter('gps_z_std_m').value**2
-        # Local WGS84 metres per radian; avoid Gazebo's degree-valued noise.
-        lat = math.radians(raw.latitude)
-        # WGS84 semi-major axis [m] and first eccentricity squared.
-        a, e2 = 6378137.0, 6.69437999014e-3
-        den = 1.0-e2*math.sin(lat)**2
-        meridian = a*(1.0-e2)/(den**1.5)
-        prime = a/math.sqrt(den)
-        msg.latitude += math.degrees(self.gps_rng.gauss(0, math.sqrt(xy))/meridian)
-        msg.longitude += math.degrees(self.gps_rng.gauss(0, math.sqrt(xy))/(prime*max(1e-6, math.cos(lat))))
-        msg.altitude += self.gps_rng.gauss(0, math.sqrt(z))
-        msg.position_covariance = [xy, 0.0, 0.0, 0.0, xy, 0.0, 0.0, 0.0, z]
+        xy = self.get_parameter('gps_xy_std_m').value
+        z = self.get_parameter('gps_z_std_m').value
+        msg.latitude, msg.longitude, msg.altitude = noisy_fix(
+            raw.latitude, raw.longitude, raw.altitude, self.noise.sample('gps', (xy, xy, z)))
+        msg.position_covariance = covariance((xy, xy, z))
         msg.position_covariance_type = NavSatFix.COVARIANCE_TYPE_DIAGONAL_KNOWN
-        self.record('gps', msg)
         self.gps_pub.publish(msg)
 
     def status(self):
         """Publish the ``navigation`` health status (steady 10 Hz timer).
 
-        OK only if every input (noisy GPS, noisy IMU, projected GPS odometry
-        and an initialised EKF estimate) was received less than 0.5 s ago in
-        steady time *and* its stamp is at most 0.5 s behind and 0.1 s ahead
-        of the current simulation time. The first check catches stopped
-        publishers, the second stale or future data. The status itself is
-        stamped with the current simulation time; it is a heartbeat, not a
-        re-stamped measurement.
+        OK only while all inputs advance and remain fresh in simulation time,
+        and the simulation clock has progressed within the wall-time watchdog.
+        Replayed identical stamps cannot renew health.
         """
+        simulation_now = self.observe_clock()
         now = self.get_clock().now()
-        valid = all(k in self.received and time.monotonic()-self.received[k][0] < 0.5 and
-                    -0.1 <= now.nanoseconds*1e-9-self.received[k][1] <= 0.5
-                    for k in ('gps','imu','gps_projected','estimate'))
+        valid = (time.monotonic()-self.clock_progress_wall < self.get_parameter('clock_stall_after_s').value
+                 and all(k in self.received and
+                         0 <= simulation_now-self.received[k][1] <= self.get_parameter('stale_after_s').value
+                         for k in ('gps', 'imu', 'gps_projected', 'estimate')))
         msg = DiagnosticArray()
         msg.header.stamp = now.to_msg()
         msg.status = [DiagnosticStatus(

@@ -32,10 +32,10 @@ downloads it instead of compiling Gazebo and VRX:
 and tags it `njord-sim:local`; every other command uses that tag. Pull again after
 `git pull` or `git checkout`.
 
-Commands that use the image compare its baked-in source digest with the checkout
-and warn when they differ, for example when the image is older than the checkout
-or after local edits to files copied into the image. `./scripts/njord check-image`
-performs the same check and fails on a mismatch.
+Commands pin one immutable image ID and reject a missing or mismatched executable
+digest. Editable YAML under `njord_sim/config` may change without rebuilding.
+`./scripts/njord check-image`, `test` and CI additionally require the full source
+digest, including YAML. There is no stale-image validation bypass.
 
 An image exists only after the CI run for that commit has passed. For unpushed
 commits or local changes, build instead with `./scripts/njord build`. An uncached

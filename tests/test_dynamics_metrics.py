@@ -45,9 +45,11 @@ class DynamicsMetricsTests(unittest.TestCase):
 
     def test_turn_radius_and_both_signs(self):
         for yaw in (-0.25, 0.25):
-            report = dynamics.summarize_experiment(samples(1, yaw), "turn_left")
+            report = dynamics.summarize_experiment(samples(1, yaw), "turn_left" if yaw > 0 else "turn_right")
             self.assertTrue(report["complete"])
             self.assertEqual(report["metrics"]["turning_radius_m"], 4)
+            wrong = "turn_right" if yaw > 0 else "turn_left"
+            self.assertFalse(dynamics.summarize_experiment(samples(1, yaw), wrong)["complete"])
 
     def test_signed_reverse_and_vertical_settling(self):
         rows = [row + (0.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0) for row in samples()]

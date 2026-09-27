@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "status": "awaiting_measurements",
+  "boat_revision": null,
+  "load_revision": null,
+  "frame_convention": "ENU world; forward/left/up body; SI",
+  "timing": {"clock_source": null, "synchronization_method": null, "maximum_error_s": null},
+  "environment": {"water_density_kg_m3": null, "wind_mps": null, "current_mps": null, "waves": null},
+  "preregistration": {"registered_utc": null, "protocol_sha256": null, "fit_run_ids": [], "holdout_run_ids": [], "acceptance_limits": {}},
+  "channels": {},
+  "runs": []
+}

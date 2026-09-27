@@ -43,9 +43,12 @@ import json
 import math
 from pathlib import Path
 import time
+import threading
+import sys
 
 import rclpy
 from nav_msgs.msg import Odometry
+from geometry_msgs.msg import WrenchStamped
 from rclpy.clock import Clock, ClockType
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
@@ -54,6 +57,7 @@ from ros_gz_interfaces.msg import Float32Array
 from njord_sim.configuration import thruster_table
 
 from dynamics_metrics import stationary, summarize_experiment
+from runtime_checks import valid_odometry
 
 
 class DynamicsCheck(Node):
@@ -68,31 +72,61 @@ class DynamicsCheck(Node):
                     "experiment": "straight", "thrust_n": 300.0, "duration_s": 60.0,
                     "stabilization_timeout_s": 60.0, "window_s": 10.0,
                     "fresh_start_limit_s": 5.0, "manifest_path": "", "resolved_path": "", "output_path": "",
-                    "repetition": 0}
+                    "repetition": 0, "forces_n": [0.0], "applied_topic": "/njord/actuator_applied", "decay_s": 0.0}
         for key, value in defaults.items():
             self.declare_parameter(key, value)
         if not self.has_parameter("use_sim_time"):
             self.declare_parameter("use_sim_time", True)
         self.settings = {key: self.get_parameter(key).value for key in defaults}
         self.experiment = self.settings["experiment"]
-        if self.experiment not in {"straight", "reverse", "turn_left", "turn_right", "coast", "drift", "hydrostatic"}:
+        if self.experiment not in {"straight", "reverse", "turn_left", "turn_right", "coast", "drift", "hydrostatic", "excitation", "oscillator_heave", "oscillator_roll", "oscillator_pitch"}:
             raise ValueError("unknown experiment")
         for key in ("thrust_n", "duration_s", "stabilization_timeout_s", "window_s", "fresh_start_limit_s"):
             if not math.isfinite(self.settings[key]) or self.settings[key] <= 0:
                 raise ValueError(f"{key} must be finite and positive")
+        if not math.isfinite(self.settings['decay_s']) or self.settings['decay_s'] < 0:
+            raise ValueError('decay_s must be finite and nonnegative')
         self.manifest = None
         resolved_path = self.settings["resolved_path"] or (
             self.settings["manifest_path"] and str(Path(self.settings["manifest_path"]).parent / "resolved_configuration.json"))
         if not resolved_path:
             raise ValueError("resolved_path or manifest_path is required for the thruster layout")
         # Side of each thruster in command order: +1 port, -1 starboard, 0 centreline.
+        deadline = time.monotonic() + 120.0
+        while not Path(resolved_path).is_file():
+            if time.monotonic() >= deadline:
+                raise TimeoutError('resolved configuration not produced before startup deadline')
+            time.sleep(0.05)
         table = thruster_table(json.loads(Path(resolved_path).read_text())["vessel"])
+        self.explicit_forces = self.settings['forces_n'] if self.experiment == 'excitation' else None
+        if self.explicit_forces is not None and (len(self.explicit_forces) != len(table)
+                or not all(math.isfinite(v) for v in self.explicit_forces)):
+            raise ValueError('excitation requires one finite forces_n value per thruster')
+        self.applied_samples = []
+        self.wrench_samples = []
+        self.invalid_telemetry = False
+        self.applied_lock = threading.Lock()
+        # Gazebo transport retains the acquisition stamp that Float32Array lacks.
+        from gz.transport13 import Node as GzNode
+        from gz.msgs10.float_v_pb2 import Float_V
+        self.gz_node = GzNode()
+        def receive_applied(message):
+            stamp = message.header.stamp.sec + message.header.stamp.nsec * 1e-9
+            values = list(message.data)
+            if len(values) == 2*len(table)+1 and all(math.isfinite(x) for x in values):
+                with self.applied_lock:
+                    self.applied_samples.append({'time_s': stamp, 'forces_n': values[:len(table)],
+                                                 'targets_n': values[len(table):-1], 'live':bool(values[-1])})
+            else:
+                self.invalid_telemetry = True
+        self.gz_node.subscribe(Float_V, self.settings['applied_topic'], receive_applied)
         self.sides = [(t["position_m"][1] > 0) - (t["position_m"][1] < 0) for t in table]
+        self.create_subscription(WrenchStamped, '/njord/actuator_wrench', self.on_wrench, qos_profile_sensor_data)
         self.forces = self.create_publisher(Float32Array, self.settings["forces_topic"], 1)
         self.create_subscription(Odometry, self.settings["odom_topic"], self.on_odom, qos_profile_sensor_data)
         self.samples, self.preparation = [], []
         self.t0 = self.phase_start = None
-        self.phase = "measure" if self.experiment == "hydrostatic" else "settle"
+        self.phase = "measure" if self.experiment == "hydrostatic" or self.experiment.startswith("oscillator_") else "settle"
         self.trajectory = []
         self.wall_start = self.last_odom_wall = time.monotonic()
         self.done = False
@@ -100,6 +134,15 @@ class DynamicsCheck(Node):
         self.create_timer(0.05, self.step)
         # Infrastructure watchdog on steady wall time, so it still fires if /clock stops.
         self.create_timer(0.2, self.watchdog, clock=Clock(clock_type=ClockType.STEADY_TIME))
+
+    def on_wrench(self, message):
+        force, moment = message.wrench.force, message.wrench.torque
+        values = [force.x, force.y, force.z, moment.x, moment.y, moment.z]
+        if all(math.isfinite(value) for value in values):
+            self.wrench_samples.append({'time_s': message.header.stamp.sec + message.header.stamp.nanosec * 1e-9,
+                                        'force_n': values[:3], 'moment_nm': values[3:], 'frame':message.header.frame_id})
+        else:
+            self.invalid_telemetry = True
 
     def on_odom(self, msg):
         """Store one odometry sample (see sample_columns in finish for the layout).
@@ -109,6 +152,9 @@ class DynamicsCheck(Node):
         rather than already moving. Non-finite or non-advancing samples end
         the experiment as incomplete.
         """
+        if not valid_odometry(msg, parent=msg.header.frame_id, child=msg.child_frame_id) or not msg.header.frame_id or not msg.child_frame_id:
+            self.finish("invalid odometry pose, twist, frame or quaternion")
+            return
         t = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
         if self.t0 is None:
             path = self.settings["manifest_path"]
@@ -126,7 +172,8 @@ class DynamicsCheck(Node):
         row = (t, msg.pose.pose.position.x, msg.pose.pose.position.y,
                math.hypot(msg.twist.twist.linear.x, msg.twist.twist.linear.y), msg.twist.twist.angular.z,
                msg.pose.pose.position.z, roll, pitch, msg.twist.twist.linear.x,
-               msg.twist.twist.linear.z, msg.twist.twist.angular.x, msg.twist.twist.angular.y)
+               msg.twist.twist.linear.z, msg.twist.twist.angular.x, msg.twist.twist.angular.y,
+               msg.twist.twist.linear.y, math.atan2(2*(q.w*q.z+q.x*q.y),1-2*(q.y*q.y+q.z*q.z)))
         if not all(math.isfinite(v) for v in row):
             self.finish("nonfinite odometry")
             return
@@ -185,9 +232,16 @@ class DynamicsCheck(Node):
             return
         commands = {"straight": (thrust, thrust), "reverse": (-thrust, -thrust),
                     "turn_left": (0.2 * thrust, thrust), "turn_right": (thrust, 0.2 * thrust),
-                    "coast": (0, 0), "drift": (0, 0), "hydrostatic": (0, 0)}
-        self.command(*commands[self.experiment])
-        if t - self.phase_start >= self.settings["duration_s"]:
+                    "coast": (0, 0), "drift": (0, 0), "hydrostatic": (0, 0),
+                    "oscillator_heave": (0,0), "oscillator_roll": (0,0), "oscillator_pitch": (0,0)}
+        if self.explicit_forces is not None:
+            message = Float32Array()
+            message.data = ([0.0]*len(self.explicit_forces) if t-self.phase_start >= self.settings["duration_s"]
+                            else list(map(float, self.explicit_forces)))
+            self.forces.publish(message)
+        else:
+            self.command(*commands[self.experiment])
+        if t - self.phase_start >= self.settings["duration_s"] + self.settings["decay_s"]:
             self.finish()
 
     def finish(self, reason=None):
@@ -198,12 +252,21 @@ class DynamicsCheck(Node):
         """
         self.done = True
         self.command(0, 0)
-        report = summarize_experiment(self.samples, self.experiment, self.settings["window_s"])
+        measure_samples = [row for row in self.samples if self.phase_start is not None
+                           and row[0] <= self.phase_start + self.settings['duration_s']]
+        report = summarize_experiment(measure_samples, self.experiment, self.settings["window_s"])
         if reason:
             report.update(complete=False, reason=reason)
+        with self.applied_lock:
+            applied_samples = list(self.applied_samples)
+        if self.invalid_telemetry:
+            report.update(complete=False, reason='malformed or nonfinite applied telemetry')
+        if self.experiment == 'excitation' and not applied_samples:
+            report.update(complete=False, reason='missing applied-force telemetry')
         report.update(experiment=self.experiment, settings=self.settings, manifest=self.manifest,
+                      applied_samples=applied_samples, wrench_samples=self.wrench_samples,
                       samples=self.samples, trajectory=self.trajectory,
-                      sample_columns=["time_s", "x_m", "y_m", "speed_mps", "yaw_rate_radps", "z_m", "roll_rad", "pitch_rad", "surge_mps", "body_heave_mps", "body_roll_rate_radps", "body_pitch_rate_radps"], evidence_level="running_simulator_observation")
+                      sample_columns=["time_s", "x_m", "y_m", "speed_mps", "yaw_rate_radps", "z_m", "roll_rad", "pitch_rad", "surge_mps", "body_heave_mps", "body_roll_rate_radps", "body_pitch_rate_radps", "sway_mps", "yaw_rad"], evidence_level="running_simulator_observation")
         serialized = json.dumps(report, indent=2, allow_nan=False)
         if self.settings["output_path"]:
             path = Path(self.settings["output_path"])
@@ -216,14 +279,29 @@ class DynamicsCheck(Node):
 
 def main():
     rclpy.init()
-    node = DynamicsCheck()
+    node = None
     try:
+        node = DynamicsCheck()
         rclpy.spin(node)
-    except KeyboardInterrupt:
-        node.finish("interrupted")
+    except (Exception, KeyboardInterrupt) as error:
+        if node is not None:
+            node.finish(f"{type(error).__name__}: {error}")
+        # Constructor failures still leave an exclusive incomplete artifact.
+        result = {"complete": False, "reason": f"startup failed: {type(error).__name__}: {error}",
+                  "metrics": {}, "samples": [], "evidence_level": "no_runtime_measurement"}
+        serialized = json.dumps(result, indent=2, allow_nan=False)
+        output = next((arg.split(":=", 1)[1] for arg in sys.argv if arg.startswith("output_path:=")), None)
+        if output:
+            path = Path(output)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open('x') as stream:
+                stream.write(serialized + '\n')
+        print(serialized)
+        raise SystemExit(2)
     finally:
-        node.command(0, 0)
-        node.destroy_node()
+        if node is not None:
+            node.command(0, 0)
+            node.destroy_node()
         rclpy.try_shutdown()
 
 

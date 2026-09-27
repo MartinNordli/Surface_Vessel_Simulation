@@ -24,7 +24,7 @@ import math
 from pathlib import Path
 
 # Absolute tolerance floor per unit, used when 2 % of the value is smaller.
-ABSOLUTE = {"m": 0.02, "m/s": 0.01, "rad/s": 0.001}
+ABSOLUTE = {"m": 0.02, "m/s": 0.01, "rad/s": 0.001, "m/s^2": 0.01, "rad/s^2": 0.001, "N": 0.02, "N*m": 0.02, "rad": 0.001, "s": 0.01}
 # Physics time steps of a campaign in seconds (4, 2 and 1 ms).
 STEPS = (0.004, 0.002, 0.001)
 
@@ -44,7 +44,7 @@ def compare(runs, metrics):
     unit.
     """
     if not metrics or any(unit not in ABSOLUTE for unit in metrics.values()):
-        raise ValueError("explicit metric units must be m, m/s, or rad/s")
+        raise ValueError("explicit supported SI metric units required")
     groups = {}
     reasons = []
     for run in runs:

@@ -8,8 +8,8 @@ ends the service), then replaces itself with the ``evaluator`` node on
 simulation time.
 
 Inputs (environment): OUTPUT_DIR (default /outputs), RUN_ID (required),
-RUN_LABEL (default "demo") and PROFILE (default "fast"), both recorded in the
-metrics. The evaluator reads OUTPUT_DIR/resolved_scenario.json (ground truth,
+RUN_LABEL (default "demo"), PROFILE (default "fast") and STATE_SOURCE
+(default "estimate"), all recorded in the metrics. The evaluator reads OUTPUT_DIR/resolved_scenario.json (ground truth,
 evaluation only) and writes OUTPUT_DIR/run_metrics.json.
 
 Exit code: the evaluator's; 0 means the course was completed, 2 that it was
@@ -26,6 +26,7 @@ wait_ready(path, os.environ.get('RUN_ID', ''))
 args = ['ros2', 'run', 'njord_sim', 'evaluator', '--ros-args', '-p', 'use_sim_time:=true',
         '-p', f'scenario_file:={path}/resolved_scenario.json', '-p', f'output:={path}/run_metrics.json',
         '-p', 'run_label:='+os.environ.get('RUN_LABEL', 'demo'),
-        '-p', 'profile:='+os.environ.get('PROFILE', 'fast')]
+        '-p', 'profile:='+os.environ.get('PROFILE', 'fast'),
+        '-p', 'state_source:='+os.environ.get('STATE_SOURCE', 'estimate')]
 # exec replaces this process, so the node's exit code is the container's.
 os.execvp(args[0], args)

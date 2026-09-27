@@ -64,6 +64,7 @@ x-common: &common
     CONTROLLER: ${CONTROLLER:-reference}
     PERCEPTION: ${PERCEPTION:-reference}
     MAPPING: ${MAPPING:-reference}
+    STATE_SOURCE: ${STATE_SOURCE:-estimate}
     # The vessel and algorithm inputs of a run (see docs/configuration.md);
     # paths are inside the container. The defaults read the host's
     # njord_sim/config/ through the /config mount below, so edits there apply

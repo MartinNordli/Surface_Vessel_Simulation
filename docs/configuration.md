@@ -22,6 +22,7 @@ run. Nothing needs rebuilding unless noted.
 | EKF / GPS-transform settings | `njord_sim/config/localization.yaml` | always used |
 | World origin (GPS datum), command timeout, thruster command topic pattern, pinned WAM-V hull and thruster geometry | `njord_sim/njord_sim/constants.py` (then rebuild) | fixed platform constants |
 | Seed of a single run | — | `SEED=<n>` |
+| Navigate on simulator ground truth instead of the GPS/IMU estimate | — | `STATE_SOURCE=truth` (default `estimate`) |
 
 Each vessel file is self-contained: the WAM-V and Njord files each hold their
 own sensor settings, so the same camera setting appears once per vessel, not

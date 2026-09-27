@@ -31,6 +31,7 @@ setup(
             "mission = njord_sim.mission_node:main",
             "command_guard = njord_sim.command_guard_node:main",
             "sensor_adapter = njord_sim.sensor_adapter_node:main",
+            "truth_relay = njord_sim.truth_relay_node:main",
         ],
     },
 )

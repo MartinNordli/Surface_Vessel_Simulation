@@ -1,7 +1,13 @@
 """Autonomy service: state estimation, reference autonomy and the command guard.
 
-Always started: sensor_adapter (GPS/IMU noise and navigation health), the two
-robot_localization EKFs, navsat_transform and command_guard.
+Always started: sensor_adapter (GPS/IMU noise and navigation health),
+navsat_transform and command_guard, plus the navigation state source:
+
+  state_source:=estimate (default) -> the two robot_localization EKFs
+  state_source:=truth              -> truth_relay: simulator ground truth on
+                                      /njord/odometry and TF (explicit truth mode)
+
+Raw noisy GPS/IMU are published in both modes for a team's own estimator.
 
 Reference nodes that a team can replace with its own ('external'):
   autonomy:=external    -> mapper, perception, mission, planner and guidance
@@ -29,6 +35,7 @@ from njord_sim.configuration import config_path
 from njord_sim.constants import WORLD_ORIGIN_WGS84
 
 COMPONENTS = ('autonomy', 'controller', 'perception', 'mapping')
+STATE_SOURCES = ('estimate', 'truth')
 
 
 def launch(context):
@@ -38,6 +45,8 @@ def launch(context):
     for component in COMPONENTS:
         if p(component) not in ('reference', 'external'):
             raise ValueError(f'{component} must be reference or external')
+    if p('state_source') not in STATE_SOURCES:
+        raise ValueError('state_source must be estimate or truth')
     public_path = context.launch_configurations.get('public_parameters', '')
     public = json.loads(Path(public_path).read_text()) if public_path else {}
     params_file = p('params_file')
@@ -55,13 +64,17 @@ def launch(context):
         return Node(package='njord_sim', executable=executable, output='screen',
                     parameters=[params or {}, *overrides, public.get(executable, {}), common])
 
-    # State estimation (always runs, also with a fully external autonomy stack).
+    # Navigation state (always runs, also with a fully external autonomy stack).
     actions.append(node('sensor_adapter', {'seed': int(p('seed'))}))
     localization = str(config_path('localization.yaml'))
-    for name, output in [('ekf_local', '/njord/local/odometry'), ('ekf_global', '/njord/odometry')]:
-        actions.append(Node(package='robot_localization', executable='ekf_node', name=name, output='screen',
-                            parameters=[localization, *overrides, common],
-                            remappings=[('odometry/filtered', output)]))
+    if p('state_source') == 'truth':
+        # Explicit truth mode: ground truth replaces the EKF estimate.
+        actions.append(node('truth_relay'))
+    else:
+        for name, output in [('ekf_local', '/njord/local/odometry'), ('ekf_global', '/njord/odometry')]:
+            actions.append(Node(package='robot_localization', executable='ekf_node', name=name, output='screen',
+                                parameters=[localization, *overrides, common],
+                                remappings=[('odometry/filtered', output)]))
     actions.append(Node(package='robot_localization', executable='navsat_transform_node', name='navsat',
                         output='screen',
                         parameters=[localization, *overrides, {'datum': list(WORLD_ORIGIN_WGS84)}, common],
@@ -94,6 +107,8 @@ def generate_launch_description():
         DeclareLaunchArgument('expected_gates', default_value='3'),
         *[DeclareLaunchArgument(name, default_value=env(name.upper(), 'reference'),
                                 description='reference or external') for name in COMPONENTS],
+        DeclareLaunchArgument('state_source', default_value=env('STATE_SOURCE', 'estimate'),
+                              description='estimate (EKFs) or truth (simulator ground truth on /njord/odometry)'),
         DeclareLaunchArgument('params_file', default_value=env('ROS_PARAMS_FILE', '')),
         DeclareLaunchArgument('public_parameters', default_value=''),
         DeclareLaunchArgument('vessel_config', default_value='',

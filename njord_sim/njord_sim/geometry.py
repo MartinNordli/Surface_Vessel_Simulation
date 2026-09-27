@@ -70,3 +70,19 @@ def transform_from_ros(points, transform):
 def stamp_seconds(stamp):
     """Convert a ``builtin_interfaces/Time`` stamp to float seconds."""
     return stamp.sec + stamp.nanosec * 1e-9
+
+
+def valid_odometry(msg, frame_id, child_frame_id):
+    """True if an ``nav_msgs/Odometry``-like message is usable as a pose.
+
+    Requires the expected ``frame_id`` and ``child_frame_id``, a finite
+    position, twist and stamp, and a unit orientation quaternion (within
+    1e-3). ``msg`` may be any object with the Odometry attribute names.
+    """
+    p, q = msg.pose.pose.position, msg.pose.pose.orientation
+    linear, angular = msg.twist.twist.linear, msg.twist.twist.angular
+    values = (p.x, p.y, p.z, q.x, q.y, q.z, q.w, linear.x, linear.y, linear.z,
+              angular.x, angular.y, angular.z, stamp_seconds(msg.header.stamp))
+    return (msg.header.frame_id == frame_id and msg.child_frame_id == child_frame_id
+            and all(math.isfinite(v) for v in values)
+            and abs(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w - 1.0) <= 1e-3)

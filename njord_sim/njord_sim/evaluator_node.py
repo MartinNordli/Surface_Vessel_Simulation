@@ -57,7 +57,7 @@ class Evaluator(Node):
             ("scenario_file", ""), ("odom_topic", "/wamv/ground_truth/odometry"),
             ("path_topic", "/njord/path"), ("contacts_topic", "/njord/contacts"),
             ("output", "outputs/run_metrics.json"), ("run_label", "run"),
-            ("profile", "conservative"), ("wall_timeout_s", 600.0),
+            ("profile", "conservative"), ("state_source", "estimate"), ("wall_timeout_s", 600.0),
             ("odom_wall_timeout_s", 30.0),
             ("wait_for_ready", True),
             ("git_commit", os.environ.get("NJORD_IMAGE_SOURCE_COMMIT", "unknown")),
@@ -232,6 +232,8 @@ class Evaluator(Node):
         metrics.update({
             "label": self.get_parameter("run_label").value,
             "profile": self.get_parameter("profile").value,
+            # 'truth' means autonomy navigated on ground truth, not on sensors.
+            "state_source": self.get_parameter("state_source").value,
             "seed": self.scenario["seed"], "environment": self.scenario["environment_name"],
             "scenario": self.scenario, "scenario_sha256": scenario_digest(self.scenario),
             "git_commit": self.get_parameter("git_commit").value,

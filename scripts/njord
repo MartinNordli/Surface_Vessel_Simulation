@@ -59,7 +59,8 @@ Test
 
 Courses: $(courses)
 Common settings: SEED, ENVIRONMENT, PROFILE, VESSEL_CONFIG, ALGORITHMS_CONFIG,
-CONTROLLER/PERCEPTION/MAPPING/AUTONOMY=external. NJORD_CPU=1 uses software
+CONTROLLER/PERCEPTION/MAPPING/AUTONOMY=external, STATE_SOURCE=truth (navigate on
+ground truth instead of the GPS/IMU estimate). NJORD_CPU=1 uses software
 rendering on hosts without a usable GPU.
 EOF
 }

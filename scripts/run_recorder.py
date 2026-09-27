@@ -91,6 +91,7 @@ def prepare(output, run_id, environment=None):
         'image_source_digest': environment.get('NJORD_IMAGE_SOURCE_DIGEST', 'unknown'),
         'runner_git_commit': environment.get('RUNNER_GIT_COMMIT', 'unknown'),
         'profile': environment.get('PROFILE', 'fast'),
+        'state_source': environment.get('STATE_SOURCE', 'estimate'),
         'seed': environment.get('SEED', '1'),
         'environment': environment.get('ENVIRONMENT', 'calm'),
     }

@@ -10,7 +10,7 @@ run manifest checksums, then replaces itself with
 
 Inputs (environment): OUTPUT_DIR (default /outputs), RUN_ID (required),
 AUTONOMY / CONTROLLER / PERCEPTION / MAPPING ("reference" or "external"),
-PROFILE ("fast" or "conservative"), SEED, ROS_PARAMS_FILE, ENVIRONMENT and the
+STATE_SOURCE ("estimate" or "truth"), PROFILE ("fast" or "conservative"), SEED, ROS_PARAMS_FILE, ENVIRONMENT and the
 provenance variables IMAGE_ID, NJORD_IMAGE_SOURCE_COMMIT,
 NJORD_IMAGE_SOURCE_DIGEST and RUNNER_GIT_COMMIT. Extra command-line arguments
 are passed to the launch; ``name:=value`` for one of the settings above
@@ -55,7 +55,8 @@ def prepare(output, run_id, environment=None, args=()):
     vessel_bytes = vessel.read_bytes()
     settings = {name: environment.get(name.upper(), 'reference')
                 for name in ('autonomy', 'controller', 'perception', 'mapping')}
-    settings.update(profile=environment.get('PROFILE', 'fast'),
+    settings.update(state_source=environment.get('STATE_SOURCE', 'estimate'),
+                    profile=environment.get('PROFILE', 'fast'),
                     seed=environment.get('SEED', '1'),
                     params_file=environment.get('ROS_PARAMS_FILE', ''))
     extra_args = list(args)
@@ -72,6 +73,8 @@ def prepare(output, run_id, environment=None, args=()):
     for name in ('autonomy', 'controller', 'perception', 'mapping'):
         if settings[name] not in ('reference', 'external'):
             raise ValueError(f'{name} must be reference or external')
+    if settings['state_source'] not in ('estimate', 'truth'):
+        raise ValueError('state_source must be estimate or truth')
     if settings['profile'] not in ('fast', 'conservative'):
         raise ValueError('profile must be fast or conservative')
     seed = int(settings['seed'])

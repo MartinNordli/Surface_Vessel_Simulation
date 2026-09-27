@@ -22,7 +22,7 @@ simulation time. Source stamps are preserved through sensing/mapping.
 | `/njord/{planner,mission,navigation}_status` | `diagnostic_msgs/DiagnosticArray` | Fresh validity heartbeat |
 | `/<thruster name>/command`, e.g. `/thruster_1/command` | `std_msgs/Float64` | Controller force per thruster in newtons along its axis, before guard; one topic per thruster in the vessel file (WAM-V: `thruster_1` port, `thruster_2` starboard) |
 | `/njord/actuator_forces` | `ros_gz_interfaces/Float32Array` | Internal force envelope: one force in N per thruster, in vessel-file order |
-| `/njord/race_active` | `std_msgs/Bool` | Evaluator heartbeat, transient local, 10 Hz |
+| `/njord/race_active` | `std_msgs/Bool` | Evaluator heartbeat, transient local, 10 Hz steady time; required by the guard only with `RUN_MODE=race` |
 | `/njord/guard_status` | `diagnostic_msgs/DiagnosticArray` | Command guard, 20 Hz steady time: status `command_guard`, OK while thrust may pass, otherwise WARN with the reason |
 | `/sim/ground_truth/odometry` | `nav_msgs/Odometry` | Evaluation; fed to navigation only in explicit truth mode (`STATE_SOURCE=truth`) |
 | `/sim/sensors/{gps/fix_raw,imu/data_raw}` | `sensor_msgs/NavSatFix`, `sensor_msgs/Imu` | Gazebo GPS/IMU before the sensor adapter adds noise; simulator internal |
@@ -89,7 +89,12 @@ planner remain active in these partial modes. The Compose equivalents are
 There must be one publisher authority per replaced output. The sensor adapter
 still owns `navigation_status`; do not duplicate it in an external stack.
 
-Publish the documented forces and status messages. The
+Publish the documented forces. Which health statuses the guard requires comes
+from `configuration.guard_requirements`: navigation always (the sensor adapter
+or truth relay publishes it), planner and mission only while the reference
+nodes run (`AUTONOMY=reference`), and the evaluator's race-active signal only
+with `RUN_MODE=race` (`demo`, `benchmark`; `lab` uses `RUN_MODE=free`). An
+external stack therefore needs no Njord status messages. The
 planner diagnostic name is `njord/planner`; mission is `mission`; navigation
 is `navigation`. Level OK means current valid inputs. Guard rejects non-OK,
 missing/expired heartbeats and expired or nonfinite commands. It checks diagnostic
@@ -97,10 +102,10 @@ source stamps against simulation time (up to 1 s old, at most 0.1 s ahead), and
 requires receipt of every heartbeat and every thruster command within 0.5 s of
 simulation time and 2 s of steady time. The evaluator requires all three health
 statuses at most 0.5 s old in simulation time, received within 2 s of steady
-time, before starting. Publish these at 10 Hz of simulation time; forces
+time, before starting (only navigation with `AUTONOMY=external`). Publish these at 10 Hz of simulation time; forces
 normally at 20 Hz. The guard forwards a force set as soon as every thruster has
 a new command, so the controller's rate and timing pass through unchanged.
-A fresh evaluator race heartbeat is also required. The guard does not subscribe
+In a race a live evaluator race-active signal is also required. The guard does not subscribe
 to paths, maps or odometry: the controller must zero commands on invalid, empty
 or stale input, and the planner must report invalid paths. Never publish
 plausible-looking health status when the corresponding input has stopped.

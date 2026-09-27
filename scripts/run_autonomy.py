@@ -10,7 +10,7 @@ run manifest checksums, then replaces itself with
 
 Inputs (environment): OUTPUT_DIR (default /outputs), RUN_ID (required),
 AUTONOMY / CONTROLLER / PERCEPTION / MAPPING ("reference" or "external"),
-STATE_SOURCE ("estimate" or "truth"), PROFILE (a speed_profiles_mps name in algorithms.yaml), SEED, ROS_PARAMS_FILE, ENVIRONMENT and the
+STATE_SOURCE ("estimate" or "truth"), RUN_MODE ("race" or "free"), PROFILE (a speed_profiles_mps name in algorithms.yaml), SEED, ROS_PARAMS_FILE, ENVIRONMENT and the
 provenance variables IMAGE_ID, NJORD_IMAGE_SOURCE_COMMIT,
 NJORD_IMAGE_SOURCE_DIGEST and RUNNER_GIT_COMMIT. Extra command-line arguments
 are passed to the launch; ``name:=value`` for one of the settings above
@@ -31,7 +31,7 @@ import json
 import os
 from pathlib import Path
 import sys
-from njord_sim.configuration import DEFAULT_PROFILE, config_path, speed_profile_names
+from njord_sim.configuration import DEFAULT_PROFILE, RUN_MODES, config_path, speed_profile_names
 from njord_sim.run_manifest import atomic_text, wait_ready
 
 
@@ -57,6 +57,7 @@ def prepare(output, run_id, environment=None, args=()):
     settings = {name: environment.get(name.upper(), 'reference')
                 for name in ('autonomy', 'controller', 'perception', 'mapping')}
     settings.update(state_source=environment.get('STATE_SOURCE', 'estimate'),
+                    run_mode=environment.get('RUN_MODE', 'race'),
                     profile=environment.get('PROFILE', DEFAULT_PROFILE),
                     seed=str(metadata.get('seed', environment.get('SEED') or '1')),
                     params_file=environment.get('ROS_PARAMS_FILE', ''))
@@ -80,6 +81,8 @@ def prepare(output, run_id, environment=None, args=()):
             raise ValueError(f'{name} must be reference or external')
     if settings['state_source'] not in ('estimate', 'truth'):
         raise ValueError('state_source must be estimate or truth')
+    if settings['run_mode'] not in RUN_MODES:
+        raise ValueError(f'run_mode must be one of {RUN_MODES}')
     # Profile names live in algorithms.yaml; the simulator's resolved profile wins.
     profiles = ([public['_profile']] if '_profile' in public
                 else speed_profile_names(config_path('algorithms.yaml')))

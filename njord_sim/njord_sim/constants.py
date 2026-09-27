@@ -27,6 +27,13 @@ WORLD_ORIGIN_WGS84 = (63.4305, 10.3951, 0.0)
 COMMAND_TIMEOUT_S = 0.5
 PROCESS_LIVENESS_S = 2.0
 
+# Health heartbeats of the processes the simulator starts itself, as
+# key -> (topic, DiagnosticStatus name). configuration.guard_requirements
+# decides which of them the guard and the evaluator require.
+HEARTBEATS = {'navigation': ('/njord/navigation_status', 'navigation'),
+              'planner': ('/njord/planner_status', 'njord/planner'),
+              'mission': ('/njord/mission_status', 'mission')}
+
 # ROS topic on which the command guard receives one thruster's force in
 # newtons (std_msgs/Float64), formatted with the thruster name from the vessel
 # file. '/thruster_1/command' matches Control & Autonomy's allocation node.

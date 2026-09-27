@@ -48,7 +48,7 @@ class TeamLaunchTests(unittest.TestCase):
             'profile': 'fast', 'seed': '7', 'expected_gates': '5',
             'autonomy': 'reference', 'controller': 'reference',
             'perception': 'reference', 'mapping': 'reference',
-            'state_source': 'estimate', 'localization_config': '', 'params_file': '', 'vessel_config': str(SHARE / 'config/vessels/wamv.yaml'),
+            'state_source': 'estimate', 'run_mode': 'race', 'localization_config': '', 'params_file': '', 'vessel_config': str(SHARE / 'config/vessels/wamv.yaml'),
             **overrides,
         })
         with patch.object(self.module, 'Node', side_effect=lambda **kwargs: kwargs):
@@ -91,6 +91,35 @@ class TeamLaunchTests(unittest.TestCase):
             self.launch(profile='survey', public_parameters=str(public))
             with self.assertRaisesRegex(ValueError, 'profile'):
                 self.launch(profile='fast', public_parameters=str(public))
+
+    def guard(self, **overrides):
+        """The command guard's parameter list for a launch with ``overrides``."""
+        return next(n['parameters'] for n in self.launch(**overrides) if n['executable'] == 'command_guard')
+
+    def test_guard_requirements_follow_autonomy_and_run_mode(self):
+        cases = {('reference', 'race'): (['navigation', 'planner', 'mission'], True),
+                 ('reference', 'free'): (['navigation', 'planner', 'mission'], False),
+                 ('external', 'race'): (['navigation'], True),
+                 ('external', 'free'): (['navigation'], False)}
+        for (autonomy, run_mode), (status, race) in cases.items():
+            with self.subTest(autonomy=autonomy, run_mode=run_mode):
+                enforced = self.guard(autonomy=autonomy, run_mode=run_mode)[-1]
+                self.assertEqual(enforced['required_status'], status)
+                self.assertIs(enforced['require_race_active'], race)
+                self.assertIs(enforced['use_sim_time'], True)
+        with self.assertRaisesRegex(ValueError, 'RUN_MODE'):
+            self.launch(run_mode='practice')
+
+    def test_parameter_file_cannot_weaken_guard_requirements(self):
+        with tempfile.TemporaryDirectory(prefix='njord-team-params-') as directory:
+            params_file = Path(directory) / 'team.yaml'
+            params_file.write_text(yaml.safe_dump({'command_guard': {'ros__parameters': {
+                'required_status': [], 'require_race_active': False}}}))
+            parameters = self.guard(params_file=str(params_file))
+            # ROS applies parameter sources in order; the enforced dict is last.
+            self.assertEqual(parameters.index(str(params_file)), 1)
+            self.assertEqual(parameters[-1]['required_status'], ['navigation', 'planner', 'mission'])
+            self.assertIs(parameters[-1]['require_race_active'], True)
 
     def test_truth_mode_replaces_both_ekfs_with_the_truth_relay(self):
         for autonomy in ('reference', 'external'):

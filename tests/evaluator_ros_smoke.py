@@ -102,6 +102,33 @@ class EvaluatorReadinessTests(unittest.TestCase):
                 rclpy.shutdown()
 
 
+class ExternalAutonomyReadinessTests(unittest.TestCase):
+    """An external stack's race starts on navigation alone (AUTONOMY=external)."""
+    def test_only_required_heartbeats_gate_the_start(self):
+        with tempfile.TemporaryDirectory(prefix="njord-evaluator-external-") as temporary:
+            context = local_node(Evaluator, {"scenario_file": str(ROOT/"scenarios/reference.yaml"),
+                                             "output": str(Path(temporary)/"metrics.json"),
+                                             "required_status": ["navigation"]})
+            node, clock, _ = context.__enter__()
+            try:
+                clock.seconds = 100.
+                truth = Odometry()
+                truth.header.stamp = clock.now().to_msg()
+                truth.pose.pose.orientation.w = 1.
+                node.on_odom(truth)
+                contacts = Contacts()
+                contacts.header.stamp = Time(sec=100, nanosec=0)
+                node.on_contacts(contacts)
+                self.assertFalse(node.ready())
+                message = DiagnosticArray()
+                message.header.stamp = clock.now().to_msg()
+                message.status = [DiagnosticStatus(name="navigation", level=DiagnosticStatus.OK)]
+                node.on_readiness(message)
+                self.assertTrue(node.ready())
+            finally:
+                context.__exit__(None, None, None)
+
+
 class WallBudgetTests(unittest.TestCase):
     def test_budget_leaves_room_for_the_simulation_timeout_at_slow_factors(self):
         self.assertEqual(wall_budget_s(600, 360, 1.0), 720)

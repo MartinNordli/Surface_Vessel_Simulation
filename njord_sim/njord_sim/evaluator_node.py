@@ -40,7 +40,7 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data, QoSProfile, DurabilityPolicy
 from std_msgs.msg import Float64, Bool
 
-from .constants import GROUND_TRUTH_TOPIC, GZ_MODEL_NAME, PROCESS_LIVENESS_S
+from .constants import GROUND_TRUTH_TOPIC, GZ_MODEL_NAME, HEARTBEATS, PROCESS_LIVENESS_S
 from .scenario_core import RaceScorer, load_scenario, scenario_digest
 
 
@@ -56,8 +56,10 @@ class Evaluator(Node):
     """ROS wrapper around RaceScorer with readiness gating and watchdogs.
 
     Subscribes: ground-truth odometry (``odom_topic``), ``contacts_topic``,
-    ``path_topic``, ``/njord/plan_ms`` and the three ``/njord/*_status``
-    diagnostics. Publishes: ``/njord/race_active`` (std_msgs/Bool, latched).
+    ``path_topic``, ``/njord/plan_ms`` and the ``/njord/*_status``
+    diagnostics named in ``required_status`` (constants.HEARTBEATS keys, from
+    configuration.guard_requirements). Publishes: ``/njord/race_active``
+    (std_msgs/Bool, latched).
     """
 
     def __init__(self):
@@ -67,7 +69,7 @@ class Evaluator(Node):
             ("path_topic", "/njord/path"), ("contacts_topic", "/njord/contacts"),
             ("output", "outputs/run_metrics.json"), ("run_label", "run"),
             ("profile", "conservative"), ("state_source", "estimate"), ("wall_timeout_s", 600.0),
-            ("odom_wall_timeout_s", 30.0),
+            ("odom_wall_timeout_s", 30.0), ("required_status", list(HEARTBEATS)),
             ("wait_for_ready", True),
             ("git_commit", os.environ.get("NJORD_IMAGE_SOURCE_COMMIT", "unknown")),
             ("image_source_digest", os.environ.get("NJORD_IMAGE_SOURCE_DIGEST", "unknown")),
@@ -100,8 +102,12 @@ class Evaluator(Node):
         # Transient-local so a late-joining command guard still gets the state.
         self.active_pub = self.create_publisher(Bool, "/njord/race_active",
             QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
-        for topic in ("mission_status", "planner_status", "navigation_status"):
-            self.create_subscription(DiagnosticArray, "/njord/" + topic, self.on_readiness, 10)
+        required = list(p("required_status"))
+        if not required or set(required) - set(HEARTBEATS):
+            raise ValueError(f"required_status must be a nonempty subset of {sorted(HEARTBEATS)}")
+        self.required_names = [HEARTBEATS[key][1] for key in required]
+        for key in required:
+            self.create_subscription(DiagnosticArray, HEARTBEATS[key][0], self.on_readiness, 10)
         self.create_subscription(Odometry, p("odom_topic"), self.on_odom, qos_profile_sensor_data)
         self.create_subscription(Path, p("path_topic"), self.on_path, 10)
         self.create_subscription(Float64, "/njord/plan_ms", self.on_latency, 10)
@@ -143,9 +149,9 @@ class Evaluator(Node):
         """True when every input needed to score a race is live.
 
         Odometry must have advanced within PROCESS_LIVENESS_S of steady time,
-        contacts must be fresh, and the ``njord/planner``, ``mission`` and
-        ``navigation`` diagnostics must be OK, at most 0.5 s old in
-        simulation time and received within PROCESS_LIVENESS_S of steady time.
+        contacts must be fresh, and every required diagnostic must be OK, at
+        most 0.5 s old in simulation time and received within
+        PROCESS_LIVENESS_S of steady time.
         """
         now_sim = self.get_clock().now().nanoseconds * 1e-9
         now_wall = time.monotonic()
@@ -153,7 +159,7 @@ class Evaluator(Node):
             name in self.readiness and self.readiness[name][0]
             and 0 <= now_sim - self.readiness[name][1] <= 0.5
             and now_wall - self.readiness[name][2] <= PROCESS_LIVENESS_S
-            for name in ("njord/planner", "mission", "navigation"))
+            for name in self.required_names)
 
     def on_path(self, _):
         self.path_messages += 1
@@ -233,7 +239,7 @@ class Evaluator(Node):
             self.first_odom_wall = now
             # The latest pose becomes the race start (time zero).
             self.scorer.update(*self.latest_ground_truth)
-            self.get_logger().info("Navigation, mission and planner ready; race started")
+            self.get_logger().info("Required heartbeats and contacts ready; race started")
         self.active_pub.publish(Bool(data=self.started and self.scorer.status == "running"))
         if now - self.wall_start >= self.wall_budget_s:
             self.scorer.status = "wall_timeout"

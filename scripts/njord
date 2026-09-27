@@ -48,7 +48,7 @@ Image
 Run (course defaults to SCENARIO, else reference)
   demo [course]       Headless race: simulator + autonomy + evaluator; exits with the result
   gui [course]        Same race with the Gazebo window and RViz
-  lab [course]        Simulator + autonomy without an evaluator; keeps running for inspection
+  lab [course]        Free driving: simulator + autonomy, no evaluator (RUN_MODE=free)
   simulator [course]  Simulator service only
   benchmark [course]  Seed x environment x profile race matrix (see --help)
   campaign           Fresh-process physical parameter and timestep trials (see --help)
@@ -187,6 +187,8 @@ case "$action" in
     if [ "$action" = simulator ]; then
       docker compose up simulator "$@"
     elif [ "$action" = lab ]; then
+      # Free driving: the guard needs no race-active signal from an evaluator.
+      export RUN_MODE=free
       # Interactive inspection uses short-lived compose run containers. Their
       # exit must not tear down the ongoing sensor session.
       docker compose up simulator autonomy "$@"

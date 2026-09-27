@@ -15,8 +15,13 @@ Reference nodes that a team can replace with its own ('external'):
   perception:=external  -> perception
   mapping:=external     -> mapper
 
+run_mode:=race (default) lets the guard pass thrust only while the evaluator
+reports the race active; run_mode:=free (./scripts/njord lab) drives without
+one. What the guard requires comes from configuration.guard_requirements.
+
 Parameter precedence for each reference node, lowest to highest:
-  node defaults < ROS_PARAMS_FILE < public_parameters.json < use_sim_time.
+  node defaults < ROS_PARAMS_FILE < public_parameters.json < use_sim_time
+  (and, for the guard, its requirements from run_mode and autonomy).
 public_parameters.json is written by the simulator from the resolved vessel and
 algorithms.yaml, so vessel limits and algorithm tuning always come from those
 files. scripts/run_autonomy.py passes it automatically.
@@ -31,7 +36,8 @@ from launch.logging import get_logger
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
-from njord_sim.configuration import DEFAULT_PROFILE, config_path, speed_profile_names, validate_reference_timing
+from njord_sim.configuration import (DEFAULT_PROFILE, RUN_MODES, config_path, guard_requirements,
+                                     speed_profile_names, validate_reference_timing)
 from njord_sim.constants import GPS_TOPIC, IMU_TOPIC, WORLD_ORIGIN_WGS84
 
 COMPONENTS = ('autonomy', 'controller', 'perception', 'mapping')
@@ -45,6 +51,7 @@ def launch(context):
             raise ValueError(f'{component} must be reference or external')
     if p('state_source') not in STATE_SOURCES:
         raise ValueError('state_source must be estimate or truth')
+    requirements = guard_requirements({'autonomy': p('autonomy')}, p('run_mode'))
     public_path = context.launch_configurations.get('public_parameters', '')
     public = json.loads(Path(public_path).read_text()) if public_path else {}
     # The simulator resolved the profile against algorithms.yaml; without its
@@ -67,9 +74,11 @@ def launch(context):
             'No public_parameters given; reference nodes use their built-in defaults '
             'instead of the resolved vessel and algorithms.yaml.')
 
-    def node(executable, params=None):
+    def node(executable, params=None, enforced=None):
+        # ``enforced`` values come last with use_sim_time: no file can weaken them.
         return Node(package='njord_sim', executable=executable, output='screen',
-                    parameters=[params or {}, *overrides, public.get(executable, {}), common])
+                    parameters=[params or {}, *overrides, public.get(executable, {}),
+                                {**(enforced or {}), **common}])
 
     # Navigation state (always runs, also with a fully external autonomy stack).
     actions.append(node('sensor_adapter', {'seed': int(p('seed'))}))
@@ -101,7 +110,7 @@ def launch(context):
             actions.append(node('guidance'))
 
     # The guard is the single actuator authority and always runs.
-    actions.append(node('command_guard'))
+    actions.append(node('command_guard', enforced=requirements))
     return actions
 
 
@@ -116,6 +125,8 @@ def generate_launch_description():
                                 description='reference or external') for name in COMPONENTS],
         DeclareLaunchArgument('state_source', default_value=env('STATE_SOURCE', 'estimate'),
                               description='estimate (EKFs) or truth (simulator ground truth on /njord/odometry)'),
+        DeclareLaunchArgument('run_mode', default_value=env('RUN_MODE', 'race'),
+                              description=' or '.join(RUN_MODES) + ': race needs an active evaluator'),
         DeclareLaunchArgument('params_file', default_value=env('ROS_PARAMS_FILE', '')),
         DeclareLaunchArgument('public_parameters', default_value=''),
         DeclareLaunchArgument('localization_config', default_value=''),

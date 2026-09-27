@@ -32,7 +32,7 @@ result.
 | `CONTROLLER=external` | `guidance` | Per-thruster force in newtons from your own controller |
 | `PERCEPTION=external` | `perception` | Buoy detections from your own CV/fusion system |
 | `MAPPING=external` | `mapper` | Your own occupancy map |
-| `AUTONOMY=external` | All five: mapper, perception, mission, planner, guidance | The whole algorithm chain and its status messages |
+| `AUTONOMY=external` | All five: mapper, perception, mission, planner, guidance | The whole algorithm chain; no Njord status messages are needed |
 
 The three single settings can be combined. The GPS/IMU adapter, localization and
 command guard always run. `AUTONOMY=external` overrides the single settings.
@@ -102,8 +102,9 @@ base configuration does not give the team container a GPU.
    ```
 
 5. The controller must zero thrust itself on an empty, invalid or stale path, a
-   stale map or stale odometry. The guard requires fresh planner, mission and
-   navigation status plus the evaluator's race-active signal. Missing commands for
+   stale map or stale odometry. The guard requires fresh navigation status, the
+   planner and mission status while those reference nodes run, and in a race
+   (`demo`, `benchmark`) the evaluator's race-active signal. Missing commands for
    0.5 s of simulation time remove thrust (or 2 s of wall-clock time if
    simulation time stalls); the boat keeps its momentum and can drift. Why the
    guard currently passes or blocks thrust is published on `/njord/guard_status`.
@@ -189,7 +190,9 @@ adapter is open question 8.
 
 ## 5. Test your own computer vision or map
 
-To inspect sensors without a race ending while you develop:
+To develop without a race ending, use `lab`, which drives freely without an
+evaluator (`RUN_MODE=free`). With `AUTONOMY=external` and no commands of your
+own it is a passive sensor session:
 
 ```bash
 AUTONOMY=external ./scripts/njord lab slalom
@@ -204,13 +207,17 @@ docker compose exec simulator /entrypoint.sh ros2 run tf2_ros tf2_echo map front
 ```
 
 `lab` starts the simulator, estimation and the selected reference nodes, without
-an evaluator. Stop earlier races first (`docker compose down` with your Compose
+an evaluator, and sets `RUN_MODE=free`: the guard passes thrust without a
+race-active signal. With the reference autonomy the boat drives the course; with
+`CONTROLLER=external` or `AUTONOMY=external` your node drives it (for example a
+dynamic-positioning controller), and without commands thrust stays zero. The
+guard's other checks still apply, and `/njord/guard_status` says what blocks
+thrust. Stop earlier races first (`docker compose down` with your Compose
 configuration); use only one simulator/evaluator per ROS domain and Gazebo
-partition. `lab` does not stop an evaluator that is already running. The guard
-keeps thrust at zero without a race-active signal from an evaluator on the same
-domain. Exit with Ctrl-C before starting a new race. This is a passive sensor
-test; wind and waves can still move the boat. Measured Hz values are wall-clock
-receive rates and depend on the simulator's real-time factor.
+partition. `lab` does not stop an evaluator that is already running. Exit with
+Ctrl-C before starting a new race. Wind and waves can move the boat even
+without thrust. Measured Hz values are wall-clock receive rates and depend on
+the simulator's real-time factor.
 
 To feed your own CV results into the reference mission, planner and controller:
 

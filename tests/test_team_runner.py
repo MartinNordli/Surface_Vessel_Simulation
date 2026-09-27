@@ -107,6 +107,15 @@ class TeamRunnerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'state_source'):
             runner.prepare(self.output, 'run-1', {'STATE_SOURCE': 'perfect'})
 
+    def test_run_mode_defaults_to_race_and_free_is_recorded(self):
+        command = runner.prepare(self.output, 'run-1', {})
+        self.assertIn('run_mode:=race', command)
+        command = runner.prepare(self.output, 'run-1', {'RUN_MODE': 'free'})
+        self.assertIn('run_mode:=free', command)
+        self.assertEqual(self.metadata()['run_mode'], 'free')
+        with self.assertRaisesRegex(ValueError, 'run_mode'):
+            runner.prepare(self.output, 'run-1', {'RUN_MODE': 'practice'})
+
     def test_invalid_mode_fails_without_provenance(self):
         with self.assertRaisesRegex(ValueError, 'controller'):
             runner.prepare(self.output, 'run-1', {'CONTROLLER': 'typo'})

@@ -53,7 +53,7 @@ services.
 | `selftest` | Starts simulator and autonomy, checks live cameras, lidar and navigation, then stops |
 | `demo [course]` | Headless race with simulator, autonomy and evaluator |
 | `gui [course]` | Same race with the Gazebo window and RViz |
-| `lab [course]` | Simulator, estimation and selected reference nodes, no evaluator |
+| `lab [course]` | Free driving (`RUN_MODE=free`): simulator, estimation and selected reference nodes, no evaluator; the boat drives without a race |
 | `benchmark [course]` | Seed × environment × profile matrix, e.g. `--jobs 2` or `--dry-run` |
 | `simulator` | Simulator service only |
 | `smoke` | `validation/check_runtime.py` against an already running stack |

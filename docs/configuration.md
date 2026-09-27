@@ -52,6 +52,7 @@ changing them.
 | `VESSEL_CONFIG` | `/config/vessels/wamv.yaml` | Vessel file or partial WAM-V override |
 | `ALGORITHMS_CONFIG` | `/config/algorithms.yaml` | Reference autonomy tuning |
 | `ROS_PARAMS_FILE` | empty | Extra ROS parameters for reference nodes |
+| `RUN_MODE` | `race` | `race` passes thrust only while the evaluator reports the race active; `free` drives without an evaluator (`lab` sets it) |
 | `AUTONOMY`, `CONTROLLER`, `PERCEPTION`, `MAPPING` | `reference` | `external` leaves out reference nodes ([team integration](team-integration.md)) |
 | `CONFIG_HOST` | `./njord_sim/config` | Host directory mounted at `/config`; with your own directory, point `VESSEL_CONFIG` and `ALGORITHMS_CONFIG` at files in it |
 | `NJORD_CPU` | `0` | `1` selects software rendering |

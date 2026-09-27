@@ -100,8 +100,9 @@ leaving the camera field of view may be remembered for a limited time inside a
 bounded approach/crossing corridor; fresh camera frames, odometry and
 observed-free lidar guidance are still required.
 
-The command guard requires current planner, mission, navigation and evaluator
-heartbeats. Commands and heartbeats expire after `COMMAND_TIMEOUT_S` (0.5 s) of
+The command guard requires a current navigation heartbeat, planner and mission
+heartbeats while those reference nodes run, and in a race (`RUN_MODE=race`)
+the evaluator's race-active signal (`configuration.guard_requirements`). Commands and heartbeats expire after `COMMAND_TIMEOUT_S` (0.5 s) of
 simulation time, so a command acts on the boat for the same simulated time at
 any real-time factor; `PROCESS_LIVENESS_S` (2 s) of steady time only catches a
 stopped `/clock` or a dead process. The guard forwards each complete set of

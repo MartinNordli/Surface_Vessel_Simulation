@@ -37,8 +37,10 @@ Parameters:
     input, s), ``liveness_s`` (steady-time process liveness, s),
     ``max_thrust`` (N), ``forward_limits`` / ``reverse_limits`` (per-thruster
     limits in N, reverse as magnitudes), from the vessel file, algorithms.yaml
-    and constants.py through ``node_defaults``; ``required_status`` (default
-    all three heartbeats) and ``require_race_active`` (default True).
+    and constants.py through ``node_defaults``; ``required_status`` and
+    ``require_race_active`` from ``configuration.guard_requirements``, set by
+    the autonomy launch from AUTONOMY and RUN_MODE (standalone default: all
+    three heartbeats and an active race).
 
 Validity rules and failure behaviour:
     * An input is stale when it was received more than ``timeout_s`` ago in
@@ -58,13 +60,9 @@ from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus
 from ros_gz_interfaces.msg import Float32Array
 from std_msgs.msg import Float64, Bool
 
+from njord_sim.constants import HEARTBEATS
 from njord_sim.defaults import node_defaults
 from njord_sim.guard_core import GuardCore
-
-# Heartbeat key -> (topic, expected DiagnosticStatus name).
-STATUS_TOPICS = {'navigation': ('/njord/navigation_status', 'navigation'),
-                 'planner': ('/njord/planner_status', 'njord/planner'),
-                 'mission': ('/njord/mission_status', 'mission')}
 
 
 class CommandGuard(Node):
@@ -76,14 +74,14 @@ class CommandGuard(Node):
         # thruster_topics, timeouts, max_thrust and per-thruster limits come
         # from the vessel, algorithms.yaml and constants.py (see defaults.py).
         self.declare_parameters('', [*node_defaults('command_guard'),
-                                     ('required_status', list(STATUS_TOPICS)),
+                                     ('required_status', list(HEARTBEATS)),
                                      ('require_race_active', True)])
         p = lambda name: self.get_parameter(name).value
         self.topics = list(p('thruster_topics'))
         required = list(p('required_status'))
-        if len(set(self.topics)) != len(self.topics) or set(required) - set(STATUS_TOPICS):
+        if len(set(self.topics)) != len(self.topics) or set(required) - set(HEARTBEATS):
             raise ValueError('thruster_topics must be unique and required_status a subset of '
-                             f'{sorted(STATUS_TOPICS)}')
+                             f'{sorted(HEARTBEATS)}')
         self.core = GuardCore(len(self.topics), required, p('require_race_active'), p('timeout_s'),
                               p('liveness_s'), p('forward_limits'), p('reverse_limits'), p('max_thrust'))
         self.driving = False  # the last published forces were a valid command
@@ -94,7 +92,7 @@ class CommandGuard(Node):
         for index, topic in enumerate(self.topics):
             self.create_subscription(Float64, topic, lambda m, i=index: self.command(i, m), 1)
         for key in required:
-            topic, name = STATUS_TOPICS[key]
+            topic, name = HEARTBEATS[key]
             self.create_subscription(DiagnosticArray, topic, lambda m, k=key, n=name: self.status(k, n, m), 1)
         # Steady-time timer: the guard must keep deciding (and zeroing) even
         # when simulation time is paused or no longer advancing.

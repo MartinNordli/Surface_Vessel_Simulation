@@ -101,7 +101,7 @@ Leave out reference nodes and connect your own over ROS 2 (domain 42, `use_sim_t
 CONTROLLER=external ./scripts/njord demo slalom   # publish /thruster_<i>/command in newtons
 PERCEPTION=external ./scripts/njord demo slalom   # publish buoy detections
 MAPPING=external    ./scripts/njord demo slalom   # publish an occupancy grid
-AUTONOMY=external   ./scripts/njord lab slalom    # sensors only, no race
+AUTONOMY=external   ./scripts/njord lab slalom    # free driving, no race; your stack drives
 ```
 
 See the [team integration guide](docs/team-integration.md) for the full

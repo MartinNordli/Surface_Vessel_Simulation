@@ -6,8 +6,8 @@ import unittest
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'njord_sim'))
-from njord_sim.configuration import (autonomy_parameters, convert_algorithm_schema, resolve_configuration,
-                                     speed_profile_names)
+from njord_sim.configuration import (autonomy_parameters, convert_algorithm_schema, guard_requirements,
+                                     resolve_configuration, speed_profile_names)
 
 ROOT = Path(__file__).resolve().parents[1]
 ALGORITHMS = ROOT/'njord_sim/config/algorithms.yaml'
@@ -76,6 +76,16 @@ class AlgorithmsConfigTests(unittest.TestCase):
         del algorithms['mapping']['grid_origin_m']
         with self.assertRaises(ValueError):
             self.resolve(algorithms)
+
+    def test_guard_requirements(self):
+        self.assertEqual(guard_requirements({'autonomy': 'reference'}, 'race'),
+                         {'required_status': ['navigation', 'planner', 'mission'], 'require_race_active': True})
+        self.assertEqual(guard_requirements({'autonomy': 'external'}, 'free'),
+                         {'required_status': ['navigation'], 'require_race_active': False})
+        self.assertEqual(guard_requirements({}, 'race')['required_status'], ['navigation', 'planner', 'mission'])
+        for components, run_mode in (({'autonomy': 'reference'}, 'lab'), ({'autonomy': 'typo'}, 'race')):
+            with self.subTest(components=components, run_mode=run_mode), self.assertRaises(ValueError):
+                guard_requirements(components, run_mode)
 
     def test_race_courses_fit_inside_the_grid(self):
         mapping = self.shipped()['mapping']

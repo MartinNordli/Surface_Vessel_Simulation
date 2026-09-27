@@ -18,7 +18,7 @@ right Compose overlay (including WSL) and stamps run provenance.
 ./scripts/njord selftest              # Start simulator + autonomy, run check_runtime.py, stop
 ./scripts/njord demo [reference|slalom]   # Headless race, exits with the evaluator
 ./scripts/njord gui   [reference|slalom]  # Same with Gazebo GUI and RViz
-./scripts/njord lab   [reference|slalom]  # Simulator + autonomy kept running, no evaluator
+./scripts/njord lab   [reference|slalom]  # Free driving: simulator + autonomy, no evaluator
 ./scripts/njord benchmark [reference|slalom] [--seeds ...] [--environments ...]
 ./scripts/njord smoke                 # validation/check_runtime.py against a live stack
 ./scripts/njord doctor                # Docker, Compose, NVIDIA and image checks

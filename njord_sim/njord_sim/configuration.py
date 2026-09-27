@@ -28,7 +28,7 @@ import re
 
 import yaml
 
-from .constants import COMMAND_TIMEOUT_S, PROCESS_LIVENESS_S, THRUSTER_COMMAND_TOPIC, WAMV_HULL, WAMV_THRUSTERS
+from .constants import COMMAND_TIMEOUT_S, HEARTBEATS, PROCESS_LIVENESS_S, THRUSTER_COMMAND_TOPIC, WAMV_HULL, WAMV_THRUSTERS
 from .control_core import allocation_matrix, independent_rows
 from .mesh_geometry import geometry_vertices, geometry_volume, load_obj, validate_disjoint_volumes
 from .scenario_core import validate_scenario
@@ -553,6 +553,30 @@ def convert_algorithm_schema(algorithms):
         result['mapping'].update(grid_resolution_m=.5, grid_size_m=160., grid_origin_m=[-40., -40.])
     _version(result, 3)
     return result
+
+
+# RUN_MODE: 'race' scores a course and only allows thrust while the evaluator
+# reports the race active; 'free' runs without an evaluator (./scripts/njord lab).
+RUN_MODES = ('race', 'free')
+
+
+def guard_requirements(components, run_mode):
+    """What the command guard (and, in a race, the evaluator) requires before thrust.
+
+    ``components`` maps 'autonomy' to 'reference' or 'external'. Navigation
+    always runs, so its heartbeat is always required. Planner and mission
+    heartbeats are required only when the simulator starts those reference
+    nodes; an external stack only has to send fresh thruster commands and zero
+    them itself on bad input. The evaluator's run-active signal is required
+    only in a race. Returns {'required_status': [...], 'require_race_active': bool}.
+    """
+    if run_mode not in RUN_MODES:
+        raise ValueError(f'RUN_MODE must be one of {RUN_MODES}')
+    autonomy = components.get('autonomy', 'reference')
+    if autonomy not in ('reference', 'external'):
+        raise ValueError('autonomy must be reference or external')
+    status = ['navigation'] + (['planner', 'mission'] if autonomy == 'reference' else [])
+    return {'required_status': status, 'require_race_active': run_mode == 'race'}
 
 
 def speed_profile_names(algorithms_file):

@@ -17,6 +17,8 @@ spec.loader.exec_module(recorder)
 class RecorderTests(unittest.TestCase):
     def manifest(self, output):
         (output/'run_ready.json').write_text(json.dumps({'run_id': 'current-run', 'expected_gates': 3}))
+        (output/'public_parameters.json').write_text(json.dumps(
+            {'command_guard': {'thruster_topics': ['/thruster_1/command', '/thruster_2/command']}}))
 
     def test_matching_run_records_source_provenance_and_latched_tf(self):
         with tempfile.TemporaryDirectory(prefix='njord-recorder-') as temporary:
@@ -34,6 +36,8 @@ class RecorderTests(unittest.TestCase):
             self.assertEqual(metadata['qos_overrides']['/tf_static']['durability'], 'transient_local')
             self.assertIn('/wamv/ground_truth/odometry', metadata['topics'])
             self.assertIn('/njord/contacts', metadata['topics'])
+            self.assertIn('/thruster_2/command', metadata['topics'])
+            self.assertIn('/thruster_2/command', command)
             self.assertFalse((output/'bag').exists())  # rosbag2 owns directory creation.
 
     def test_existing_bag_is_never_replaced(self):

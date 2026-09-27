@@ -11,11 +11,13 @@
 //                  the vessel's max_thrust_n)
 //
 // Topics (Gazebo transport):
-//   subscribes /njord/actuator_forces          gz.msgs.Twist, forces in newtons
+//   subscribes /njord/actuator_forces          gz.msgs.Float_V, two forces in
+//                                              newtons: port, starboard
 //   publishes  /wamv/thrusters/left/thrust     gz.msgs.Double, newtons
 //   publishes  /wamv/thrusters/right/thrust    gz.msgs.Double, newtons
 //
-// Failure behavior: a non-finite value zeroes both thrusters; a command older
+// Failure behavior: a non-finite value or a command without exactly two values
+// zeroes both thrusters; a command older
 // than timeout_s (steady time), no command yet, or a paused simulation all
 // publish zero thrust. Zero thrust is a command to the VRX thruster model,
 // not a stop: the hull keeps its momentum and is slowed only by hydrodynamics.
@@ -27,12 +29,12 @@
 #include <gz/plugin/Register.hh>
 #include <gz/sim/System.hh>
 #include <gz/transport/Node.hh>
-#include <gz/msgs/twist.pb.h>
+#include <gz/msgs/float_v.pb.h>
 #include <gz/msgs/double.pb.h>
 
 namespace njord {
-// A single atomic Twist transports two forces: linear.x = left, linear.y = right.
-// This is an internal transport envelope, never a kinematic velocity command.
+// A single atomic Float_V transports both forces: data[0] = left (thruster_1),
+// data[1] = right (thruster_2), in the order of constants.WAMV_THRUSTERS.
 class ActuatorWatchdog final : public gz::sim::System,
   public gz::sim::ISystemConfigure, public gz::sim::ISystemPreUpdate {
   // Steady wall time: command freshness is an infrastructure watchdog and
@@ -58,12 +60,12 @@ class ActuatorWatchdog final : public gz::sim::System,
     node.Subscribe("/njord/actuator_forces", &ActuatorWatchdog::Command, this);
   }
   // Transport callback: store the clamped left/right forces (N) and the
-  // steady receive time. Either value non-finite invalidates both.
-  void Command(const gz::msgs::Twist &msg) {
+  // steady receive time. A wrong length or a non-finite value zeroes both.
+  void Command(const gz::msgs::Float_V &msg) {
     std::lock_guard<std::mutex> lock(mutex);
-    const double l = msg.linear().x(), r = msg.linear().y();
-    left = std::isfinite(l) && std::isfinite(r) ? std::clamp(l, -maxForce, maxForce) : 0;
-    right = std::isfinite(l) && std::isfinite(r) ? std::clamp(r, -maxForce, maxForce) : 0;
+    const bool ok = msg.data_size() == 2 && std::isfinite(msg.data(0)) && std::isfinite(msg.data(1));
+    left = ok ? std::clamp<double>(msg.data(0), -maxForce, maxForce) : 0;
+    right = ok ? std::clamp<double>(msg.data(1), -maxForce, maxForce) : 0;
     received = Clock::now();
   }
   // Every simulation step: republish the stored forces, or zero when the

@@ -1,16 +1,21 @@
-# Njord vessel, analytic test hull (select with VESSEL_CONFIG=/config/vessels/njord_v1.yaml).
+# Munin PLACEHOLDER (select with VESSEL_CONFIG=/config/vessels/munin_v0.yaml).
 #
-# UNCALIBRATED infrastructure fixture: the numbers are invented engineering
-# values, NOT measured Njord geometry. See docs/njord-calibration.md.
+# UNCALIBRATED and NOT Munin's design: Munin is not built yet. This file only
+# lets Control & Autonomy run four-thruster allocation and dynamic positioning
+# against the simulator now. The hull, mass properties, hydrodynamics and wind
+# response are copied from the njord_v1 analytic test hull, and the thruster
+# layout below is an assumed 'X' arrangement. Replace the thruster positions,
+# directions and limits with Naval's design when it is decided, and the rest
+# with measurements (docs/njord-calibration.md).
 #
-# This is the only place to change the Njord vessel: geometry, mass properties,
+# This is the only place to change this vessel: geometry, mass properties,
 # hydrodynamics, wind response, thrusters and sensors are all read from here.
 # Units are SI. Body axes are forward/left/up (x/y/z); poses are
 # [x, y, z, roll, pitch, yaw] relative to the body origin.
 schema_version: 2
 profile: njord
-name: njord_analytic
-revision: analytic-box-v1
+name: munin_placeholder
+revision: placeholder-x4-v0
 calibration:
   status: uncalibrated              # the loader only accepts 'uncalibrated' for now
   valid_speed_mps: [0.0, 3.0]       # intended test envelope, not evidence of accuracy
@@ -65,15 +70,27 @@ wind:
 # to port, 180 aft. Limits are force magnitudes in newtons; response_time_s is
 # a first-order lag on the applied force.
 thrusters:
-- name: thruster_1                  # port
-  position_m: [-1.2, 0.6, -0.1]
-  yaw_deg: 0.0
+- name: thruster_1                  # bow, port; pushes forward and to starboard
+  position_m: [1.1, 0.55, -0.1]
+  yaw_deg: -45.0
   forward_limit_n: 500.0
   reverse_limit_n: 500.0
   response_time_s: 0.1
-- name: thruster_2                  # starboard
-  position_m: [-1.2, -0.6, -0.1]
-  yaw_deg: 0.0
+- name: thruster_2                  # bow, starboard; pushes forward and to port
+  position_m: [1.1, -0.55, -0.1]
+  yaw_deg: 45.0
+  forward_limit_n: 500.0
+  reverse_limit_n: 500.0
+  response_time_s: 0.1
+- name: thruster_3                  # stern, port; pushes forward and to port
+  position_m: [-1.1, 0.55, -0.1]
+  yaw_deg: 45.0
+  forward_limit_n: 500.0
+  reverse_limit_n: 500.0
+  response_time_s: 0.1
+- name: thruster_4                  # stern, starboard; pushes forward and to starboard
+  position_m: [-1.1, -0.55, -0.1]
+  yaw_deg: -45.0
   forward_limit_n: 500.0
   reverse_limit_n: 500.0
   response_time_s: 0.1

@@ -3,7 +3,7 @@
 Line-of-sight (LOS) path follower for the reference autonomy stack. Each
 control step picks a target point on the planner's path that is visible
 through observed-free map cells, computes a surge force and a yaw moment
-(PD on heading) and converts them into left/right thrust in newtons. The
+(PD on heading) and allocates them over the vessel's thrusters in newtons. The
 collision and speed logic lives in the pure-Python ``control_core.py``.
 
 Subscribes:
@@ -20,19 +20,20 @@ Subscribes:
         ``njord/planner`` status with level OK.
 
 Publishes:
-    ``left_topic`` / ``right_topic`` (default
-        ``/njord/thrusters/{left,right}/thrust``, ``std_msgs/Float64``):
-        thrust command per thruster in N (positive forward). The command
-        guard is the only node that forwards these to the actuators.
+    ``thruster_topics`` (one per thruster, e.g. ``/thruster_1/command``,
+        ``std_msgs/Float64``): thrust command per thruster in N, positive
+        along the thruster's axis. The command guard is the only node that
+        forwards these to the actuators.
 
 Parameters:
     Topic names, ``map_frame`` and ``base_frame``. Tuning values (lookahead,
-    gains, ``max_speed``, ``max_thrust``, ``control_hz``, ``stale_after_s``,
-    the stopping model and ``thruster_separation_m``) come from
-    ``algorithms.yaml`` and the vessel file through ``node_defaults``.
-    ``physical_allocation`` selects ``allocate_thrusters`` with the explicit
-    ``thruster_positions``/``thruster_axes``/limits instead of the symmetric
-    ``mix_thrusters``.
+    gains, ``max_speed``, ``max_thrust``, ``control_hz``, ``stale_after_s``
+    and the stopping model) come from ``algorithms.yaml``; the thruster
+    layout (``thruster_topics``, ``thruster_positions`` relative to the COM,
+    ``thruster_axes`` and forward/reverse limits) comes from the vessel file.
+    Both arrive through ``node_defaults`` and the run's public parameters.
+    Guidance requests zero sway, so a fully actuated vessel does not drift
+    sideways while following the path.
 
 Failure behaviour:
     Publishes zero thrust on every step where the path is empty, odometry or
@@ -54,7 +55,7 @@ from rclpy.qos import qos_profile_sensor_data
 from std_msgs.msg import Float64
 
 from njord_sim.defaults import node_defaults
-from njord_sim.control_core import allocate_thrusters, clearance, mix_thrusters, segment_is_free, speed_limit, tracking_corridor, wrap
+from njord_sim.control_core import allocate_thrusters, clearance, segment_is_free, speed_limit, tracking_corridor, wrap
 from njord_sim.geometry import stamp_seconds
 from njord_sim.planner_core import Geometry, fresh
 
@@ -67,24 +68,23 @@ class Guidance(Node):
         self.declare_parameters('', [
             ('path_topic', '/njord/path'), ('odom_topic', '/njord/odometry'),
             ('grid_topic', '/njord/occupancy'), ('status_topic', '/njord/planner_status'),
-            ('left_topic', '/njord/thrusters/left/thrust'), ('right_topic', '/njord/thrusters/right/thrust'),
             ('map_frame', 'map'), ('base_frame', 'wamv/base_link'),
-            # Tuning, speed ceiling and WAM-V thrust mixing: from algorithms.yaml
-            # and vessels/wamv.yaml (see defaults.py); a run overrides them.
+            # Tuning, speed ceiling and thruster layout: from algorithms.yaml
+            # and the vessel file (see defaults.py); a run overrides them.
             *node_defaults('guidance'),
-            # Physical allocation for vessels with explicit thruster geometry
-            # (Njord); only used when a run sets physical_allocation=true.
-            ('physical_allocation', False),
-            ('thruster_positions', [0.0] * 6), ('thruster_axes', [1.0, 0.0, 0.0] * 2),
-            ('thruster_forward_limits', [500.0, 500.0]), ('thruster_reverse_limits', [500.0, 500.0]),
         ])
         # Shorthand for reading a parameter value.
         self.p = lambda name: self.get_parameter(name).value
         # Refuse to start with limits that would make the maths meaningless
         # (division by zero, zero timer period, no braking ability).
-        if min(self.p('braking_deceleration_mps2'), self.p('thruster_separation_m'),
+        if min(self.p('braking_deceleration_mps2'),
                self.p('control_hz'), self.p('stale_after_s'), self.p('max_thrust')) <= 0:
             raise ValueError('physical controller limits and frequencies must be positive')
+        count = len(self.p('thruster_topics'))
+        if (len(self.p('thruster_positions')) != 3 * count or len(self.p('thruster_axes')) != 3 * count
+                or len(self.p('thruster_forward_limits')) != count
+                or len(self.p('thruster_reverse_limits')) != count):
+            raise ValueError('thruster topics, geometry and limits must describe the same thrusters')
         self.path = []  # map-frame (x, y) waypoints in m
         # state: ((x, y) m, yaw rad, surge m/s, yaw rate rad/s) in map frame.
         self.state = self.geometry = self.data = None
@@ -94,8 +94,7 @@ class Guidance(Node):
         self.create_subscription(Odometry, self.p('odom_topic'), self.on_odom, qos_profile_sensor_data)
         self.create_subscription(OccupancyGrid, self.p('grid_topic'), self.on_grid, qos_profile_sensor_data)
         self.create_subscription(DiagnosticArray, self.p('status_topic'), self.on_status, 1)
-        self.left = self.create_publisher(Float64, self.p('left_topic'), 1)
-        self.right = self.create_publisher(Float64, self.p('right_topic'), 1)
+        self.thrusters = [self.create_publisher(Float64, topic, 1) for topic in self.p('thruster_topics')]
         # Control loop on the node clock (/clock simulation time).
         self.create_timer(1.0 / self.p('control_hz'), self.step)
 
@@ -147,9 +146,9 @@ class Guidance(Node):
             self.stop()
 
     def stop(self):
-        """Command zero thrust (N) on both thrusters."""
-        self.left.publish(Float64(data=0.0))
-        self.right.publish(Float64(data=0.0))
+        """Command zero thrust (N) on every thruster."""
+        for publisher in self.thrusters:
+            publisher.publish(Float64(data=0.0))
 
     def step(self):
         """One control cycle: validate inputs, pick a target, publish thrust."""
@@ -184,17 +183,14 @@ class Guidance(Node):
         # yaw-rate term damps the turn.
         force = self.p('kp_surge') * (speed - surge)
         moment = self.p('kp_yaw') * error - self.p('kd_yaw') * yaw_rate
-        if self.p('physical_allocation'):
-            # Effective per-thruster limit: the smaller of the vessel's thruster
-            # limit and the guidance max_thrust.
-            left, right = allocate_thrusters(force, moment, self.p('thruster_positions'),
-                self.p('thruster_axes'),
-                [min(v, self.p('max_thrust')) for v in self.p('thruster_forward_limits')],
-                [min(v, self.p('max_thrust')) for v in self.p('thruster_reverse_limits')])
-        else:
-            left, right = mix_thrusters(force, moment, self.p('thruster_separation_m'), self.p('max_thrust'))
-        self.left.publish(Float64(data=left))
-        self.right.publish(Float64(data=right))
+        # Effective per-thruster limit: the smaller of the vessel's thruster
+        # limit and the guidance max_thrust. Zero sway is requested.
+        thrusts = allocate_thrusters((force, 0.0, moment), self.p('thruster_positions'),
+            self.p('thruster_axes'),
+            [min(v, self.p('max_thrust')) for v in self.p('thruster_forward_limits')],
+            [min(v, self.p('max_thrust')) for v in self.p('thruster_reverse_limits')])
+        for publisher, thrust in zip(self.thrusters, thrusts):
+            publisher.publish(Float64(data=thrust))
 
 
 def main():

@@ -80,10 +80,13 @@ export OUTPUT_HOST=./outputs/dynamics-$RUN_ID
 export SCENARIO=/opt/njord/scenarios/dynamics.yaml
 docker compose up simulator
 # A second terminal with the same environment:
-docker compose run --rm autonomy python3 validation/check_dynamics.py --ros-args -p use_sim_time:=true
+docker compose run --rm autonomy python3 validation/check_dynamics.py --ros-args -p use_sim_time:=true \
+    -p manifest_path:=/outputs/run_manifest.json
 ```
 
-The script is the sole force-envelope publisher for this experiment. It measures
+The script is the sole force-envelope publisher for this experiment. It reads
+the thruster layout from `resolved_configuration.json` next to the manifest
+(or `resolved_path`), so it drives any number of thrusters. It measures
 straight-line acceleration/top speed, turning speed/yaw rate/radius, and coast arc
 length. An unfinished stop is reported explicitly. Use a clear scenario for these
 open-loop manoeuvres. Lidar validation accepts a known cylindrical target and

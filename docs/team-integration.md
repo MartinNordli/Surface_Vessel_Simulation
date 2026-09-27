@@ -29,7 +29,7 @@ result.
 | Setting | Reference nodes left out | What the team provides |
 |---|---|---|
 | None | None | The full reference chain runs |
-| `CONTROLLER=external` | `guidance` | Left/right thrust from your own controller |
+| `CONTROLLER=external` | `guidance` | Per-thruster force in newtons from your own controller |
 | `PERCEPTION=external` | `perception` | Buoy detections from your own CV/fusion system |
 | `MAPPING=external` | `mapper` | Your own occupancy map |
 | `AUTONOMY=external` | All five: mapper, perception, mission, planner, guidance | The whole algorithm chain and its status messages |
@@ -86,14 +86,18 @@ base configuration does not give the team container a GPU.
    ```
 
 3. Subscribe to `/njord/path`, `/njord/occupancy` and `/njord/odometry`. Publish
-   `std_msgs/msg/Float64` to both `/njord/thrusters/{left,right}/thrust` in
-   **newtons**, normally at 20 Hz. There is no `cmd_vel` input; a controller that
+   `std_msgs/msg/Float64` in **newtons** to `/<name>/command` for every thruster
+   in the vessel file, normally at 20 Hz: `/thruster_1/command` and
+   `/thruster_2/command` for the WAM-V and `njord_v1.yaml`, and
+   `/thruster_1/command` … `/thruster_4/command` for `munin_v0.yaml`
+   (`VESSEL_CONFIG=/config/vessels/munin_v0.yaml`). The guard only passes thrust
+   while every thruster's command is fresh. There is no `cmd_vel` input; a controller that
    outputs velocity setpoints needs its own layer that converts them to physical
    thrust.
 4. Check that each thrust topic has exactly one publisher:
 
    ```bash
-   docker compose exec simulator /entrypoint.sh ros2 topic info /njord/thrusters/left/thrust --verbose
+   docker compose exec simulator /entrypoint.sh ros2 topic info /thruster_1/command --verbose
    docker compose exec simulator /entrypoint.sh ros2 topic echo /njord/race_active --once
    ```
 

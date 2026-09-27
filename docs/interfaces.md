@@ -20,8 +20,8 @@ simulation time. Source stamps are preserved through sensing/mapping.
 | `/njord/goal` | `geometry_msgs/PoseStamped` | Mission waypoint in map |
 | `/njord/path` | `nav_msgs/Path` | D* Lite route; empty explicitly invalidates |
 | `/njord/{planner,mission,navigation}_status` | `diagnostic_msgs/DiagnosticArray` | Fresh validity heartbeat |
-| `/njord/thrusters/{left,right}/thrust` | `std_msgs/Float64` | Controller forces in newtons, before guard |
-| `/njord/actuator_forces` | `geometry_msgs/Twist` | Internal force envelope: linear.x left N, linear.y right N; all other fields zero |
+| `/<thruster name>/command`, e.g. `/thruster_1/command` | `std_msgs/Float64` | Controller force per thruster in newtons along its axis, before guard; one topic per thruster in the vessel file (WAM-V: `thruster_1` port, `thruster_2` starboard) |
+| `/njord/actuator_forces` | `ros_gz_interfaces/Float32Array` | Internal force envelope: one force in N per thruster, in vessel-file order |
 | `/njord/race_active` | `std_msgs/Bool` | Evaluator heartbeat, transient local, 10 Hz |
 | `/wamv/ground_truth/odometry` | `nav_msgs/Odometry` | Evaluation only; never fed to navigation |
 | `/njord/contacts` | `ros_gz_interfaces/Contacts` | Physics-verified contact heartbeat, 20 Hz |
@@ -95,9 +95,10 @@ positions. Invalid or expired commands target zero thrust; the configured
 actuator response decays the force in simulation time, while expiry uses steady
 wall time.
 
-Gazebo-only `/njord/actuator_applied` (`gz.msgs.Twist`) reports applied newtons in
-`linear.x/y`, target newtons in `angular.x/y`, and command validity (1/0) in
-`angular.z`, at up to 50 Hz. Its header is simulation time at the end of the
+Gazebo-only `/njord/actuator_applied` (`gz.msgs.Float_V`) reports, for N
+thrusters, N applied forces, then N target forces (newtons, vessel-file order),
+then command validity (1/0), at up to 50 Hz. A command with the wrong number of
+values or any non-finite value is invalid as a whole. Its header is simulation time at the end of the
 response integration step. It is evaluation telemetry and has no autonomy bridge.
 
 ## Run handoff files

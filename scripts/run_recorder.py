@@ -17,7 +17,9 @@ RUNNER_GIT_COMMIT, PROFILE, SEED and ENVIRONMENT, which are stored as
 provenance in the bag's custom data and in recording.json.
 
 Writes to OUTPUT_DIR: bag/ (MCAP, zstd, split at 2 GiB), recorder_qos.yaml
-(QoS overrides) and recording.json (topics, command and provenance).
+(QoS overrides) and recording.json (topics, command and provenance). The
+per-thruster command topics come from the run's public_parameters.json, so
+they always match the vessel file of the run.
 Fails with FileExistsError if OUTPUT_DIR/bag already exists.
 
 The bag includes ground truth (/wamv/ground_truth/odometry) for offline
@@ -32,6 +34,7 @@ from njord_sim.run_manifest import wait_ready
 
 # Recorded topics: clock/TF, raw and processed sensors, the reference
 # autonomy's outputs, thrust commands and evaluation-only truth/contacts.
+# The per-thruster command topics are added from the run (see thruster_topics).
 CAMERAS = ('front_left_camera_sensor', 'front_right_camera_sensor')
 TOPICS = (
     '/clock', '/tf', '/tf_static', '/robot_description', '/wamv/joint_states',
@@ -45,9 +48,14 @@ TOPICS = (
     '/njord/occupancy', '/njord/buoys', '/njord/goal', '/njord/path',
     '/njord/mission_status', '/njord/planner_status', '/njord/navigation_status',
     '/njord/plan_ms', '/njord/race_active',
-    '/njord/thrusters/left/thrust', '/njord/thrusters/right/thrust',
     '/njord/actuator_forces', '/wamv/ground_truth/odometry', '/njord/contacts',
 )
+
+
+def thruster_topics(output):
+    """Command topics of the run's thrusters, from public_parameters.json."""
+    public = json.loads((Path(output)/'public_parameters.json').read_text())
+    return list(public['command_guard']['thruster_topics'])
 
 
 def prepare(output, run_id, environment=None):
@@ -64,6 +72,7 @@ def prepare(output, run_id, environment=None):
     environment = os.environ if environment is None else environment
     metadata = wait_ready(output, run_id)
     output = Path(output)
+    topics = (*TOPICS, *thruster_topics(output))
     bag = output/'bag'
     if bag.exists():
         raise FileExistsError(f'Refusing to overwrite existing rosbag: {bag}')
@@ -95,10 +104,10 @@ def prepare(output, run_id, environment=None):
         '--max-bag-size', str(2*1024*1024*1024),
         '--qos-profile-overrides-path', str(qos_file),
         '--custom-data', *(f'{key}={value}' for key, value in provenance.items()),
-        '--topics', *TOPICS,
+        '--topics', *topics,
     ]
     (output/'recording.json').write_text(json.dumps({
-        **provenance, 'topics': TOPICS, 'storage': 'mcap', 'use_sim_time': True,
+        **provenance, 'topics': topics, 'storage': 'mcap', 'use_sim_time': True,
         'command': args, 'qos_overrides': qos,
     }, indent=2)+'\n')
     return args

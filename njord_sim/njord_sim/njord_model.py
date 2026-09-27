@@ -28,7 +28,7 @@ from pathlib import Path
 import math
 import xml.etree.ElementTree as ET
 import yaml
-from .configuration import sensor_settings
+from .configuration import sensor_settings, thruster_table
 from .constants import COMMAND_TIMEOUT_S
 from .vessel import set_text
 
@@ -274,10 +274,10 @@ def generate(output_dir, resolved_configuration):
     }
     for k, v in fields.items():
         txt(p, k, v)
-    # Thrusters in YAML order: the first receives linear.x and the second
-    # linear.y of /njord/actuator_forces (left, then right). Forces in newtons,
-    # position/axis in the body frame, response_time is the first-order lag.
-    for t in vessel["thrusters"]:
+    # Thrusters in vessel-file order: element i receives data[i] of
+    # /njord/actuator_forces. Forces in newtons, position and unit axis
+    # (from yaw_deg) in the body frame, response_time is the first-order lag.
+    for t in thruster_table(vessel):
         child = ET.SubElement(p, "thruster", name=t["name"])
         for key, value in {
             "position": t["position_m"],
@@ -328,12 +328,12 @@ def generate(output_dir, resolved_configuration):
     bridge("/wamv/ground_truth/odometry", "nav_msgs/msg/Odometry", "gz.msgs.Odometry")
     bridge("/clock", "rosgraph_msgs/msg/Clock", "gz.msgs.Clock")
     bridge("/njord/contacts", "ros_gz_interfaces/msg/Contacts", "gz.msgs.Contacts")
-    # The only ROS -> Gazebo path: thrust forces in newtons packed in a Twist
-    # (linear.x = left, linear.y = right), never a velocity command.
+    # The only ROS -> Gazebo path: one thrust force in newtons per thruster,
+    # in vessel-file order, never a velocity command.
     bridge(
         "/njord/actuator_forces",
-        "geometry_msgs/msg/Twist",
-        "gz.msgs.Twist",
+        "ros_gz_interfaces/msg/Float32Array",
+        "gz.msgs.Float_V",
         direction="ROS_TO_GZ",
     )
     for tree in (root, urdf):

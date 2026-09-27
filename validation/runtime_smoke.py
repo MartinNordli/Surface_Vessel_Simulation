@@ -33,12 +33,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'njord_sim'))
 
 import rclpy
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus
-from geometry_msgs.msg import PoseStamped, TransformStamped, Twist
+from geometry_msgs.msg import PoseStamped, TransformStamped
 from nav_msgs.msg import OccupancyGrid, Odometry, Path as RosPath
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from rclpy.parameter import Parameter
 from rclpy.qos import DurabilityPolicy, QoSProfile
+from ros_gz_interfaces.msg import Float32Array
 from rosgraph_msgs.msg import Clock
 from sensor_msgs.msg import PointCloud2
 from sensor_msgs_py import point_cloud2
@@ -54,8 +55,8 @@ from njord_sim.planner_node import Planner
 class RosCase(unittest.TestCase):
     """Base case: one executor, a driver node and a record of actuator output.
 
-    ``outputs`` collects every (left N, right N) published on
-    /njord/actuator_forces. ``authority`` publishes the mission, navigation
+    ``outputs`` collects every tuple of per-thruster forces (N) published on
+    /njord/actuator_forces (the default WAM-V layout: port, starboard). ``authority`` publishes the mission, navigation
     and race-active signals the command guard requires before it passes
     thrust through.
     """
@@ -66,8 +67,8 @@ class RosCase(unittest.TestCase):
         self.driver = self.add(Node('runtime_smoke_driver'))
         self.outputs = []
         self.clock_tick = None
-        self.driver.create_subscription(Twist, '/njord/actuator_forces',
-                                        lambda msg: self.outputs.append((msg.linear.x, msg.linear.y)), 10)
+        self.driver.create_subscription(Float32Array, '/njord/actuator_forces',
+                                        lambda msg: self.outputs.append(tuple(msg.data)), 10)
         self.mission = self.driver.create_publisher(DiagnosticArray, '/njord/mission_status', 1)
         self.navigation = self.driver.create_publisher(DiagnosticArray, '/njord/navigation_status', 1)
         self.race = self.driver.create_publisher(Bool, '/njord/race_active',
@@ -275,8 +276,8 @@ class GuardSteadyClockTests(RosCase):
         result = guard.set_parameters([Parameter('use_sim_time', value=True)])
         self.assertTrue(result[0].successful)
         clock_pub = self.driver.create_publisher(Clock, '/clock', 1)
-        left = self.driver.create_publisher(Float64, '/njord/thrusters/left/thrust', 1)
-        right = self.driver.create_publisher(Float64, '/njord/thrusters/right/thrust', 1)
+        left = self.driver.create_publisher(Float64, '/thruster_1/command', 1)
+        right = self.driver.create_publisher(Float64, '/thruster_2/command', 1)
         planner = self.driver.create_publisher(DiagnosticArray, '/njord/planner_status', 1)
         clock = Clock()
         clock.clock.sec = 123

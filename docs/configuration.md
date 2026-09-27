@@ -13,13 +13,14 @@ run. Nothing needs rebuilding unless noted.
 | A few WAM-V sensor settings for one experiment | a partial override, e.g. `config/examples/sensors_low_bandwidth.yaml` | `VESSEL_CONFIG=/config/examples/…` |
 | WAM-V sensor mounting poses | `njord_sim/config/vessels/wamv_sensors.xacro` (then `./scripts/njord build`) | always used for the WAM-V |
 | Anything about the Njord boat: geometry, mass, damping, wind, thrusters, sensors and their poses | `njord_sim/config/vessels/njord_v1.yaml` | `VESSEL_CONFIG=/config/vessels/njord_v1.yaml` |
+| The four-thruster Munin placeholder (same schema; layout assumed until Naval decides) | `njord_sim/config/vessels/munin_v0.yaml` | `VESSEL_CONFIG=/config/vessels/munin_v0.yaml` |
 | Gates, obstacles, start pose, default seed, race time limit | `scenarios/<course>.yaml` | course name, e.g. `./scripts/njord demo slalom` |
 | Wind, waves, current, water, physics time step | `environments:` in `scenarios/<course>.yaml` | `ENVIRONMENT=calm\|moderate` |
 | Speed ceiling of each profile | `speed_profiles_mps` in `njord_sim/config/algorithms.yaml` | `PROFILE=fast\|conservative` |
 | Guidance gains, lookahead, operating thrust limit, stopping model, planner timing, map safety margin | `njord_sim/config/algorithms.yaml` | `ALGORITHMS_CONFIG` (default) |
 | Other reference-node parameters (perception thresholds, mission geometry, map size) | a ROS parameter file, e.g. `config/examples/team_params.yaml` | `ROS_PARAMS_FILE=/config/examples/…` |
 | EKF / GPS-transform settings | `njord_sim/config/localization.yaml` | always used |
-| World origin (GPS datum), command timeout, pinned WAM-V hull and thruster geometry | `njord_sim/njord_sim/constants.py` (then rebuild) | fixed platform constants |
+| World origin (GPS datum), command timeout, thruster command topic pattern, pinned WAM-V hull and thruster geometry | `njord_sim/njord_sim/constants.py` (then rebuild) | fixed platform constants |
 | Seed of a single run | — | `SEED=<n>` |
 
 Each vessel file is self-contained: the WAM-V and Njord files each hold their
@@ -105,10 +106,13 @@ VESSEL_CONFIG=/config/examples/sensors_low_bandwidth.yaml ./scripts/njord demo s
 New sensor types need a model, a bridge and adapters; adding a key to YAML does
 not add a sensor.
 
-### Njord (`vessels/njord_v1.yaml`)
+### Njord (`vessels/njord_v1.yaml`, `vessels/munin_v0.yaml`)
 
-An **uncalibrated analytical test vessel** with invented engineering
-parameters; it is not measured Njord geometry. See
+`njord_v1.yaml` is an **uncalibrated analytical test vessel** with invented
+engineering parameters and two aft thrusters; it is not measured Njord
+geometry. `munin_v0.yaml` uses the same hull numbers with four thrusters in an
+assumed 'X' layout, so four-thruster allocation and dynamic positioning can be
+tested before Munin's design is fixed. Neither is Munin's real design. See
 [njord-calibration.md](njord-calibration.md) for how it will be calibrated and
 [njord-model-evidence.md](njord-model-evidence.md) for what has been verified.
 
@@ -149,13 +153,39 @@ Angles describe the relative airflow velocity toward the body; interpolation
 wraps periodically. Loads use dynamic pressure, the two reference areas and
 the yaw reference length, with air density fixed at 1.225 kg/m³.
 
-**Thrusters.** Exactly two, ordered left then right, each with a position, a
-forward-facing planar unit axis, forward/reverse limits in newtons and a
-first-order response time. Guidance solves the same surge/yaw allocation about
-the centre of mass, including asymmetric arms and separate limits. Invalid or
-expired commands target zero thrust after `COMMAND_TIMEOUT_S` of steady wall
-time; the configured response then decays the force in simulation time. Body
-inertia and drift remain.
+**Thrusters.** Two or more fixed thrusters. They are defined only here; the
+model, command guard, guidance and recorder all derive their thruster data from
+this list (`configuration.thruster_table`).
+
+```yaml
+thrusters:                       # list order = thruster index everywhere
+- name: thruster_1               # command topic /thruster_1/command
+  position_m: [1.1, 0.55, -0.1]  # body frame, m
+  yaw_deg: -45.0                 # direction of positive thrust
+  forward_limit_n: 500.0
+  reverse_limit_n: 500.0
+  response_time_s: 0.1           # first-order lag of the applied force
+```
+
+- `name` matches `[a-z][a-z0-9_]*` and is unique. The guard subscribes to
+  `/<name>/command` (`std_msgs/Float64`, newtons).
+- `yaw_deg` is the horizontal direction of positive thrust, counter-clockwise
+  from forward: 0 pushes forward, 90 to port, -90 to starboard, 180 aft.
+  Angled, tunnel and reverse-mounted thrusters are all allowed.
+- The layout must be able to set surge and yaw independently. If it can also
+  set sway (for example four angled thrusters, or aft thrusters plus tunnel
+  thrusters) the vessel is fully actuated; that is required for dynamic
+  positioning.
+- Guidance allocates a wrench (surge, zero sway, yaw) about the centre of mass
+  with the minimum-norm solution and scales all thrusters uniformly at a
+  limit. With a layout that cannot set sway, only surge and yaw are solved.
+- Invalid or expired commands target zero thrust after `COMMAND_TIMEOUT_S` of
+  steady wall time; the configured response then decays the force in
+  simulation time. Body inertia and drift remain.
+
+Njord vessel files are `schema_version: 2`. A schema 1 file, which gave each
+thruster an `axis` unit vector instead of `yaw_deg`, is converted when loaded;
+names and order are kept.
 
 **Limits of the Njord model.** Flat water and constant wind only: waves or
 wind variance in the selected environment are rejected. The reference autonomy
@@ -211,8 +241,10 @@ must not exceed the vessel's physical limit. The braking model (0.25 m/s²,
 
 Values that belong to the pinned platform rather than to an experiment: the
 world origin shared by Gazebo and the GPS transform (63.4305 N, 10.3951 E), the
-0.5 s command timeout used by the guard and both actuator plugins, and the VRX
-WAM-V hull envelope (6 × 3.3 m) and thruster separation (2.05427 m).
+0.5 s command timeout used by the guard and both actuator plugins, the thruster
+command topic pattern `/{name}/command`, and the VRX WAM-V hull envelope
+(6 × 3.3 m) and thruster layout: `thruster_1` (port) and `thruster_2`
+(starboard) at x = -2.373776 m, y = ±1.027135 m, pushing forward.
 
 ## What a run records
 

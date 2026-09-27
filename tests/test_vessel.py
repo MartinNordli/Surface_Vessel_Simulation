@@ -121,7 +121,8 @@ class VesselGenerationTests(unittest.TestCase):
         commands = [bridge for bridge in self.bridges if bridge["direction"] == "ROS_TO_GZ"]
         self.assertEqual(len(commands), 1)
         self.assertEqual(commands[0]["ros_topic_name"], "/njord/actuator_forces")
-        self.assertEqual(commands[0]["ros_type_name"], "geometry_msgs/msg/Twist")
+        self.assertEqual(commands[0]["ros_type_name"], "ros_gz_interfaces/msg/Float32Array")
+        self.assertEqual(commands[0]["gz_type_name"], "gz.msgs.Float_V")
         self.assertFalse(any(bridge["ros_topic_name"] in ("/tf", "/tf_static") for bridge in self.bridges))
 
     def test_custom_configuration_changes_generated_sensors_and_snapshot(self):

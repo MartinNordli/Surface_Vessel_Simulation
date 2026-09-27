@@ -24,10 +24,12 @@ import math
 import os
 from pathlib import Path
 import random
+import re
 
 import yaml
 
-from .constants import COMMAND_TIMEOUT_S, WAMV_HULL, WAMV_THRUSTER_SEPARATION_M
+from .constants import COMMAND_TIMEOUT_S, THRUSTER_COMMAND_TOPIC, WAMV_HULL, WAMV_THRUSTERS
+from .control_core import allocation_matrix, independent_rows
 from .mesh_geometry import geometry_vertices, geometry_volume, load_obj, validate_disjoint_volumes
 from .scenario_core import validate_scenario
 
@@ -89,9 +91,9 @@ def _vector(values, n, name, minimum=None):
         _number(value, name, minimum)
 
 
-def _version(data):
-    if type(data.get('schema_version')) is not int or data['schema_version'] != 1:
-        raise ValueError('schema_version must be integer 1')
+def _version(data, version=1):
+    if type(data.get('schema_version')) is not int or data['schema_version'] != version:
+        raise ValueError(f'schema_version must be integer {version}')
 
 
 def _read(path):
@@ -243,34 +245,113 @@ def _validate_wind(wind):
         raise ValueError('wind angle samples must be unique and ordered')
 
 
+def thruster_axis(yaw_deg):
+    """Body-frame unit thrust direction for a thruster turned ``yaw_deg`` from forward.
+
+    The angle is counter-clockwise about body z (up): 0 pushes forward, 90
+    pushes to port (left), 180 pushes aft. Rounded so 90 degrees gives an
+    exact zero x component.
+    """
+    angle = math.radians(yaw_deg)
+    return [round(math.cos(angle), 12) + 0.0, round(math.sin(angle), 12) + 0.0, 0.0]
+
+
 def _validate_thrusters(thrusters, center_of_mass):
-    """Two fixed forward thrusters, left then right, able to steer and surge."""
-    if not isinstance(thrusters, list) or len(thrusters) != 2:
-        raise ValueError('exactly two fixed thrusters required')
+    """Two or more fixed thrusters, in command order, able to surge and steer.
+
+    Each thruster is named (the name selects its command topic), placed at
+    ``position_m`` in the body frame and pushes along the horizontal
+    direction ``yaw_deg``. Tunnel and reverse-mounted thrusters are allowed;
+    together the thrusters must be able to set surge force and yaw moment
+    independently. Whether they can also set sway (dynamic positioning) is
+    reported by ``fully_actuated``.
+    """
+    if not isinstance(thrusters, list) or len(thrusters) < 2:
+        raise ValueError('at least two fixed thrusters required')
+    names = []
     for thruster in thrusters:
-        _keys(thruster, {'name', 'position_m', 'axis', 'forward_limit_n', 'reverse_limit_n',
+        _keys(thruster, {'name', 'position_m', 'yaw_deg', 'forward_limit_n', 'reverse_limit_n',
                          'response_time_s'}, where='thruster')
+        if not isinstance(thruster['name'], str) or not re.fullmatch(r'[a-z][a-z0-9_]*', thruster['name']):
+            raise ValueError('thruster name must match [a-z][a-z0-9_]* (it becomes a ROS topic name)')
+        names.append(thruster['name'])
         _vector(thruster['position_m'], 3, 'thruster position')
-        _vector(thruster['axis'], 3, 'thruster axis')
-        axis = thruster['axis']
-        if axis[0] <= 0 or abs(axis[2]) > 1e-12 or not math.isclose(sum(v * v for v in axis), 1., abs_tol=1e-9):
-            raise ValueError('thruster axes must be planar forward unit vectors')
+        _number(thruster['yaw_deg'], 'thruster yaw_deg')
+        if not -360 <= thruster['yaw_deg'] <= 360:
+            raise ValueError('thruster yaw_deg must be within [-360, 360] degrees')
         for key in ('forward_limit_n', 'reverse_limit_n'):
             _number(thruster[key], key, positive=True)
         _number(thruster['response_time_s'], 'response_time_s', 0)
-    if [t['name'] for t in thrusters] != ['left', 'right']:
-        raise ValueError('thrusters must be ordered left, right')
-    if thrusters[0]['position_m'][1] <= thrusters[1]['position_m'][1]:
-        raise ValueError('left thruster must be port of right thruster')
-    # Each thruster contributes (surge force, yaw moment) per newton; the two
-    # columns must be linearly independent for guidance to allocate thrust.
-    columns = []
-    for thruster in thrusters:
-        x, y, _ = [p - c for p, c in zip(thruster['position_m'], center_of_mass)]
-        ax, ay, _ = thruster['axis']
-        columns.append((ax, x * ay - y * ax))
-    if abs(columns[0][0] * columns[1][1] - columns[1][0] * columns[0][1]) < 1e-9:
+    if len(set(names)) != len(names):
+        raise ValueError('thruster names must be unique')
+    positions, axes = _arms(thrusters, center_of_mass)
+    surge, _, yaw = allocation_matrix(positions, axes)
+    if independent_rows([surge, yaw]) < 2:
         raise ValueError('thruster geometry cannot independently control surge and yaw')
+
+
+def _arms(thrusters, center_of_mass):
+    """Flattened thruster positions relative to the COM and unit axes."""
+    positions = [p - c for t in thrusters for p, c in zip(t['position_m'], center_of_mass)]
+    axes = [v for t in thrusters for v in thruster_axis(t['yaw_deg'])]
+    return positions, axes
+
+
+def convert_legacy_vessel(data):
+    """Convert a schema 1 Njord vessel to schema 2.
+
+    Schema 1 gave each thruster a planar unit ``axis`` vector; schema 2 gives
+    the same direction as ``yaw_deg``. Names and order are kept, so the
+    command topics follow the old names. Non-planar or non-unit axes are
+    rejected instead of guessed.
+    """
+    result = copy.deepcopy(data)
+    if result.get('schema_version') != 1 or result.get('profile') != 'njord':
+        raise ValueError('legacy vessel conversion expects a schema 1 Njord vessel')
+    for thruster in result.get('thrusters') or []:
+        if not isinstance(thruster, dict) or 'yaw_deg' in thruster:
+            raise ValueError('schema 1 thrusters use axis, not yaw_deg')
+        axis = thruster.pop('axis', None)
+        _vector(axis, 3, 'thruster axis')
+        if abs(axis[2]) > 1e-12 or not math.isclose(sum(v * v for v in axis), 1., abs_tol=1e-9):
+            raise ValueError('thruster axes must be planar unit vectors')
+        thruster['yaw_deg'] = math.degrees(math.atan2(axis[1], axis[0]))
+    result['schema_version'] = 2
+    return result
+
+
+def thruster_table(vessel):
+    """Every thruster of a validated vessel, in command order.
+
+    This is the single derived view of the thrusters: model generation reads
+    it directly, and the command guard, guidance and recorder through the
+    public parameters built from it by ``autonomy_parameters``, so the vessel file
+    stays the only place thrusters are defined. The WAM-V reference uses the
+    pinned VRX layout from constants.py with its configured symmetric limit.
+
+    Returns a list of dicts with ``name``, ``topic`` (the ROS command topic),
+    ``position_m`` (body frame, m), ``axis`` (body-frame unit vector),
+    ``forward_limit_n`` / ``reverse_limit_n`` (N, positive magnitudes) and
+    ``response_time_s`` (None for the WAM-V, whose response is VRX's).
+    """
+    if vessel['profile'] == 'wamv_reference':
+        limit = vessel['settings']['max_thrust_n']
+        source = [dict(t, forward_limit_n=limit, reverse_limit_n=limit, response_time_s=None)
+                  for t in WAMV_THRUSTERS]
+    else:
+        source = vessel['thrusters']
+    return [{'name': t['name'], 'topic': THRUSTER_COMMAND_TOPIC.format(name=t['name']),
+             'position_m': list(t['position_m']), 'axis': thruster_axis(t['yaw_deg']),
+             'forward_limit_n': t['forward_limit_n'], 'reverse_limit_n': t['reverse_limit_n'],
+             'response_time_s': t['response_time_s']} for t in source]
+
+
+def fully_actuated(vessel):
+    """True when the thrusters can set surge, sway and yaw independently."""
+    table = thruster_table(vessel)
+    center = vessel.get('center_of_mass_m', [0.0, 0.0, 0.0])
+    positions = [p - c for t in table for p, c in zip(t['position_m'], center)]
+    return independent_rows(allocation_matrix(positions, [v for t in table for v in t['axis']])) == 3
 
 
 def validate_vessel(vessel, resource_base=None, resource_files=None):
@@ -278,8 +359,12 @@ def validate_vessel(vessel, resource_base=None, resource_files=None):
 
     ``resource_base`` resolves relative mesh paths; loaded mesh paths are
     appended to ``resource_files`` so the run manifest can checksum them.
+    WAM-V files are schema 1 and Njord files schema 2; a schema 1 Njord file
+    is converted by ``convert_legacy_vessel`` and the converted copy returned.
     """
-    _version(vessel)
+    if vessel.get('profile') == 'njord' and vessel.get('schema_version') == 1:
+        vessel = convert_legacy_vessel(vessel)
+    _version(vessel, 2 if vessel.get('profile') == 'njord' else 1)
     if vessel.get('profile') == 'wamv_reference':
         _keys(vessel, {'schema_version', 'profile', 'settings'}, where='WAM-V vessel')
         _keys(vessel['settings'], WAMV_SETTING_KEYS, where='WAM-V settings')
@@ -519,25 +604,21 @@ def autonomy_parameters(resolved):
     vessel = resolved['vessel']
     algorithms = copy.deepcopy(resolved['algorithms'])
     result = {'guidance': algorithms['guidance'], 'planner': algorithms['planner']}
-    if vessel['profile'] == 'njord':
-        thrusters = vessel['thrusters']
-        # Thruster positions relative to the center of mass, flattened xyz.
-        result['guidance'].update(
-            physical_allocation=True,
-            thruster_positions=[v - c for t in thrusters
-                                for v, c in zip(t['position_m'], vessel['center_of_mass_m'])],
-            thruster_axes=[v for t in thrusters for v in t['axis']],
-            thruster_forward_limits=[t['forward_limit_n'] for t in thrusters],
-            thruster_reverse_limits=[t['reverse_limit_n'] for t in thrusters])
-        forward = [t['forward_limit_n'] for t in thrusters]
-        reverse = [t['reverse_limit_n'] for t in thrusters]
-        hull = vessel['hull']
-    else:
-        result['guidance']['thruster_separation_m'] = WAMV_THRUSTER_SEPARATION_M
-        maximum = vessel['settings']['max_thrust_n']
-        forward = reverse = [maximum, maximum]
-        hull = WAMV_HULL
-    result['command_guard'] = {'forward_limits': forward, 'reverse_limits': reverse,
+    table = thruster_table(vessel)
+    # Positions are handed to allocation relative to the center of mass
+    # (flattened xyz); the WAM-V's pinned VRX model is symmetric about x.
+    center = vessel.get('center_of_mass_m', [0.0, 0.0, 0.0])
+    forward = [t['forward_limit_n'] for t in table]
+    reverse = [t['reverse_limit_n'] for t in table]
+    topics = [t['topic'] for t in table]
+    result['guidance'].update(
+        thruster_topics=topics,
+        thruster_positions=[p - c for t in table for p, c in zip(t['position_m'], center)],
+        thruster_axes=[v for t in table for v in t['axis']],
+        thruster_forward_limits=forward, thruster_reverse_limits=reverse)
+    hull = vessel['hull'] if vessel['profile'] == 'njord' else WAMV_HULL
+    result['command_guard'] = {'thruster_topics': topics,
+                               'forward_limits': forward, 'reverse_limits': reverse,
                                'max_thrust': result['guidance']['max_thrust'],
                                'timeout_s': COMMAND_TIMEOUT_S}
     settings = sensor_settings(resolved)
@@ -555,16 +636,11 @@ def sensor_settings(resolved):
     """Flat sensor and thrust settings of the resolved vessel.
 
     Written to the run directory as vessel_config.yaml and used by the model
-    generators. Includes ``max_thrust_n`` (smallest physical limit) and
-    ``thruster_separation_m``.
+    generators. Includes ``max_thrust_n``, the smallest physical thruster limit.
     """
     vessel = resolved['vessel']
     if vessel['profile'] == 'wamv_reference':
-        settings = copy.deepcopy(vessel['settings'])
-        settings['thruster_separation_m'] = WAMV_THRUSTER_SEPARATION_M
-        return settings
+        return copy.deepcopy(vessel['settings'])
     settings = copy.deepcopy(vessel['sensors']['settings'])
-    thrusters = vessel['thrusters']
-    settings['max_thrust_n'] = min(t[k] for t in thrusters for k in ('forward_limit_n', 'reverse_limit_n'))
-    settings['thruster_separation_m'] = thrusters[0]['position_m'][1] - thrusters[1]['position_m'][1]
+    settings['max_thrust_n'] = min(t[k] for t in vessel['thrusters'] for k in ('forward_limit_n', 'reverse_limit_n'))
     return settings

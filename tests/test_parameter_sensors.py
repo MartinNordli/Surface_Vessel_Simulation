@@ -77,7 +77,7 @@ class AdapterWiringTests(unittest.TestCase):
                 clock.seconds = 10.+i*.01
                 raw.header.stamp = clock.now().to_msg()
                 node.imu(raw)
-                msg = pubs['/wamv/sensors/imu/imu/data'].messages[-1]
+                msg = pubs['/sensors/imu/data'].messages[-1]
                 self.assertEqual(msg.header, raw.header)
                 errors.append([msg.angular_velocity.x-2., msg.angular_velocity.y, msg.angular_velocity.z,
                                msg.linear_acceleration.x, msg.linear_acceleration.y, msg.linear_acceleration.z-9.81])
@@ -129,15 +129,15 @@ class AdapterWiringTests(unittest.TestCase):
             node.imu(raw)
             receipt = node.received['imu']
             node.imu(raw)
-            self.assertEqual(len(pubs['/wamv/sensors/imu/imu/data'].messages), 1)
+            self.assertEqual(len(pubs['/sensors/imu/data'].messages), 1)
             self.assertEqual(node.received['imu'], receipt)
             clock.seconds += 1.
             node.imu(raw)
-            self.assertEqual(len(pubs['/wamv/sensors/imu/imu/data'].messages), 1)
+            self.assertEqual(len(pubs['/sensors/imu/data'].messages), 1)
             clock.seconds = 0.
             raw.header.stamp = clock.now().to_msg()
             node.imu(raw)
-            self.assertEqual(len(pubs['/wamv/sensors/imu/imu/data'].messages), 2)
+            self.assertEqual(len(pubs['/sensors/imu/data'].messages), 2)
             for name in ('gps', 'gps_projected', 'estimate'):
                 node.received[name] = node.received['imu']
             node.status()

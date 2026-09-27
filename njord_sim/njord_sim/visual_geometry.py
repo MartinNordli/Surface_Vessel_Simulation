@@ -12,6 +12,8 @@ from pathlib import Path
 import subprocess
 import numpy as np
 
+from .constants import BASE_FRAME
+
 
 def resource_path(uri):
     if uri.startswith('file://'):
@@ -85,6 +87,6 @@ def export_visual_geometry(model, output):
             surfaces.append(dict(name=visual.get('name'), frame=link.get('name'), vertices=vertices.tolist(), faces=faces))
     if not surfaces:
         raise ValueError('generated model has no visible vessel surfaces')
-    artifact = dict(version=1, frame='wamv/base_link', surfaces=surfaces, resources=resources)
+    artifact = dict(version=1, frame=BASE_FRAME, surfaces=surfaces, resources=resources)
     (output/'self_geometry.json').write_text(json.dumps(artifact, allow_nan=False)+'\n')
     return resources

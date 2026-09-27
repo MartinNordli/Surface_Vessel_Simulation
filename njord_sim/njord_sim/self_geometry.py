@@ -9,9 +9,11 @@ import math
 from pathlib import Path
 import numpy as np
 
+from .constants import BASE_FRAME
+
 
 class SelfGeometry:
-    def __init__(self, artifact, margin, frame='wamv/base_link'):
+    def __init__(self, artifact, margin, frame=BASE_FRAME):
         if artifact.get('version') != 1 or artifact.get('frame') != frame:
             raise ValueError('self geometry version/frame mismatch')
         if not math.isfinite(margin) or margin < 0:
@@ -45,12 +47,12 @@ class SelfGeometry:
                 self.index.setdefault(key, []).append(i)
 
     @classmethod
-    def load(cls, path, margin, frame='wamv/base_link'):
+    def load(cls, path, margin, frame=BASE_FRAME):
         # Missing or invalid artifacts fail closed: there is no generic hull fallback.
         return cls(json.loads(Path(path).read_text()), margin, frame)
 
     @classmethod
-    def load_frames(cls, path, margin, frame='wamv/base_link'):
+    def load_frames(cls, path, margin, frame=BASE_FRAME):
         if not path or not Path(path).is_file():
             raise ValueError(f'required self geometry artifact is missing: {path!r}')
         artifact = json.loads(Path(path).read_text())

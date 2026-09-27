@@ -40,6 +40,7 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data, QoSProfile, DurabilityPolicy
 from std_msgs.msg import Float64, Bool
 
+from .constants import GROUND_TRUTH_TOPIC, GZ_MODEL_NAME
 from .scenario_core import RaceScorer, load_scenario, scenario_digest
 
 
@@ -54,7 +55,7 @@ class Evaluator(Node):
     def __init__(self):
         super().__init__("evaluator")
         self.declare_parameters("", [
-            ("scenario_file", ""), ("odom_topic", "/wamv/ground_truth/odometry"),
+            ("scenario_file", ""), ("odom_topic", GROUND_TRUTH_TOPIC),
             ("path_topic", "/njord/path"), ("contacts_topic", "/njord/contacts"),
             ("output", "outputs/run_metrics.json"), ("run_label", "run"),
             ("profile", "conservative"), ("state_source", "estimate"), ("wall_timeout_s", 600.0),
@@ -146,8 +147,9 @@ class Evaluator(Node):
         """Accept a fresh contact message; end the race if it involves the vessel.
 
         Empty messages are heartbeats from the ContactMonitor plugin and only
-        refresh liveness. A contact involves the vessel when either collision
-        name contains ``wamv`` (the model name of both vessel profiles).
+        refresh liveness. A contact involves the vessel when either scoped
+        collision name (``model::link::collision``) belongs to the vessel
+        model, ``constants.GZ_MODEL_NAME``.
         """
         if self.done:
             return
@@ -159,7 +161,8 @@ class Evaluator(Node):
         self.contact_last_stamp, self.contact_last_wall = stamp, time.monotonic()
         def name(collision):
             return getattr(collision, "name", str(collision))
-        involved = any("wamv" in name(c.collision1) or "wamv" in name(c.collision2)
+        vessel = GZ_MODEL_NAME + "::"
+        involved = any(name(c.collision1).startswith(vessel) or name(c.collision2).startswith(vessel)
                        for c in message.contacts)
         self.scorer.contact(involved)
         if involved:

@@ -5,6 +5,7 @@ from types import SimpleNamespace as NS
 import unittest
 import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'validation'))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'njord_sim'))
 from runtime_checks import StreamWindow, image_varies, valid_odometry
 
 
@@ -19,7 +20,7 @@ class RuntimeEvidenceTests(unittest.TestCase):
 
     def test_all_pose_twist_fields_and_quaternion_are_checked(self):
         vector = lambda: NS(x=0., y=0., z=0.)
-        msg = NS(header=NS(frame_id='map'), child_frame_id='wamv/base_link',
+        msg = NS(header=NS(frame_id='map'), child_frame_id='base_link',
                  pose=NS(pose=NS(position=vector(), orientation=NS(x=0.,y=0.,z=0.,w=1.))),
                  twist=NS(twist=NS(linear=vector(), angular=vector())))
         self.assertTrue(valid_odometry(msg))

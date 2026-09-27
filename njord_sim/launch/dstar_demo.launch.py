@@ -32,7 +32,7 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 from njord_sim.configuration import DEFAULT_PROFILE, config_path, speed_profile_names, validate_reference_timing
-from njord_sim.constants import WORLD_ORIGIN_WGS84
+from njord_sim.constants import GPS_TOPIC, IMU_TOPIC, WORLD_ORIGIN_WGS84
 
 COMPONENTS = ('autonomy', 'controller', 'perception', 'mapping')
 STATE_SOURCES = ('estimate', 'truth')
@@ -85,8 +85,8 @@ def launch(context):
     actions.append(Node(package='robot_localization', executable='navsat_transform_node', name='navsat',
                         output='screen',
                         parameters=[localization, *overrides, {'datum': list(WORLD_ORIGIN_WGS84)}, common],
-                        remappings=[('imu', '/wamv/sensors/imu/imu/data'),
-                                    ('gps/fix', '/wamv/sensors/gps/gps/fix'),
+                        remappings=[('imu', IMU_TOPIC),
+                                    ('gps/fix', GPS_TOPIC),
                                     ('odometry/filtered', '/njord/odometry'),
                                     ('odometry/gps', '/njord/gps/odometry')]))
 

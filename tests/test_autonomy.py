@@ -167,7 +167,7 @@ class NodeCallbackTests(unittest.TestCase):
     def setUp(self):
         self.node = self.Guidance.__new__(self.Guidance)
         self.node.last_sim_time = None
-        self.node.p = lambda name: {'map_frame': 'map', 'base_frame': 'wamv/base_link',
+        self.node.p = lambda name: {'map_frame': 'map', 'base_frame': 'base_link',
                                    'stale_after_s': 1.0}[name]
         self.commands = []
         self.node.thrusters = [NS(publish=lambda msg: self.commands.append(msg.data))] * 2
@@ -182,7 +182,7 @@ class NodeCallbackTests(unittest.TestCase):
         pose = NS(position=NS(x=1, y=2), orientation=NS(x=0, y=0, z=0, w=1))
         twist = NS(linear=NS(x=1), angular=NS(z=0))
         self.node.on_odom(NS(header=NS(frame_id='map', stamp=NS(sec=1, nanosec=500000000)),
-                            child_frame_id='wamv/base_link', pose=NS(pose=pose), twist=NS(twist=twist)))
+                            child_frame_id='base_link', pose=NS(pose=pose), twist=NS(twist=twist)))
         self.assertEqual(self.node.odom_stamp, 1.5)
         self.node.path = [(1, 1), (5, 5)]
         self.node.geometry = Geometry(10, 10, 1, 0, 0)

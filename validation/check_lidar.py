@@ -43,6 +43,8 @@ from sensor_msgs.msg import PointCloud2
 from sensor_msgs_py import point_cloud2
 from tf2_ros import Buffer, TransformException, TransformListener
 
+from njord_sim.constants import BASE_FRAME, GROUND_TRUTH_TOPIC, LIDAR_POINTS_TOPIC
+
 SAMPLES = 40  # Scans with a target hit needed before judging.
 
 
@@ -70,8 +72,8 @@ class LidarCheck(Node):
     def __init__(self):
         super().__init__("lidar_check")
         self.declare_parameters("", [
-            ("points_topic", "/wamv/sensors/lidars/lidar_wamv_sensor/points"),
-            ("odom_topic", "/wamv/ground_truth/odometry"), ("body_frame", "wamv/base_link"),
+            ("points_topic", LIDAR_POINTS_TOPIC),
+            ("odom_topic", GROUND_TRUTH_TOPIC), ("body_frame", BASE_FRAME),
             ("target", [25.0, 7.0, 0.5]), ("min_height_m", 0.4),
             ("max_error_m", 0.5), ("wall_timeout_s", 120.0)])
         self.target = np.asarray(self.get_parameter("target").value, dtype=float)

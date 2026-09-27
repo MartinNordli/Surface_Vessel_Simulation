@@ -3,7 +3,7 @@
 The simulator launch prepares a fresh run directory in this order:
 
 1. ``freeze_resources``  copy checksummed mesh files into ``resources/``
-2. (model and world generation write wamv.sdf, njord_course.sdf, ...)
+2. (model and world generation write vessel.sdf, njord_course.sdf, ...)
 3. ``write_manifest``    snapshot inputs, hash every generated artifact
 4. ``publish_ready``     atomically write ``run_ready.json`` last
 
@@ -122,7 +122,7 @@ def write_manifest(output, run_id, resolved, sources, public_parameters):
     # are not part of the sealed run inputs.
     atomic_text(output/'resolved_configuration.json', json.dumps(resolved, indent=2, allow_nan=False)+'\n')
     atomic_text(output/'public_parameters.json', json.dumps(public_parameters, indent=2, allow_nan=False)+'\n')
-    immutable = {'wamv.sdf', 'wamv.urdf', 'bridges.yaml', 'vessel_config.yaml',
+    immutable = {'vessel.sdf', 'vessel.urdf', 'bridges.yaml', 'vessel_config.yaml',
                  'njord_course.sdf', 'resolved_configuration.json', 'resolved_scenario.json',
                  'scenario.sha256', 'public_parameters.json', 'self_geometry.json'}
     artifacts = {str(path.relative_to(output)): sha256(path)

@@ -5,9 +5,9 @@ localisation EKFs. It adds seeded, metric measurement noise, fills in
 covariances, and reports whether navigation is healthy.
 
 Subscribes (best-effort sensor QoS):
-    ``/wamv/sensors/imu/imu/data_raw`` (sensor_msgs/Imu): Gazebo IMU,
+    ``/sim/sensors/imu/data_raw`` (sensor_msgs/Imu): Gazebo IMU,
         orientation in ENU.
-    ``/wamv/sensors/gps/gps/fix_raw`` (sensor_msgs/NavSatFix): Gazebo GPS
+    ``/sim/sensors/gps/fix_raw`` (sensor_msgs/NavSatFix): Gazebo GPS
         with its own position noise disabled (see ``vessel.py``).
     ``/njord/gps/odometry`` (nav_msgs/Odometry): GPS fix projected into the
         local frame by navsat_transform; only checked for freshness.
@@ -15,9 +15,9 @@ Subscribes (best-effort sensor QoS):
         only checked for freshness and plausibility.
 
 Publishes:
-    ``/wamv/sensors/imu/imu/data`` (sensor_msgs/Imu): orientation with added
+    ``/sensors/imu/data`` (sensor_msgs/Imu): orientation with added
         noise in attitude, angular rate and acceleration; diagonal covariances.
-    ``/wamv/sensors/gps/gps/fix`` (sensor_msgs/NavSatFix): position with
+    ``/sensors/gps/fix`` (sensor_msgs/NavSatFix): position with
         added metric Gaussian noise and a known diagonal covariance.
     ``/njord/navigation_status`` (diagnostic_msgs/DiagnosticArray): status
         ``navigation`` at 10 Hz of steady (wall) time; OK only while all four
@@ -45,6 +45,7 @@ from sensor_msgs.msg import Imu, NavSatFix
 from nav_msgs.msg import Odometry
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus
 
+from njord_sim.constants import BASE_FRAME, GPS_RAW_TOPIC, GPS_TOPIC, IMU_RAW_TOPIC, IMU_TOPIC
 from njord_sim.defaults import node_defaults
 from njord_sim.geometry import valid_odometry
 from njord_sim.sensor_noise_core import SensorNoise, covariance, noisy_orientation, noisy_fix
@@ -62,14 +63,14 @@ class SensorAdapter(Node):
         self.received = {}
         self.last_clock = None
         self.clock_progress_wall = time.monotonic()
-        self.imu_pub = self.create_publisher(Imu, '/wamv/sensors/imu/imu/data',
+        self.imu_pub = self.create_publisher(Imu, IMU_TOPIC,
                                              qos_profile_sensor_data)
-        self.gps_pub = self.create_publisher(NavSatFix, '/wamv/sensors/gps/gps/fix',
+        self.gps_pub = self.create_publisher(NavSatFix, GPS_TOPIC,
                                              qos_profile_sensor_data)
         self.status_pub = self.create_publisher(DiagnosticArray, '/njord/navigation_status', 1)
-        self.create_subscription(Imu, '/wamv/sensors/imu/imu/data_raw', self.imu,
+        self.create_subscription(Imu, IMU_RAW_TOPIC, self.imu,
                                  qos_profile_sensor_data)
-        self.create_subscription(NavSatFix, '/wamv/sensors/gps/gps/fix_raw', self.gps,
+        self.create_subscription(NavSatFix, GPS_RAW_TOPIC, self.gps,
                                  qos_profile_sensor_data)
         self.create_subscription(Odometry, '/njord/gps/odometry',
                                  lambda msg: self.record('gps_projected', msg), qos_profile_sensor_data)
@@ -105,7 +106,7 @@ class SensorAdapter(Node):
         in [0, 4) m^2 (standard deviation below 2 m).
         """
         # Pose covariance is a row-major 6x6: [0] is var(x), [7] is var(y).
-        if (valid_odometry(msg, 'map', 'wamv/base_link')
+        if (valid_odometry(msg, 'map', BASE_FRAME)
                 and 0 <= msg.pose.covariance[0] < 4 and 0 <= msg.pose.covariance[7] < 4):
             self.record('estimate', msg)
 

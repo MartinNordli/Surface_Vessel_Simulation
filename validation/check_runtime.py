@@ -16,6 +16,8 @@ from sensor_msgs.msg import Image, PointCloud2
 from sensor_msgs_py import point_cloud2
 from nav_msgs.msg import Odometry
 from tf2_ros import Buffer, TransformListener
+
+from njord_sim.constants import CAMERAS, LIDAR_POINTS_TOPIC, camera_topic
 from rclpy.parameter import Parameter
 from rclpy.time import Time
 from runtime_checks import StreamWindow, image_varies, valid_odometry
@@ -30,10 +32,10 @@ class Check(Node):
         self.seen = {}
         self.window = StreamWindow()
         self.pending = defaultdict(deque)
-        for side in ('left','right'):
-            self.create_subscription(Image, f'/wamv/sensors/cameras/front_{side}_camera_sensor/image_raw',
+        for camera, side in zip(CAMERAS, ('left','right')):
+            self.create_subscription(Image, camera_topic(camera, 'image_raw'),
                                      lambda m,s=side: self.camera(s,m), qos_profile_sensor_data)
-        self.create_subscription(PointCloud2, '/wamv/sensors/lidars/lidar_wamv_sensor/points', self.lidar, qos_profile_sensor_data)
+        self.create_subscription(PointCloud2, LIDAR_POINTS_TOPIC, self.lidar, qos_profile_sensor_data)
         self.create_subscription(Odometry, '/njord/odometry', self.odom, qos_profile_sensor_data)
 
     def observe(self, name, message, valid, details):

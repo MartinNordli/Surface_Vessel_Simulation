@@ -263,7 +263,7 @@ command topic pattern `/{name}/command`, and the VRX WAM-V hull envelope
 Every run directory under `outputs/` holds the source YAML
 (`source_config/`), checksummed resource copies (`resources/`), the fully
 resolved values (`resolved_configuration.json`), the generated
-`wamv.sdf`/`wamv.urdf`/`bridges.yaml`/`njord_course.sdf`, the flat sensor
+`vessel.sdf`/`vessel.urdf`/`bridges.yaml`/`njord_course.sdf`, the flat sensor
 settings actually used (`vessel_config.yaml`), the autonomy's parameters
 (`public_parameters.json`) and `run_manifest.json` with SHA-256 digests of all
 of them. `run_ready.json` binds the manifest digest to the run ID; autonomy,

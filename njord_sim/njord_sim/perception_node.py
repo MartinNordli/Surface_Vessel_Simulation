@@ -7,7 +7,7 @@ the resulting buoy positions are tracked per camera (see ``perception_core``).
 Subscribes (best-effort sensor QoS):
     ``image_topics`` (sensor_msgs/Image): undistorted RGB images, one per
         camera, in the camera optical frame (x right, y down, z forward).
-        Default: front left and right WAM-V cameras, ``.../image_raw``.
+        Default: the front left and right cameras, ``/sensors/cameras/<camera>/image_raw``.
     ``camera_info_topics`` (sensor_msgs/CameraInfo): intrinsics per camera,
         in the same order as ``image_topics``.
     ``points_topic`` (sensor_msgs/PointCloud2): 3D lidar in the lidar frame.
@@ -55,6 +55,7 @@ from sensor_msgs_py import point_cloud2
 from tf2_ros import Buffer, TransformException, TransformListener
 from vision_msgs.msg import Detection3D, Detection3DArray, ObjectHypothesisWithPose
 
+from njord_sim.constants import CAMERAS, LIDAR_POINTS_TOPIC, camera_topic
 from njord_sim.geometry import stamp_seconds, transform_from_ros
 from njord_sim.defaults import node_defaults
 from njord_sim.perception_core import associate_lidar, BuoyTracker, detect_blobs
@@ -65,12 +66,10 @@ class Perception(Node):
 
     def __init__(self):
         super().__init__("perception")
-        roots = ["/wamv/sensors/cameras/front_left_camera_sensor",
-                 "/wamv/sensors/cameras/front_right_camera_sensor"]
         self.declare_parameters("", [
-            ("image_topics", [root+"/image_raw" for root in roots]),
-            ("camera_info_topics", [root+"/camera_info" for root in roots]),
-            ("points_topic", "/wamv/sensors/lidars/lidar_wamv_sensor/points"),
+            ("image_topics", [camera_topic(camera, "image_raw") for camera in CAMERAS]),
+            ("camera_info_topics", [camera_topic(camera, "camera_info") for camera in CAMERAS]),
+            ("points_topic", LIDAR_POINTS_TOPIC),
             ("buoys_topic", "/njord/buoys"), ("map_frame", "map"),
             *node_defaults("perception"),
             ("min_blob_area", 20), ("min_observations", 3), ("track_ttl_s", 2.0),

@@ -76,7 +76,7 @@ class SensorAdapterTests(unittest.TestCase):
     @staticmethod
     def fix():
         msg = NavSatFix()
-        msg.header.frame_id = "wamv/gps_wamv_link"
+        msg.header.frame_id = "gps_link"
         msg.header.stamp.sec = 10
         msg.header.stamp.nanosec = 0
         msg.status.status = 0
@@ -106,7 +106,7 @@ class SensorAdapterTests(unittest.TestCase):
                 clock.seconds = 10. + index * .1
                 raw.header.stamp = clock.now().to_msg()
                 node.gps(raw)
-            messages = pubs['/wamv/sensors/gps/gps/fix'].messages
+            messages = pubs['/sensors/gps/fix'].messages
             errors = np.array([enu@(self.ecef(m.latitude, m.longitude, m.altitude)-baseline) for m in messages])
             np.testing.assert_allclose(np.std(errors, axis=0), [.3, .3, .5], rtol=.05)
             np.testing.assert_allclose(np.mean(errors, axis=0), [0., 0., 0.], atol=.025)
@@ -129,7 +129,7 @@ class SensorAdapterTests(unittest.TestCase):
                     clock.seconds = 10. + index * .1
                     raw.header.stamp = clock.now().to_msg()
                     node.gps(raw)
-                sequences.append([(m.latitude, m.longitude, m.altitude) for m in pubs['/wamv/sensors/gps/gps/fix'].messages])
+                sequences.append([(m.latitude, m.longitude, m.altitude) for m in pubs['/sensors/gps/fix'].messages])
         self.assertEqual(sequences[0], sequences[1])
 
     def test_invalid_fix_is_not_freshened_or_published(self):
@@ -137,7 +137,7 @@ class SensorAdapterTests(unittest.TestCase):
             raw = self.fix()
             raw.status.status = -1
             node.gps(raw)
-            self.assertEqual(pubs['/wamv/sensors/gps/gps/fix'].messages, [])
+            self.assertEqual(pubs['/sensors/gps/fix'].messages, [])
             self.assertNotIn('gps', node.received)
 
 

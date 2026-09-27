@@ -36,16 +36,16 @@ class VesselGenerationTests(unittest.TestCase):
         cls.out = Path(cls.temp.name)
         urdf, cls.config = generate(cls.out)
         cls.urdf = ET.fromstring(urdf)
-        cls.xml = ET.parse(cls.out/"wamv.sdf").getroot()
+        cls.xml = ET.parse(cls.out/"vessel.sdf").getroot()
         cls.model = cls.xml.find("model")
         cls.sensors = {sensor.get("name"): sensor for sensor in cls.model.findall(".//sensor")}
         cls.bridges = yaml.safe_load((cls.out/"bridges.yaml").read_text())
         # sdformat14 raises on errors; a successful load returns None.
         cls.sdf = sdformat14.Root()
-        cls.sdf.load(str(cls.out/"wamv.sdf"))
+        cls.sdf.load(str(cls.out/"vessel.sdf"))
 
     def test_sdformat_model_and_physical_hull(self):
-        self.assertEqual(self.sdf.model().name(), "wamv")
+        self.assertEqual(self.sdf.model().name(), "vessel")
         self.assertGreater(self.sdf.model().link_count(), 3)
         plugins = self.model.findall("plugin")
         names = [plugin.get("name") for plugin in plugins]
@@ -54,16 +54,30 @@ class VesselGenerationTests(unittest.TestCase):
         self.assertEqual(names.count("gz::sim::systems::Thruster"), 2)
         self.assertIn("njord::ActuatorWatchdog", names)
         self.assertFalse(any("PosePublisher" in name or "DetachableJoint" in name for name in names))
-        base = self.model.find("link[@name='wamv/base_link']")
+        base = self.model.find("link[@name='base_link']")
         self.assertGreater(float(base.findtext("inertial/mass")), 100.)
         self.assertTrue(base.findall("collision"))
+
+    def test_ros_facing_names_have_no_vessel_prefix(self):
+        # Gazebo links and TF frames share the neutral names; VRX keeps its
+        # namespace only on the Gazebo-internal thruster topics.
+        names = [element.get("name") for element in self.urdf.iter() if element.tag in ("link", "joint")]
+        self.assertTrue(names)
+        self.assertFalse([name for name in names if name.startswith("wamv/")])
+        for frame in ("base_link", "lidar_link", "imu_link", "gps_link"):
+            self.assertIn(frame, names)
+        self.assertFalse([b for b in self.bridges if "wamv" in b["ros_topic_name"]])
+        truth = next(p for p in self.model.findall("plugin") if p.get("name") == "gz::sim::systems::OdometryPublisher")
+        self.assertEqual(truth.findtext("robot_base_frame"), "base_link")
+        self.assert_bridge("/sim/ground_truth/odometry", "/sim/ground_truth/odometry", "nav_msgs/msg/Odometry",
+                           "GZ_TO_ROS")
 
     def test_both_cameras_have_matching_optical_frames_and_ros_bridges(self):
         links = {link.get("name") for link in self.urdf.findall("link")}
         for side in ("left", "right"):
             name = f"front_{side}_camera_sensor"
-            frame = f"wamv/front_{side}_camera_link_optical"
-            root = f"/wamv/sensors/cameras/{name}"
+            frame = f"front_{side}_camera_link_optical"
+            root = f"/sensors/cameras/front_{side}"
             sensor = self.sensors[name]
             self.assertIn(frame, links)
             self.assertEqual(sensor.findtext("gz_frame_id"), frame)
@@ -90,8 +104,8 @@ class VesselGenerationTests(unittest.TestCase):
         self.assertEqual(bridge["direction"], direction)
 
     def test_lidar_geometry_and_scan_pointcloud_contract(self):
-        sensor = self.sensors["lidar_wamv_sensor"]
-        self.assertEqual(sensor.findtext("gz_frame_id"), "wamv/lidar_wamv_link")
+        sensor = self.sensors["lidar_sensor"]
+        self.assertEqual(sensor.findtext("gz_frame_id"), "lidar_link")
         ray = sensor.find("ray")
         if ray is None:
             ray = sensor.find("lidar")
@@ -100,9 +114,9 @@ class VesselGenerationTests(unittest.TestCase):
         self.assertAlmostEqual(float(ray.findtext("range/max")), self.config["lidar_range"])
         self.assertAlmostEqual(float(ray.findtext("scan/horizontal/min_angle")), -math.pi)
         self.assertAlmostEqual(float(ray.findtext("scan/horizontal/max_angle")), math.pi)
-        prefix = "/wamv/sensors/lidars/lidar_wamv_sensor"
-        self.assert_bridge(prefix+"/scan", prefix+"/scan", "sensor_msgs/msg/LaserScan", "GZ_TO_ROS")
-        self.assert_bridge(prefix+"/scan/points", prefix+"/points", "sensor_msgs/msg/PointCloud2", "GZ_TO_ROS")
+        self.assert_bridge("/sensors/lidar/scan", "/sensors/lidar/scan", "sensor_msgs/msg/LaserScan", "GZ_TO_ROS")
+        self.assert_bridge("/sensors/lidar/scan/points", "/sensors/lidar/points", "sensor_msgs/msg/PointCloud2",
+                           "GZ_TO_ROS")
 
     def test_sdformat_disables_degree_noise_before_metric_adapter(self):
         model = self.sdf.model()
@@ -130,7 +144,7 @@ class VesselGenerationTests(unittest.TestCase):
         for limit in (125., 500., 3000.):
             with self.subTest(limit=limit), tempfile.TemporaryDirectory() as directory:
                 generate(directory, resolved_config=dict(self.config, max_thrust_n=limit))
-                model = ET.parse(Path(directory)/'wamv.sdf').find('model')
+                model = ET.parse(Path(directory)/'vessel.sdf').find('model')
                 thrusters = [p for p in model.findall('plugin') if p.get('name') == 'gz::sim::systems::Thruster']
                 self.assertEqual(len(thrusters), 2)
                 for plugin in thrusters:
@@ -154,9 +168,9 @@ class VesselGenerationTests(unittest.TestCase):
         for source, digest in artifact['resources'].items():
             self.assertEqual(hashlib.sha256(Path(source).read_bytes()).hexdigest(), digest)
         groups = SelfGeometry.load_frames(self.out/'self_geometry.json', .05)
-        self.assertIn('wamv/base_link', groups)
-        self.assertIn('wamv/left_propeller_link', groups)
-        self.assertIn('wamv/right_propeller_link', groups)
+        self.assertIn('base_link', groups)
+        self.assertIn('left_propeller_link', groups)
+        self.assertIn('right_propeller_link', groups)
 
     def test_custom_configuration_changes_generated_sensors_and_snapshot(self):
         import yaml
@@ -171,7 +185,7 @@ class VesselGenerationTests(unittest.TestCase):
             path.write_text(yaml.safe_dump(override))
             _, resolved = generate(output, path)
             self.assertEqual(yaml.safe_load((output/'vessel_config.yaml').read_text()), resolved)
-            sensors = ET.parse(output/'wamv.sdf').findall('.//sensor')
+            sensors = ET.parse(output/'vessel.sdf').findall('.//sensor')
             for sensor in sensors:
                 kind = sensor.get('type')
                 if kind == 'camera':

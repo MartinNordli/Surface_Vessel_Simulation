@@ -105,7 +105,7 @@ class PhysicsTests(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as directory:
             generate(directory, resolved)
-            root = ET.parse(Path(directory) / "wamv.sdf")
+            root = ET.parse(Path(directory) / "vessel.sdf")
             volumes = root.findall("model/plugin/buoyancy_volume")
             self.assertEqual(len(volumes), 2)
             for volume, y in zip(volumes, (-0.7, 0.7)):
@@ -131,7 +131,7 @@ class PhysicsTests(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as d:
             urdf, config = generate(d, resolved)
-            root = ET.parse(Path(d) / "wamv.sdf")
+            root = ET.parse(Path(d) / "vessel.sdf")
             model = root.find("model")
             link = model.find("link")
             self.assertEqual(float(link.findtext("inertial/mass")), 180)
@@ -142,7 +142,16 @@ class PhysicsTests(unittest.TestCase):
             self.assertEqual(hydro.findtext("xU"), "-40.0")
             self.assertIsNotNone(link.find("inertial/fluid_added_mass/xx"))
             self.assertEqual(len(link.findall("sensor")), 5)
-            self.assertIn("wamv/front_left_camera_link_optical", urdf)
+            self.assertIn("front_left_camera_link_optical", urdf)
+            self.assertEqual(model.get("name"), "vessel")
+            self.assertEqual(link.get("name"), "base_link")
+            # Same ROS-facing names as the WAM-V (constants.py).
+            ros_topics = {b["ros_topic_name"] for b in yaml.safe_load((Path(d) / "bridges.yaml").read_text())}
+            self.assertLessEqual({"/sensors/lidar/points", "/sensors/lidar/scan", "/sim/sensors/imu/data_raw",
+                                  "/sim/sensors/gps/fix_raw", "/sim/ground_truth/odometry",
+                                  "/sensors/cameras/front_left/image_raw",
+                                  "/sensors/cameras/front_right/camera_info"}, ros_topics)
+            self.assertFalse([topic for topic in ros_topics if "wamv" in topic])
             thrusters = model.findall("plugin[@name='njord::Physics']/thruster")
             self.assertEqual([t.get("name") for t in thrusters], ["thruster_1", "thruster_2"])
             self.assertEqual(thrusters[1].findtext("position"), "-1.2 -0.6 -0.1")
@@ -150,13 +159,13 @@ class PhysicsTests(unittest.TestCase):
             self.assertNotIn("thruster_separation_m", config)
             if shutil.which("gz"):
                 result = subprocess.run(
-                    ["gz", "sdf", "-k", str(Path(d) / "wamv.sdf")],
+                    ["gz", "sdf", "-k", str(Path(d) / "vessel.sdf")],
                     capture_output=True,
                     text=True,
                 )
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 printed = subprocess.run(
-                    ["gz", "sdf", "-p", str(Path(d) / "wamv.sdf")],
+                    ["gz", "sdf", "-p", str(Path(d) / "vessel.sdf")],
                     capture_output=True,
                     text=True,
                     check=True,
@@ -183,7 +192,7 @@ class PhysicsTests(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as d:
             generate(d, resolved)
-            thrusters = ET.parse(Path(d) / "wamv.sdf").findall(
+            thrusters = ET.parse(Path(d) / "vessel.sdf").findall(
                 "model/plugin[@name='njord::Physics']/thruster")
             self.assertEqual(len(thrusters), 4)
             axis = [float(v) for v in thrusters[0].findtext("axis").split()]

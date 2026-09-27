@@ -54,6 +54,7 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from std_msgs.msg import Float64
 
+from njord_sim.constants import BASE_FRAME
 from njord_sim.defaults import node_defaults
 from njord_sim.control_core import allocate_thrusters, clearance, segment_is_free, speed_limit, tracking_corridor, wrap
 from njord_sim.geometry import stamp_seconds
@@ -68,7 +69,7 @@ class Guidance(Node):
         self.declare_parameters('', [
             ('path_topic', '/njord/path'), ('odom_topic', '/njord/odometry'),
             ('grid_topic', '/njord/occupancy'), ('status_topic', '/njord/planner_status'),
-            ('map_frame', 'map'), ('base_frame', 'wamv/base_link'),
+            ('map_frame', 'map'), ('base_frame', BASE_FRAME),
             # Tuning, speed ceiling and thruster layout: from algorithms.yaml
             # and the vessel file (see defaults.py); a run overrides them.
             *node_defaults('guidance'),

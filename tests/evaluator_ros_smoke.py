@@ -16,10 +16,11 @@ from nav_msgs.msg import Odometry
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile
-from ros_gz_interfaces.msg import Contacts
+from ros_gz_interfaces.msg import Contact, Contacts, Entity
 from std_msgs.msg import Bool, Float64
 from builtin_interfaces.msg import Time
 from test_sensor_runtime import local_node
+from njord_sim.constants import GZ_MODEL_NAME
 from njord_sim.evaluator_node import Evaluator
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -39,7 +40,7 @@ class EvaluatorReadinessTests(unittest.TestCase):
             states = []
             driver.create_subscription(Bool, "/njord/race_active", lambda m: states.append(m.data),
                 QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
-            odom = driver.create_publisher(Odometry, "/wamv/ground_truth/odometry", 10)
+            odom = driver.create_publisher(Odometry, "/sim/ground_truth/odometry", 10)
             contacts = driver.create_publisher(Contacts, "/njord/contacts", 10)
             topics = [("mission", "/njord/mission_status"), ("navigation", "/njord/navigation_status"),
                       ("njord/planner", "/njord/planner_status")]
@@ -50,7 +51,7 @@ class EvaluatorReadinessTests(unittest.TestCase):
                 stamp = driver.get_clock().now().to_msg()
                 truth = Odometry()
                 truth.header.stamp, truth.header.frame_id = stamp, "world"
-                truth.child_frame_id, truth.pose.pose.orientation.w = "wamv/base_link", 1.0
+                truth.child_frame_id, truth.pose.pose.orientation.w = "base_link", 1.0
                 odom.publish(truth)
                 if with_contacts:
                     message = Contacts()
@@ -125,11 +126,26 @@ class EvaluatorCallbackTests(unittest.TestCase):
             message.status = [DiagnosticStatus(name=name, level=DiagnosticStatus.OK)]
             self.node.on_readiness(message)
 
-    def contact(self, seconds):
+    def contact(self, seconds, pairs=()):
+        """Deliver a contact message; ``pairs`` are scoped collision names."""
         ns = round(seconds*1e9)
         message = Contacts()
         message.header.stamp = Time(sec=ns//10**9, nanosec=ns%10**9)
+        message.contacts = [Contact(collision1=Entity(name=first), collision2=Entity(name=second))
+                            for first, second in pairs]
         self.node.on_contacts(message)
+
+    def test_only_contacts_of_the_vessel_model_count_as_collision(self):
+        # Scoped names as Gazebo reports them: model::link::collision.
+        self.contact(99.9, [("obstacle_1::link::collision", "ground_plane::link::collision"),
+                            ("obstacle_1::link::collision", f"not_{GZ_MODEL_NAME}::link::collision")])
+        self.assertEqual(self.node.scorer.contact_events, 0)
+        self.assertFalse(self.node.done)
+        self.contact(100., [("obstacle_1::link::collision",
+                               f"{GZ_MODEL_NAME}::base_link::base_link_fixed_joint_lump__top_base_collision_24")])
+        self.assertEqual(self.node.scorer.contact_events, 1)
+        self.assertEqual(self.node.scorer.status, "collision")
+        self.assertTrue(self.node.done)
 
     def test_old_and_future_contacts_cannot_start_or_count_as_evidence(self):
         for stamp in (1., 99.49, 101.):

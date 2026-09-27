@@ -27,6 +27,7 @@ from njord_sim.configuration import autonomy_parameters, config_path, resolve_co
 from njord_sim.run_manifest import atomic_text, freeze_default_configuration, freeze_resources, publish_ready, write_manifest
 from njord_sim.scenario import world_xml
 from njord_sim.scenario_core import scenario_digest
+from njord_sim.constants import GZ_MODEL_NAME
 from njord_sim.vessel import generate as generate_wamv
 
 
@@ -86,18 +87,17 @@ def _launch(context):
     sim = ExecuteProcess(cmd=args, output='screen')
     pose = scenario['start']
     spawn = Node(package='ros_gz_sim', executable='create', output='screen',
-                 arguments=['-world', 'njord_course', '-name', 'wamv', '-file', str(out / 'wamv.sdf'),
+                 arguments=['-world', 'njord_course', '-name', GZ_MODEL_NAME, '-file', str(out / 'vessel.sdf'),
                             '-x', str(pose[0]), '-y', str(pose[1]), '-z', str(pose[2]),
                             '-R', str(pose[3]), '-P', str(pose[4]), '-Y', str(pose[5])])
     bridge = Node(package='ros_gz_bridge', executable='parameter_bridge', output='screen',
                   parameters=[{'use_sim_time': True, 'config_file': str(out / 'bridges.yaml')}])
     rsp = Node(package='robot_state_publisher', executable='robot_state_publisher', output='screen',
-               parameters=[{'use_sim_time': True, 'robot_description': urdf}],
-               remappings=[('/joint_states', '/wamv/joint_states')])
+               parameters=[{'use_sim_time': True, 'robot_description': urdf}])
 
     def spawned(event, _):
         if event.returncode:
-            return [EmitEvent(event=Shutdown(reason='WAM-V spawn failed'))]
+            return [EmitEvent(event=Shutdown(reason='vessel spawn failed'))]
         return []
 
     # Shut the whole launch down if spawning fails or Gazebo exits.

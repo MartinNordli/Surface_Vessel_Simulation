@@ -2,6 +2,8 @@
 import math
 import numpy as np
 
+from njord_sim.constants import BASE_FRAME
+
 
 def image_varies(message):
     channels = {'rgb8': 3, 'bgr8': 3, 'rgba8': 4, 'bgra8': 4}.get(message.encoding)
@@ -17,7 +19,7 @@ def image_varies(message):
     return bool(np.any(np.std(pixels, axis=0) > 1.0))
 
 
-def valid_odometry(message, parent='map', child='wamv/base_link'):
+def valid_odometry(message, parent='map', child=BASE_FRAME):
     p, q, t = message.pose.pose.position, message.pose.pose.orientation, message.twist.twist
     values = (p.x, p.y, p.z, q.x, q.y, q.z, q.w,
               t.linear.x, t.linear.y, t.linear.z, t.angular.x, t.angular.y, t.angular.z)

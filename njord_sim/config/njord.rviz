@@ -86,13 +86,13 @@ Visualization Manager:
       Frame Timeout: 10
       Frames:
         All Enabled: false
-        wamv/base_link:
+        base_link:
           Value: true
-        wamv/lidar_wamv_link:
+        lidar_link:
           Value: true
-        wamv/front_left_camera_link_optical:
+        front_left_camera_link_optical:
           Value: true
-        wamv/front_right_camera_link_optical:
+        front_right_camera_link_optical:
           Value: true
     - Class: rviz_default_plugins/PointCloud2
       Name: Lidar returns
@@ -111,7 +111,7 @@ Visualization Manager:
       Decay Time: 0
       Queue Size: 3
       Topic:
-        Value: /wamv/sensors/lidars/lidar_wamv_sensor/points
+        Value: /sensors/lidar/points
         Reliability Policy: Best Effort
         Durability Policy: Volatile
         History Policy: Keep Last
@@ -122,7 +122,7 @@ Visualization Manager:
       Normalize Range: true
       Queue Size: 2
       Topic:
-        Value: /wamv/sensors/cameras/front_left_camera_sensor/image_raw
+        Value: /sensors/cameras/front_left/image_raw
         Reliability Policy: Best Effort
         Durability Policy: Volatile
         History Policy: Keep Last
@@ -133,7 +133,7 @@ Visualization Manager:
       Normalize Range: true
       Queue Size: 2
       Topic:
-        Value: /wamv/sensors/cameras/front_right_camera_sensor/image_raw
+        Value: /sensors/cameras/front_right/image_raw
         Reliability Policy: Best Effort
         Durability Policy: Volatile
         History Policy: Keep Last

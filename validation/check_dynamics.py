@@ -55,6 +55,7 @@ from rclpy.qos import qos_profile_sensor_data
 from ros_gz_interfaces.msg import Float32Array
 
 from njord_sim.configuration import thruster_table
+from njord_sim.constants import GROUND_TRUTH_TOPIC
 
 from dynamics_metrics import stationary, summarize_experiment
 from runtime_checks import valid_odometry
@@ -68,7 +69,7 @@ class DynamicsCheck(Node):
     """
     def __init__(self):
         super().__init__("dynamics_check")
-        defaults = {"odom_topic": "/wamv/ground_truth/odometry", "forces_topic": "/njord/actuator_forces",
+        defaults = {"odom_topic": GROUND_TRUTH_TOPIC, "forces_topic": "/njord/actuator_forces",
                     "experiment": "straight", "thrust_n": 300.0, "duration_s": 60.0,
                     "stabilization_timeout_s": 60.0, "window_s": 10.0,
                     "fresh_start_limit_s": 5.0, "manifest_path": "", "resolved_path": "", "output_path": "",

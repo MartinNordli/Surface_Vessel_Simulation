@@ -34,7 +34,7 @@ class RecorderTests(unittest.TestCase):
             self.assertIn('--use-sim-time', command)
             self.assertEqual(command[command.index('--output')+1], str(output/'bag'))
             self.assertEqual(metadata['qos_overrides']['/tf_static']['durability'], 'transient_local')
-            self.assertIn('/wamv/ground_truth/odometry', metadata['topics'])
+            self.assertIn('/sim/ground_truth/odometry', metadata['topics'])
             self.assertIn('/njord/contacts', metadata['topics'])
             self.assertIn('/thruster_2/command', metadata['topics'])
             self.assertIn('/thruster_2/command', command)

@@ -48,6 +48,7 @@ from sensor_msgs_py import point_cloud2
 from std_msgs.msg import Bool, Float64, Header
 from tf2_ros import StaticTransformBroadcaster
 
+from njord_sim.constants import BASE_FRAME, LIDAR_POINTS_TOPIC
 from njord_sim.command_guard_node import CommandGuard
 from njord_sim.guidance_node import Guidance
 from njord_sim.mapper_node import Mapper
@@ -209,7 +210,7 @@ class PlannerGuidanceTransportTests(RosCase):
             grid.data[10 * 40 + 25] = 100
         self.grid_pub.publish(grid)
         odom = Odometry()
-        odom.header.frame_id, odom.child_frame_id = 'map', 'wamv/base_link'
+        odom.header.frame_id, odom.child_frame_id = 'map', BASE_FRAME
         odom.header.stamp = self.driver.get_clock().now().to_msg()
         odom.header.stamp.sec -= int(self.odom_age)
         odom.pose.pose.position.x, odom.pose.pose.position.y = 10.5, 10.5
@@ -336,7 +337,7 @@ class MapperTransportTests(RosCase):
     """Mapper turns a timestamped lidar cloud into occupied, free and unknown cells."""
     def test_timestamped_tf_cloud_obstacle_and_map_heartbeat(self):
         geometry = Path(_ros_logs.name) / 'synthetic_self_geometry.json'
-        geometry.write_text(json.dumps({'version': 1, 'frame': 'wamv/base_link', 'surfaces': [
+        geometry.write_text(json.dumps({'version': 1, 'frame': BASE_FRAME, 'surfaces': [
             {'vertices': [[-1.,-1.,-1.],[1.,-1.,-1.],[0.,1.,-1.]], 'faces': [[0,1,2]]}]}))
         original = Mapper.declare_parameters
         def declare(node, namespace, values, *args, **kwargs):
@@ -345,17 +346,17 @@ class MapperTransportTests(RosCase):
         with patch.object(Mapper, 'declare_parameters', declare):
             mapper = self.add(Mapper())
         publisher = self.driver.create_publisher(PointCloud2,
-                    '/wamv/sensors/lidars/lidar_wamv_sensor/points', 1)
+                    LIDAR_POINTS_TOPIC, 1)
         grids = []
         self.driver.create_subscription(OccupancyGrid, '/njord/occupancy', grids.append, 10)
         broadcaster = StaticTransformBroadcaster(self.driver)
         boat = TransformStamped()
-        boat.header.frame_id, boat.child_frame_id = 'map', 'wamv/base_link'
+        boat.header.frame_id, boat.child_frame_id = 'map', BASE_FRAME
         boat.header.stamp = self.driver.get_clock().now().to_msg()
         boat.transform.translation.x = boat.transform.translation.y = 10.5
         boat.transform.rotation.w = 1.0
         lidar = TransformStamped()
-        lidar.header.frame_id, lidar.child_frame_id = 'wamv/base_link', 'smoke_lidar'
+        lidar.header.frame_id, lidar.child_frame_id = BASE_FRAME, 'smoke_lidar'
         lidar.header.stamp = boat.header.stamp
         lidar.transform.translation.z, lidar.transform.rotation.w = 2.0, 1.0
         broadcaster.sendTransform([boat, lidar])

@@ -18,7 +18,7 @@ def box(size, pose):
 
 class SelfGeometryTests(unittest.TestCase):
     def setUp(self):
-        self.artifact = {'version': 1, 'frame': 'wamv/base_link', 'surfaces': [
+        self.artifact = {'version': 1, 'frame': 'base_link', 'surfaces': [
             box([4., .4, .6], [0., -1., 0.]), box([4., .4, .6], [0., 1., 0.]),
             box([.2, 2., .2], [0., 0., .7])]}
         self.geometry = SelfGeometry(self.artifact, .05)
@@ -43,7 +43,7 @@ class SelfGeometryTests(unittest.TestCase):
                          [True, False, False])
 
     def test_triangle_edges_and_margin(self):
-        geometry = SelfGeometry({'version': 1, 'frame': 'wamv/base_link', 'surfaces': [
+        geometry = SelfGeometry({'version': 1, 'frame': 'base_link', 'surfaces': [
             {'vertices': [[0, 0, 0], [1, 0, 0], [0, 1, 0]], 'faces': [[0, 1, 2]]}]}, .05)
         self.assertEqual(geometry.contains_returns([[.2,.2,.049], [.2,.2,.051],
                                                    [.52,.52,0], [.6,.6,0]]).tolist(),
@@ -69,7 +69,7 @@ class SelfGeometryTests(unittest.TestCase):
             path = Path(directory)
             mesh = path/'vessel.dae'
             mesh.write_text('test fixture')
-            model = ET.fromstring(f'''<model name="wamv"><link name="wamv/propeller_link">
+            model = ET.fromstring(f'''<model name="vessel"><link name="propeller_link">
                 <visual name="blade"><pose>1 2 3 0 0 1.5707963267948966</pose>
                 <geometry><mesh><uri>{mesh}</uri><scale>2 3 4</scale></mesh></geometry>
                 </visual></link></model>''')
@@ -78,21 +78,21 @@ class SelfGeometryTests(unittest.TestCase):
                 export_visual_geometry(model, path)
             artifact = json.loads((path/'self_geometry.json').read_text())
             surface = artifact['surfaces'][0]
-            self.assertEqual(surface['frame'], 'wamv/propeller_link')
+            self.assertEqual(surface['frame'], 'propeller_link')
             # Scale in mesh axes BEFORE visual rotation/translation.
             np.testing.assert_allclose(surface['vertices'], [[1,2,3],[1,4,3],[-2,2,3]], atol=1e-14)
             geometry = SelfGeometry.load_frames(path/'self_geometry.json', .02)
-            self.assertTrue(geometry['wamv/propeller_link'].contains_returns([[0,2.5,3]])[0])
+            self.assertTrue(geometry['propeller_link'].contains_returns([[0,2.5,3]])[0])
 
     def test_invalid_missing_and_moving_surface_frames(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)/'geometry.json'
             with self.assertRaises(ValueError):
                 SelfGeometry.load_frames(path, .05)
-            self.artifact['surfaces'][-1]['frame'] = 'wamv/propeller_link'
+            self.artifact['surfaces'][-1]['frame'] = 'propeller_link'
             path.write_text(json.dumps(self.artifact))
             self.assertEqual(set(SelfGeometry.load_frames(path, .05)),
-                             {'wamv/base_link', 'wamv/propeller_link'})
+                             {'base_link', 'propeller_link'})
             self.artifact['surfaces'] = []
             path.write_text(json.dumps(self.artifact))
             with self.assertRaises(ValueError):

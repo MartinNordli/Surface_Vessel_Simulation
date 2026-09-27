@@ -20,6 +20,8 @@ from rclpy.parameter import Parameter
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Image, Imu, LaserScan, NavSatFix
 from njord_sim.configuration import sensor_settings
+from njord_sim.constants import (CAMERAS, GPS_RAW_TOPIC, GPS_TOPIC, IMU_RAW_TOPIC, IMU_TOPIC, LIDAR_SCAN_TOPIC,
+                                 camera_topic)
 
 
 def injected_errors(channel, raw, measured):
@@ -73,15 +75,14 @@ class Probe(Node):
         self.invalid_headers = self.invalid_covariances = self.regressions = self.invalid_samples = 0
         self.ranges = {'count':0,'minimum_m':None,'maximum_m':None,'declared_max_m':None}
         self.dimensions = {}
-        for channel, cls, root, suffix in (
-                ('gps',NavSatFix,'/wamv/sensors/gps/gps/','fix'),
-                ('imu',Imu,'/wamv/sensors/imu/imu/','data')):
-            for source in ('raw','adapted'):
-                topic = root+suffix+('_raw' if source == 'raw' else '')
+        for channel, cls, topics in (
+                ('gps',NavSatFix,{'raw':GPS_RAW_TOPIC,'adapted':GPS_TOPIC}),
+                ('imu',Imu,{'raw':IMU_RAW_TOPIC,'adapted':IMU_TOPIC})):
+            for source, topic in topics.items():
                 self.create_subscription(cls,topic,lambda m,c=channel,s=source:self.pair(c,s,m),qos_profile_sensor_data)
-        self.create_subscription(LaserScan,'/wamv/sensors/lidars/lidar_wamv_sensor/scan',self.scan,qos_profile_sensor_data)
-        for side in ('left','right'):
-            self.create_subscription(Image,f'/wamv/sensors/cameras/front_{side}_camera_sensor/image_raw',
+        self.create_subscription(LaserScan,LIDAR_SCAN_TOPIC,self.scan,qos_profile_sensor_data)
+        for camera, side in zip(CAMERAS, ('left','right')):
+            self.create_subscription(Image,camera_topic(camera,'image_raw'),
                                      lambda m,s=side:self.camera(s,m),qos_profile_sensor_data)
 
     def stamp(self, stream, msg):

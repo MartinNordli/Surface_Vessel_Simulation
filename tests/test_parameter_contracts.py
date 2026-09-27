@@ -7,15 +7,36 @@ import tempfile
 import unittest
 from unittest.mock import patch
 import xml.etree.ElementTree as ET
+import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'njord_sim'))
 from njord_sim.configuration import (resolve_configuration, autonomy_parameters, sensor_timing,
     validate_reference_timing, convert_sensor_schema, _read, validate_vessel)
+from njord_sim.constants import (BASE_FRAME, CAMERAS, IMU_TOPIC, LIDAR_FRAME, LIDAR_POINTS_TOPIC, camera_frame,
+                                 camera_topic)
 from njord_sim.vessel import configure_thrusters, remove_sensor_noise
 from njord_sim.visual_geometry import export_visual_geometry
 ROOT = Path(__file__).resolve().parents[1]
 
 
 class Contracts(unittest.TestCase):
+    def test_text_configuration_uses_the_shared_ros_names(self):
+        config = ROOT/'njord_sim/config'
+        localization = yaml.safe_load((config/'localization.yaml').read_text())
+        for ekf in ('ekf_local', 'ekf_global'):
+            parameters = localization[ekf]['ros__parameters']
+            self.assertEqual(parameters['base_link_frame'], BASE_FRAME)
+            self.assertEqual(parameters['imu0'], IMU_TOPIC)
+        rviz = (config/'njord.rviz').read_text()
+        for name in (BASE_FRAME, LIDAR_FRAME, LIDAR_POINTS_TOPIC,
+                     *(camera_frame(camera, optical=True) for camera in CAMERAS),
+                     *(camera_topic(camera, 'image_raw') for camera in CAMERAS)):
+            self.assertIn(name, rviz)
+        for path in sorted(config.rglob('*')):
+            if path.suffix in ('.yaml', '.rviz', '.xacro'):
+                with self.subTest(path=path.name):
+                    # Covers /wamv/... topics and wamv/... frames, not vessels/wamv.yaml.
+                    self.assertNotIn('wamv/', path.read_text())
+
     def resolved(self):
         return resolve_configuration(ROOT/'njord_sim/config/vessels/wamv.yaml', ROOT/'scenarios/reference.yaml', ROOT/'njord_sim/config/algorithms.yaml')
 
@@ -57,7 +78,7 @@ class Contracts(unittest.TestCase):
     def model(self):
         m = ET.Element('model')
         for side in ('left', 'right'):
-            joint = 'wamv/'+side+'_engine_propeller_joint'
+            joint = side+'_engine_propeller_joint'
             ET.SubElement(m,'link',name=side)
             j = ET.SubElement(m,'joint',name=joint)
             ET.SubElement(j,'child').text = side
@@ -86,7 +107,7 @@ class Contracts(unittest.TestCase):
         self.assertEqual(sensor.findall('.//noise'),[])
 
     def test_visible_components_and_frames_preserved(self):
-        m = ET.fromstring('<model><link name="wamv/base_link"><visual name="left"><pose>0 1 0 0 0 0</pose><geometry><box><size>4 .4 .4</size></box></geometry></visual><visual name="right"><pose>0 -1 0 0 0 0</pose><geometry><box><size>4 .4 .4</size></box></geometry></visual></link><link name="propeller"><visual name="blade"><geometry><box><size>.1 .2 .3</size></box></geometry></visual></link></model>')
+        m = ET.fromstring('<model><link name="base_link"><visual name="left"><pose>0 1 0 0 0 0</pose><geometry><box><size>4 .4 .4</size></box></geometry></visual><visual name="right"><pose>0 -1 0 0 0 0</pose><geometry><box><size>4 .4 .4</size></box></geometry></visual></link><link name="propeller"><visual name="blade"><geometry><box><size>.1 .2 .3</size></box></geometry></visual></link></model>')
         with tempfile.TemporaryDirectory() as tmp:
             export_visual_geometry(m,tmp)
             d = json.loads((Path(tmp)/'self_geometry.json').read_text())

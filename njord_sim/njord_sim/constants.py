@@ -25,6 +25,36 @@ COMMAND_TIMEOUT_S = 0.5
 # file. '/thruster_1/command' matches Control & Autonomy's allocation node.
 THRUSTER_COMMAND_TOPIC = '/{name}/command'
 
+# ROS-facing sensor topics and frames, identical for every vessel profile so a
+# team's code does not depend on which boat is simulated (docs/interfaces.md).
+# Frames follow REP-105 without a vessel prefix. The Gazebo link names equal
+# the frame names, so TF, sensor headers and Gazebo agree. Topics under /sim
+# exist only in simulation: ground truth and raw GPS/IMU before the sensor
+# adapter adds noise. Autonomy must not subscribe to them.
+GZ_MODEL_NAME = 'vessel'  # Gazebo model name; contact names start with 'vessel::'
+BASE_FRAME = 'base_link'
+CAMERAS = ('front_left', 'front_right')
+LIDAR_FRAME = 'lidar_link'
+IMU_FRAME = 'imu_link'
+GPS_FRAME = 'gps_link'
+LIDAR_POINTS_TOPIC = '/sensors/lidar/points'
+LIDAR_SCAN_TOPIC = '/sensors/lidar/scan'
+IMU_TOPIC = '/sensors/imu/data'
+GPS_TOPIC = '/sensors/gps/fix'
+IMU_RAW_TOPIC = '/sim/sensors/imu/data_raw'
+GPS_RAW_TOPIC = '/sim/sensors/gps/fix_raw'
+GROUND_TRUTH_TOPIC = '/sim/ground_truth/odometry'
+
+
+def camera_frame(camera, optical=False):
+    """Body-aligned camera link of ``camera`` in CAMERAS, or its ROS optical frame."""
+    return f'{camera}_camera_link' + ('_optical' if optical else '')
+
+
+def camera_topic(camera, name):
+    """Camera topic; ``name`` is 'image_raw' or 'camera_info'."""
+    return f'/sensors/cameras/{camera}/{name}'
+
 # The WAM-V hull, hydrodynamics and thruster placement come from the pinned
 # VRX model. Only its sensors and thrust limit are configurable in YAML.
 # Horizontal scoring envelope enclosing the VRX WAM-V hull (conservative).

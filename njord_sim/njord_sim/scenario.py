@@ -20,7 +20,7 @@ import json
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
-from .constants import WORLD_ORIGIN_WGS84
+from .constants import BASE_FRAME, GZ_MODEL_NAME, WORLD_ORIGIN_WGS84
 from .scenario_core import load_scenario, obstacles, scenario_digest
 from .run_manifest import atomic_text
 
@@ -124,8 +124,8 @@ def world_xml(scenario, vessel_profile='wamv_reference'):
     # direction set by configuration.resolve_scenario.
     wind = element(world, "plugin", filename="libUSVWind.so", name="vrx::USVWind")
     obj = element(wind, "wind_obj")
-    element(obj, "name", "wamv")
-    element(obj, "link_name", "wamv/base_link")
+    element(obj, "name", GZ_MODEL_NAME)
+    element(obj, "link_name", BASE_FRAME)
     element(obj, "coeff_vector", "0.5 0.5 0.33")
     for key, value in {"wind_direction": env["wind_direction_deg"],
                        "wind_mean_velocity": env["wind_speed_mps"],

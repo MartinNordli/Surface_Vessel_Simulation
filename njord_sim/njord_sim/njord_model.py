@@ -3,15 +3,15 @@
 Generates the Njord vessel model from the resolved configuration (see
 configuration.resolve_configuration) and writes, into the run directory:
 
-- wamv.sdf            spawnable Gazebo model: hull link, sensors and plugins
-- wamv.urdf           robot description for robot_state_publisher (static TF)
+- vessel.sdf          spawnable Gazebo model: hull link, sensors and plugins
+- vessel.urdf         robot description for robot_state_publisher (static TF)
 - bridges.yaml        one-way ros_gz_bridge topics (thrust enters only via
                       /njord/actuator_forces, guarded by the physics plugin)
 - vessel_config.yaml  the flat sensor/thrust settings actually used
 
-The model deliberately keeps the WAM-V names (model ``wamv``, link
-``wamv/base_link``, ``/wamv/...`` topics and frames) so launch, bridges,
-autonomy and the evaluator work unchanged for either vessel profile.
+Model, link, frame and topic names are the vessel-neutral ones from
+constants.py, the same as for the WAM-V, so launch, bridges, autonomy and the
+evaluator work unchanged for either vessel profile.
 
 Physics is split between two plugins:
 
@@ -29,7 +29,9 @@ import math
 import xml.etree.ElementTree as ET
 import yaml
 from .configuration import sensor_settings, thruster_table
-from .constants import COMMAND_TIMEOUT_S
+from .constants import (BASE_FRAME, COMMAND_TIMEOUT_S, GPS_FRAME, GPS_RAW_TOPIC, GROUND_TRUTH_TOPIC,
+                        GZ_MODEL_NAME, IMU_FRAME, IMU_RAW_TOPIC, LIDAR_FRAME, LIDAR_POINTS_TOPIC,
+                        LIDAR_SCAN_TOPIC, camera_frame, camera_topic)
 from .vessel import set_text
 
 
@@ -54,10 +56,10 @@ def generate(output_dir, resolved_configuration):
     # The SDF and URDF are built in parallel: the SDF is what Gazebo simulates,
     # the URDF only feeds robot_state_publisher with the same fixed frames.
     root = ET.Element("sdf", version="1.11")
-    model = ET.SubElement(root, "model", name="wamv")
-    link = ET.SubElement(model, "link", name="wamv/base_link")
-    urdf = ET.Element("robot", name="wamv")
-    ul = ET.SubElement(urdf, "link", name="wamv/base_link")
+    model = ET.SubElement(root, "model", name=GZ_MODEL_NAME)
+    link = ET.SubElement(model, "link", name=BASE_FRAME)
+    urdf = ET.Element("robot", name=GZ_MODEL_NAME)
+    ul = ET.SubElement(urdf, "link", name=BASE_FRAME)
 
     def txt(parent, path, value):
         # SDF vectors and poses are space-separated text.
@@ -127,7 +129,7 @@ def generate(output_dir, resolved_configuration):
             )
         )
 
-    def frame(name, pose, parent="wamv/base_link"):
+    def frame(name, pose, parent=BASE_FRAME):
         # Fixed URDF joint for a sensor frame; pose is [x y z roll pitch yaw]
         # relative to ``parent`` (metres, radians).
         ET.SubElement(urdf, "link", name=name)
@@ -142,23 +144,17 @@ def generate(output_dir, resolved_configuration):
         )
 
     # --- Sensors --------------------------------------------------------------
-    # (pose key in vessel YAML, Gazebo sensor name, Gazebo sensor type).
-    # Names, frames and topics follow the VRX WAM-V so consumers are shared.
+    # (pose key in vessel YAML, Gazebo sensor name, Gazebo sensor type, frame).
+    # Names, frames and topics are the shared ones from constants.py.
     poses = vessel["sensors"]["poses"]
-    for short, name, kind in [
-        ("camera", "front_left_camera_sensor", "camera"),
-        ("camera_right", "front_right_camera_sensor", "camera"),
-        ("lidar", "lidar_wamv_sensor", "gpu_lidar"),
-        ("gps", "gps_wamv_sensor", "navsat"),
-        ("imu", "imu_wamv_sensor", "imu"),
+    for short, name, kind, sensor_frame in [
+        ("camera", "front_left_camera_sensor", "camera", camera_frame("front_left")),
+        ("camera_right", "front_right_camera_sensor", "camera", camera_frame("front_right")),
+        ("lidar", "lidar_sensor", "gpu_lidar", LIDAR_FRAME),
+        ("gps", "gps_sensor", "navsat", GPS_FRAME),
+        ("imu", "imu_sensor", "imu", IMU_FRAME),
     ]:
         sensor = ET.SubElement(link, "sensor", name=name, type=kind)
-        # e.g. wamv/front_left_camera_link, wamv/lidar_wamv_link.
-        sensor_frame = "wamv/" + (
-            name.removesuffix("_sensor") + "_link"
-            if kind == "camera"
-            else short + "_wamv_link"
-        )
         frame(sensor_frame, poses[short])
         txt(sensor, "pose", poses[short])
         txt(sensor, "always_on", "true")
@@ -172,10 +168,11 @@ def generate(output_dir, resolved_configuration):
         if kind == "camera":
             # ROS optical frame (z forward, x right, y down) under the
             # body-aligned camera link; images are stamped in this frame.
-            optical = sensor_frame + "_optical"
+            camera = name.removesuffix("_camera_sensor")
+            optical = camera_frame(camera, optical=True)
             frame(optical, [0, 0, 0, -math.pi / 2, 0, -math.pi / 2], sensor_frame)
-            prefix = "/wamv/sensors/cameras/" + name
-            txt(sensor, "topic", prefix + "/image_raw")
+            image, info = camera_topic(camera, "image_raw"), camera_topic(camera, "camera_info")
+            txt(sensor, "topic", image)
             txt(sensor, "gz_frame_id", optical)
             txt(sensor, "camera/optical_frame_id", optical)
             for key, val in {
@@ -185,22 +182,17 @@ def generate(output_dir, resolved_configuration):
                 "horizontal_fov": config["camera_horizontal_fov_rad"],
                 "clip/near": 0.1,
                 "clip/far": 200,
-                "camera_info_topic": prefix + "/camera_info",
+                "camera_info_topic": info,
                 "noise/stddev": config["camera_noise_stddev"],
             }.items():
                 txt(sensor, "camera/" + key, val)
             txt(sensor, "camera/noise/type", "gaussian")
-            bridge(prefix + "/image_raw", "sensor_msgs/msg/Image", "gz.msgs.Image")
-            bridge(
-                prefix + "/camera_info",
-                "sensor_msgs/msg/CameraInfo",
-                "gz.msgs.CameraInfo",
-            )
+            bridge(image, "sensor_msgs/msg/Image", "gz.msgs.Image")
+            bridge(info, "sensor_msgs/msg/CameraInfo", "gz.msgs.CameraInfo")
         elif short == "lidar":
             # 360 degree horizontal scan, +/-0.26 rad (about +/-15 degrees)
             # vertical fan, 0.2 m minimum range.
-            prefix = "/wamv/sensors/lidars/" + name
-            txt(sensor, "topic", prefix + "/scan")
+            txt(sensor, "topic", LIDAR_SCAN_TOPIC)
             for key, val in {
                 "scan/horizontal/samples": config["lidar_samples"],
                 "scan/horizontal/min_angle": -math.pi,
@@ -215,26 +207,19 @@ def generate(output_dir, resolved_configuration):
             }.items():
                 txt(sensor, "lidar/" + key, val)
             txt(sensor, "lidar/noise/type", "gaussian")
-            bridge(prefix + "/scan", "sensor_msgs/msg/LaserScan", "gz.msgs.LaserScan")
-            # Gazebo publishes the point cloud on <topic>/points; ROS sees it
-            # as .../points.
+            bridge(LIDAR_SCAN_TOPIC, "sensor_msgs/msg/LaserScan", "gz.msgs.LaserScan")
+            # Gazebo publishes the point cloud on <scan topic>/points.
             bridge(
-                prefix + "/scan/points",
+                LIDAR_SCAN_TOPIC + "/points",
                 "sensor_msgs/msg/PointCloud2",
                 "gz.msgs.PointCloudPacked",
-                prefix + "/points",
+                LIDAR_POINTS_TOPIC,
             )
         else:
             # GPS and IMU raw topics carry no SDF noise here: sensor_adapter_node
             # adds metric GPS noise and IMU orientation noise, because
             # Harmonic's NavSat noise is specified in degrees, not metres.
-            topic = (
-                "/wamv/sensors/"
-                + short
-                + "/"
-                + short
-                + ("/fix_raw" if short == "gps" else "/data_raw")
-            )
+            topic = GPS_RAW_TOPIC if short == "gps" else IMU_RAW_TOPIC
             txt(sensor, "topic", topic)
             bridge(
                 topic,
@@ -261,7 +246,7 @@ def generate(output_dir, resolved_configuration):
         for face in faces:
             ET.SubElement(volume, "triangle").text = " ".join(map(str, face))
     fields = {
-        "link_name": "wamv/base_link",
+        "link_name": BASE_FRAME,
         "center_of_mass": com,                    # body frame, m
         "water_density": env["water_density_kg_m3"],
         "water_level": env["water_level_m"],      # world z of the flat surface, m
@@ -297,7 +282,7 @@ def generate(output_dir, resolved_configuration):
 
     # --- gz-sim Hydrodynamics: damping and current -----------------------------
     hydro = plugin("gz-sim-hydrodynamics-system", "gz::sim::systems::Hydrodynamics")
-    txt(hydro, "link_name", "wamv/base_link")
+    txt(hydro, "link_name", BASE_FRAME)
     # Added mass is already on the link inertial (fluid_added_mass above);
     # this plugin's added-mass term stays off so it is not applied twice.
     txt(hydro, "disable_added_mass", "true")
@@ -319,13 +304,13 @@ def generate(output_dir, resolved_configuration):
     )
     for k, v in dict(
         odom_frame="map",
-        robot_base_frame="wamv/base_link",
+        robot_base_frame=BASE_FRAME,
         dimensions=3,
         odom_publish_frequency=30,
-        odom_topic="/wamv/ground_truth/odometry",
+        odom_topic=GROUND_TRUTH_TOPIC,
     ).items():
         txt(odom, k, v)
-    bridge("/wamv/ground_truth/odometry", "nav_msgs/msg/Odometry", "gz.msgs.Odometry")
+    bridge(GROUND_TRUTH_TOPIC, "nav_msgs/msg/Odometry", "gz.msgs.Odometry")
     bridge("/clock", "rosgraph_msgs/msg/Clock", "gz.msgs.Clock")
     bridge("/njord/actuator_wrench", "geometry_msgs/msg/WrenchStamped", "gz.msgs.Wrench")
     bridge("/njord/contacts", "ros_gz_interfaces/msg/Contacts", "gz.msgs.Contacts")
@@ -340,8 +325,8 @@ def generate(output_dir, resolved_configuration):
     for tree in (root, urdf):
         ET.indent(tree)
     urdf_text = ET.tostring(urdf, encoding="unicode")
-    (out / "wamv.urdf").write_text(urdf_text)
-    (out / "wamv.sdf").write_text(ET.tostring(root, encoding="unicode"))
+    (out / "vessel.urdf").write_text(urdf_text)
+    (out / "vessel.sdf").write_text(ET.tostring(root, encoding="unicode"))
     from .visual_geometry import export_visual_geometry
     export_visual_geometry(model, out)
     (out / "bridges.yaml").write_text(yaml.safe_dump(bridges))

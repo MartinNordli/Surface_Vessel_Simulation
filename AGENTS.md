@@ -24,6 +24,7 @@ linked guides, not here.
 │   ├── running.md            Commands, rendering, recording and CI/CD
 │   ├── configuration.md      Where every setting lives; vessel/scenario/algorithm schema
 │   ├── team-integration.md   Step-by-step guide for external team nodes
+│   ├── run-concepts.md       One-page map of a run for newcomers
 │   ├── architecture.md       Data flow, run lifecycle, code map, limits
 │   ├── validation.md         Test coverage, benchmarks and dynamics measurements
 │   ├── interfaces.md         ROS topics, types, frames and ownership per node
@@ -123,5 +124,6 @@ carries irrelevant detail. A small or single-area task is cheaper to do directly
 | ROS topics, message types, frames, node ownership | [docs/interfaces.md](docs/interfaces.md) |
 | Running the simulator, rendering, recording, CI/CD | [docs/running.md](docs/running.md) |
 | Team workflows, sensor and parameter overrides, replay | [docs/team-integration.md](docs/team-integration.md) |
+| How a run fits together (start here) | [docs/run-concepts.md](docs/run-concepts.md) |
 | Data flow, configuration, safety, limits, reproducibility | [docs/architecture.md](docs/architecture.md) |
 | Test coverage, benchmarks, dynamics measurements | [docs/validation.md](docs/validation.md) |

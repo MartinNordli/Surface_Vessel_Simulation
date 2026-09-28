@@ -111,6 +111,7 @@ walkthrough and [interfaces](docs/interfaces.md) for every topic and frame.
 
 | Guide | Contents |
 |---|---|
+| [How a run fits together](docs/run-concepts.md) | Start here: inputs, processes, the thrust path, the two clocks |
 | [Running](docs/running.md) | Commands, courses, rendering, WSL, recording and CI/CD |
 | [Configuration](docs/configuration.md) | Where every setting lives; vessel, scenario and algorithm files |
 | [Team integration](docs/team-integration.md) | Step-by-step for Control Systems and Perception/CV |

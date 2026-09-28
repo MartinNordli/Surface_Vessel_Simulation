@@ -18,6 +18,7 @@ from njord_sim.physics_core import (
     damping_wrench,
     thruster_wrench,
     wind_coefficients,
+    wind_load,
 )
 from njord_sim.njord_model import generate
 
@@ -72,6 +73,43 @@ class PhysicsTests(unittest.TestCase):
                 capture_output=True,
             )
             subprocess.run([binary], check=True, capture_output=True)
+
+    def test_cpp_loads_match_physics_core_vectors(self):
+        if not shutil.which("c++"):
+            self.skipTest("C++ compiler unavailable")
+        with tempfile.TemporaryDirectory() as d:
+            binary = str(Path(d) / "loads")
+            subprocess.run(["c++", "-std=c++17", "-I", str(ROOT / "njord_gz_plugins/include"),
+                            str(ROOT / "njord_gz_plugins/test/loads_test.cc"), "-o", binary],
+                           check=True, capture_output=True)
+            subprocess.run([binary, str(ROOT / "njord_gz_plugins/test/load_vectors.csv")],
+                           check=True, capture_output=True)
+
+    def test_physics_core_still_reproduces_the_shared_vectors(self):
+        # Regenerating with scripts/make_load_vectors.py is a reviewed change,
+        # never something a test does.
+        table = []
+        rows = [line.split(",") for line in
+                (ROOT / "njord_gz_plugins/test/load_vectors.csv").read_text().splitlines()]
+        for kind, *values in rows:
+            v = [float(x) for x in values]
+            if kind == "table":
+                table.append(dict(angle_deg=v[0], cx=v[1], cy=v[2], cn=v[3]))
+            elif kind == "coeff":
+                got = wind_coefficients(v[0], table)
+                expected = v[1:4]
+            elif kind == "wind":
+                got = wind_load((v[0], v[1]), v[2], v[3], v[4], table)
+                expected = v[5:8]
+            elif kind == "thrust":
+                force, torque = thruster_wrench(v[0], v[1:4], v[4:7], v[7:10])
+                got, expected = (*force, *torque), v[10:16]
+            else:
+                self.fail(f"unknown row kind {kind}")
+            if kind != "table":
+                for g, e in zip(got, expected):
+                    self.assertAlmostEqual(g, e, delta=1e-12 * max(1.0, abs(e)))
+        self.assertGreater(len(rows), 20)
 
     def test_multiple_convex_buoyancy_volumes(self):
         from njord_sim.mesh_geometry import geometry_mesh

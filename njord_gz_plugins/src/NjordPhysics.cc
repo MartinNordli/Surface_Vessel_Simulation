@@ -42,6 +42,7 @@
 // the hull keeps its momentum. Simulation time going backwards resets the
 // thruster state and invalidates the last command.
 #include "njord/Hydrostatics.hh"
+#include "njord/Loads.hh"
 #include <chrono>
 #include <gz/msgs/float_v.pb.h>
 #include <gz/msgs/wrench.pb.h>
@@ -65,18 +66,13 @@ class Physics final : public gz::sim::System,
     V position, axis;
     double forward, reverse, tau, force{};
   };
-  // One row of the wind table; angle (deg) is the direction the relative air
-  // flow moves toward in the body frame, counter-clockwise from forward.
-  struct Coefficient {
-    double angle, cx, cy, cn;
-  };
   gz::sim::Link link;
   std::vector<hydro::Mesh> meshes;
   V com, wind;
   std::string bodyFrame;
   double density{}, level{}, areaX{}, areaY{}, length{}, timeout{}, liveness{};
   std::vector<Thruster> motors;
-  std::vector<Coefficient> table;
+  std::vector<loads::WindRow> table;  // sorted by angle
   gz::transport::Node node;
   gz::transport::Node::Publisher telemetry, wrenchTelemetry;
   std::chrono::steady_clock::duration lastTelemetry{};  // simulation time
@@ -90,6 +86,10 @@ class Physics final : public gz::sim::System,
   bool stampPending{};
   std::vector<double> commands;  // requested force per thruster (N)
   bool valid{};                  // one finite command per thruster
+
+  // Conversions between gz::math and the header-only vector type.
+  static hydro::Vec Hv(const V &v) { return {v.X(), v.Y(), v.Z()}; }
+  static V Gv(const hydro::Vec &v) { return V(v.x, v.y, v.z); }
 
 public:
   void Configure(const gz::sim::Entity &entity,
@@ -262,11 +262,12 @@ public:
             std::max(0., std::chrono::duration<double>(info.dt).count()),
             t.tau);
         // Thrust acts along the body-fixed axis at the thruster position.
-        actuatorForce += t.axis * t.force;
-        actuatorMoment += (t.position - com).Cross(t.axis * t.force);
-        auto f = rot.RotateVector(t.axis * t.force);
-        force += f;
-        torque += rot.RotateVector(t.position - com).Cross(f);
+        auto w = loads::ThrusterWrench(t.force, Hv(t.position), Hv(t.axis),
+                                       Hv(com));
+        actuatorForce += Gv(w.force);
+        actuatorMoment += Gv(w.torque);
+        force += rot.RotateVector(Gv(w.force));
+        torque += rot.RotateVector(Gv(w.torque));
       }
       // Evaluation-only force telemetry, never an autonomy input. The state
       // includes this step's response integration, hence its end-step stamp.
@@ -303,32 +304,10 @@ public:
     auto velocity = link.WorldLinearVelocity(ecm, com);
     if (velocity) {
       auto air = rot.RotateVectorReverse(wind - *velocity);
-      // Direction the air moves toward, degrees in [0, 360) from forward.
-      double angle = std::atan2(air.Y(), air.X()) * 180 / M_PI;
-      angle = std::fmod(angle + 360., 360.);
-      // Periodic linear interpolation between neighbouring table rows a and
-      // b; the table wraps from its last row to its first across 360 deg.
-      // Same math as physics_core.wind_coefficients.
-      auto upper = std::upper_bound(
-          table.begin(), table.end(), angle,
-          [](double a, const Coefficient &b) { return a < b.angle; });
-      auto b = upper == table.end() ? table.front() : *upper;
-      auto a = upper == table.begin() ? table.back() : *(upper - 1);
-      double aa = a.angle, bb = b.angle;
-      if (bb <= aa)
-        bb += 360;
-      if (angle < aa)
-        angle += 360;
-      double f = (angle - aa) / (bb - aa);
-      // Dynamic pressure q = 0.5 * rho_air * |v_air,horizontal|^2 with
-      // rho_air = 1.225 kg/m^3. Body-frame loads: X = q Ax cx, Y = q Ay cy,
-      // yaw moment N = q Ay L cn.
-      double pressure = .5 * 1.225 * (air.X() * air.X() + air.Y() * air.Y());
-      force +=
-          rot.RotateVector(V(pressure * areaX * (a.cx + f * (b.cx - a.cx)),
-                             pressure * areaY * (a.cy + f * (b.cy - a.cy)), 0));
-      torque += rot.RotateVector(
-          V(0, 0, pressure * areaY * length * (a.cn + f * (b.cn - a.cn))));
+      // Body-frame {X, Y, N}; same math as physics_core.wind_load.
+      auto load = loads::WindLoad(Hv(air), areaX, areaY, length, table);
+      force += rot.RotateVector(V(load[0], load[1], 0));
+      torque += rot.RotateVector(V(0, 0, load[2]));
     }
     // Apply the summed wrench with its point of application at the COM
     // (offset `com` in the link frame).

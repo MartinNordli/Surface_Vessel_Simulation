@@ -28,6 +28,18 @@ team's unpublished algorithms.
 Configuration regressions check schema validation, partial WAM-V overrides,
 speed-profile selection for every vessel and the `/config` lookup order.
 
+The Njord plugin's force math is header-only C++ and tested without Gazebo:
+`test/hydrostatics_test.cc` (clipped buoyancy and actuator lag) and
+`test/loads_test.cc` (wind-table interpolation, wind load and thruster wrench
+in `njord/Loads.hh`). The loads test has hand-derived cases and checks
+`test/load_vectors.csv`, which `scripts/make_load_vectors.py` writes from the
+Python mirror `physics_core.py`; `tests/test_njord_physics.py` compiles both
+C++ tests and checks that `physics_core` still reproduces the vectors, so a
+change on either side fails a test. The vectors are regenerated only by hand
+after an intended model change, never by a test. These establish that the
+implementation matches its formulas, not that the formulas match the real
+boat.
+
 On 2026-09-26, after the configuration cleanup, the container suite passed all
 166 tests, the GPU selftest passed (both 640×360 cameras, lidar, navigation in
 `map`), and `./scripts/njord demo reference` (seed 1, calm, fast) completed 3/3

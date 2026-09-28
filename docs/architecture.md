@@ -61,7 +61,7 @@ them to topics, parameters and timers.
 | | `constants.py` | Fixed platform constants (world origin, command timeout, WAM-V geometry) |
 | | `defaults.py` | Fallback node parameters, read from the configuration files |
 | Model and world | `vessel.py` | WAM-V model from the VRX xacro, sensor settings and bridges |
-| | `njord_model.py`, `mesh_geometry.py`, `physics_core.py` | Njord model generation, convex mesh import, reference force calculations |
+| | `njord_model.py`, `mesh_geometry.py`, `physics_core.py` | Njord model generation, convex mesh import, Python mirror of the plugin force math (`njord/Hydrostatics.hh`, `njord/Loads.hh`) |
 | | `scenario.py` | World SDF: buoys, obstacles, water, wind and waves |
 | | `run_manifest.py` | Atomic, checksummed handoff between the services |
 | Scoring | `scenario_core.py`, `evaluator_node.py` | Gate crossing, clearance and race status from ground truth |

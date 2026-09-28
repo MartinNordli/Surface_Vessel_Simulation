@@ -28,6 +28,14 @@ team's unpublished algorithms.
 Configuration regressions check schema validation, partial WAM-V overrides,
 speed-profile selection for every vessel and the `/config` lookup order.
 
+The mapper traces every ray of a scan with integer Bresenham steps advanced for
+all rays at once (`mapping_core.trace_rays`). `tests/test_mapping_raytrace.py`
+checks that the cells equal the per-cell `grid_line` loop, kept as the
+independent reference, for random, off-map and degenerate rays and a full
+720-ray scan. `validation/mapper_timing.py` (fixed seed, default 160 m grid,
+720 rays up to 80 m) measured a median update of 44.1 ms before and 7.3 ms
+after on the development host (2026-09-28), the same CPU work per scan.
+
 The Njord plugin's force math is header-only C++ and tested without Gazebo:
 `test/hydrostatics_test.cc` (clipped buoyancy and actuator lag) and
 `test/loads_test.cc` (wind-table interpolation, wind load and thruster wrench

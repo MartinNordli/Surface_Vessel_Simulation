@@ -59,6 +59,14 @@ IMU_RAW_TOPIC = '/sim/sensors/imu/data_raw'
 GPS_RAW_TOPIC = '/sim/sensors/gps/fix_raw'
 GROUND_TRUTH_TOPIC = '/sim/ground_truth/odometry'
 
+# Gazebo visibility mask of every lidar. The VRX sea surface (coast_waves) is
+# a visual with visibility flag 8, drawn with shader waves the flat-water
+# physics does not have; the pinned VRX WAM-V lidar uses mask 7 so it does not
+# see it, and a real lidar returns very little from water. Without the mask the
+# Njord lidar saw that surface up to about 0.6 m above the physical water level
+# 3-10 m around the boat and the mapper marked it as obstacles.
+LIDAR_VISIBILITY_MASK = 7
+
 
 def camera_frame(camera, optical=False):
     """Body-aligned camera link of ``camera`` in CAMERAS, or its ROS optical frame."""

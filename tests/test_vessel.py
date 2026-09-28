@@ -106,6 +106,10 @@ class VesselGenerationTests(unittest.TestCase):
     def test_lidar_geometry_and_scan_pointcloud_contract(self):
         sensor = self.sensors["lidar_sensor"]
         self.assertEqual(sensor.findtext("gz_frame_id"), "lidar_link")
+        # The pinned VRX lidar hides the sea surface; Njord vessels copy this mask.
+        from njord_sim.constants import LIDAR_VISIBILITY_MASK
+        ray = sensor.find("ray") if sensor.find("ray") is not None else sensor.find("lidar")
+        self.assertEqual(ray.findtext("visibility_mask"), str(LIDAR_VISIBILITY_MASK))
         ray = sensor.find("ray")
         if ray is None:
             ray = sensor.find("lidar")

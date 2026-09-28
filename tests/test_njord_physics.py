@@ -20,6 +20,7 @@ from njord_sim.physics_core import (
     wind_coefficients,
     wind_load,
 )
+from njord_sim.constants import LIDAR_VISIBILITY_MASK
 from njord_sim.njord_model import generate
 
 
@@ -182,6 +183,10 @@ class PhysicsTests(unittest.TestCase):
             self.assertEqual(len(link.findall("sensor")), 5)
             self.assertIn("front_left_camera_link_optical", urdf)
             self.assertEqual(model.get("name"), "vessel")
+            # The lidar must not see the rendered sea (visibility flag 8), like the VRX WAM-V lidar.
+            lidar = link.find("sensor[@type='gpu_lidar']")
+            self.assertEqual(lidar.findtext("lidar/visibility_mask"), str(LIDAR_VISIBILITY_MASK))
+            self.assertEqual(LIDAR_VISIBILITY_MASK & 8, 0)
             self.assertEqual(link.get("name"), "base_link")
             # Same ROS-facing names as the WAM-V (constants.py).
             ros_topics = {b["ros_topic_name"] for b in yaml.safe_load((Path(d) / "bridges.yaml").read_text())}

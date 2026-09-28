@@ -30,7 +30,7 @@ import xml.etree.ElementTree as ET
 import yaml
 from .configuration import sensor_settings, thruster_table
 from .constants import (BASE_FRAME, COMMAND_TIMEOUT_S, PROCESS_LIVENESS_S, GPS_FRAME, GPS_RAW_TOPIC, GROUND_TRUTH_TOPIC,
-                        GZ_MODEL_NAME, IMU_FRAME, IMU_RAW_TOPIC, LIDAR_FRAME, LIDAR_POINTS_TOPIC,
+                        GZ_MODEL_NAME, IMU_FRAME, IMU_RAW_TOPIC, LIDAR_FRAME, LIDAR_POINTS_TOPIC, LIDAR_VISIBILITY_MASK,
                         LIDAR_SCAN_TOPIC, camera_frame, camera_topic)
 from .vessel import set_text
 
@@ -207,6 +207,8 @@ def generate(output_dir, resolved_configuration):
             }.items():
                 txt(sensor, "lidar/" + key, val)
             txt(sensor, "lidar/noise/type", "gaussian")
+            # Do not see the rendered sea surface (constants.LIDAR_VISIBILITY_MASK).
+            txt(sensor, "lidar/visibility_mask", LIDAR_VISIBILITY_MASK)
             bridge(LIDAR_SCAN_TOPIC, "sensor_msgs/msg/LaserScan", "gz.msgs.LaserScan")
             # Gazebo publishes the point cloud on <scan topic>/points.
             bridge(

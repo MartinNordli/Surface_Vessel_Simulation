@@ -55,7 +55,7 @@ class SensorNoiseTests(unittest.TestCase):
 
 
 try:
-    from test_sensor_runtime import HAS_ROS, local_node, SensorAdapter, Imu, NavSatFix
+    from test_sensor_runtime import HAS_ROS, local_node, SensorAdapter, Imu
     from diagnostic_msgs.msg import DiagnosticStatus
 except ImportError:
     HAS_ROS = False

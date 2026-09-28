@@ -1,5 +1,4 @@
 """Public configuration and physical allocation contract regressions."""
-import copy
 import json
 import math
 from pathlib import Path

@@ -28,7 +28,7 @@ import re
 
 import yaml
 
-from .constants import COMMAND_TIMEOUT_S, HEARTBEATS, PROCESS_LIVENESS_S, THRUSTER_COMMAND_TOPIC, WAMV_HULL, WAMV_THRUSTERS
+from .constants import COMMAND_TIMEOUT_S, PROCESS_LIVENESS_S, THRUSTER_COMMAND_TOPIC, WAMV_HULL, WAMV_THRUSTERS
 from .control_core import allocation_matrix, independent_rows
 from .mission_core import SEARCH_BEARINGS_DEG
 from .mesh_geometry import geometry_vertices, geometry_volume, load_obj, validate_disjoint_volumes

@@ -7,7 +7,6 @@ plugin's input saturation, not direct load-cell force or marine fidelity.
 """
 import hashlib
 import json
-import math
 import os
 from pathlib import Path
 import time

@@ -1,0 +1,8 @@
+# Lint for syntax errors and pyflakes findings only (unused imports and
+# names, undefined names); no formatting or style rules. Run locally with
+#   uvx ruff@0.16.9 check .
+# The same pinned version runs in CI (.github/workflows/ci.yml).
+extend-exclude = ["outputs"]
+
+[lint]
+select = ["E9", "F"]

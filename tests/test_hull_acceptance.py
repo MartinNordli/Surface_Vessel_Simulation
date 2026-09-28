@@ -9,7 +9,7 @@ import yaml
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'validation'))
 from hull_acceptance import compare, hydrostatic_equilibrium, oscillator, oscillator_parameters
-from physical_acceptance import wrench, response
+from physical_acceptance import wrench
 spec=importlib.util.spec_from_file_location('campaign_acceptance',ROOT/'scripts/dynamics_campaign.py')
 campaign=importlib.util.module_from_spec(spec);spec.loader.exec_module(campaign)
 

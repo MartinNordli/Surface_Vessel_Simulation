@@ -1,6 +1,5 @@
 """Real DDS regression for evaluator readiness and contact-stream failure."""
 import json
-import os
 from pathlib import Path
 import sys
 import tempfile

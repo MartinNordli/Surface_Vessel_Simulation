@@ -5,7 +5,6 @@ SMOKE_TIMEOUT_S bounds wall time. Truth mode is plumbing evidence only.
 import json
 from collections import defaultdict, deque
 from pathlib import Path
-import math
 import os
 import time
 import numpy as np

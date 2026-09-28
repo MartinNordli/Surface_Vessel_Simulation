@@ -178,9 +178,9 @@ class MissionCrossingTests(unittest.TestCase):
                 self.update(node, clock, 17.+14.*index/300.)
                 status = pubs['/njord/mission_status'].messages[-1].status[0]
                 self.assertNotEqual(status.level, DiagnosticStatus.ERROR, status.message)
-            self.assertEqual(len(node.passed), 1)
+            self.assertEqual(len(node.core.passed), 1)
             self.assertEqual(pubs['/njord/mission_status'].messages[-1].status[0].message, 'complete')
-            self.assertEqual(node.gate_seen, 10.)  # Observations were never freshened.
+            self.assertEqual(node.core.gate_seen, 10.)  # Observations were never freshened.
 
     def test_memory_still_expires_with_live_camera(self):
         with local_node(Mission) as (node, clock, pubs):

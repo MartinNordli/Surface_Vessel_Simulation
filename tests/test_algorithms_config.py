@@ -55,14 +55,59 @@ class AlgorithmsConfigTests(unittest.TestCase):
         old['schema_version'] = 2
         for key in ('grid_resolution_m', 'grid_size_m', 'grid_origin_m'):
             del old['mapping'][key]
+        del old['mission']
         converted = convert_algorithm_schema(old)
-        self.assertEqual(converted['schema_version'], 3)
+        self.assertEqual(converted['schema_version'], 4)
         self.assertEqual(converted['mapping'], self.shipped()['mapping'])
         self.assertNotIn('grid_size_m', old['mapping'])
-        self.assertEqual(self.resolve(old)['algorithms'], self.resolve(self.shipped())['algorithms'])
+        resolved = self.resolve(old)['algorithms']
+        self.assertEqual({k: v for k, v in resolved.items() if k != 'mission'},
+                         {k: v for k, v in self.resolve(self.shipped())['algorithms'].items() if k != 'mission'})
         old['mapping']['grid_size_m'] = 100.0
         with self.assertRaisesRegex(ValueError, 'schema 3'):
             convert_algorithm_schema(old)
+
+    def test_schema_3_converts_with_search_and_retry_disabled(self):
+        old = self.shipped()
+        old['schema_version'] = 3
+        del old['mission']
+        mission = convert_algorithm_schema(old)['mission']
+        # The geometry the mission node used to build in; no search, no retry.
+        shipped = self.shipped()['mission']
+        for key in ('min_gate_width_m', 'max_gate_width_m', 'approach_m', 'exit_m', 'arrival_tolerance_m',
+                    'detection_max_age_s', 'crossing_memory_s', 'crossing_entry_m'):
+            self.assertEqual(mission[key], shipped[key])
+        self.assertEqual(mission['max_gate_retries'], 0)
+        self.assertGreater(mission['search_after_s'], 1e6)
+        self.resolve(old)
+
+    def test_invalid_mission_rejected(self):
+        for key, value in [('max_gate_retries', 1.5), ('max_gate_retries', True), ('max_gate_retries', -1),
+                           ('min_gate_width_m', 40.0), ('search_goal_s', 30.0), ('search_radius_m', 0.0),
+                           ('approach_m', float('nan'))]:
+            algorithms = self.shipped()
+            algorithms['mission'][key] = value
+            with self.subTest(key=key, value=value), self.assertRaises(ValueError):
+                self.resolve(algorithms)
+        algorithms = self.shipped()
+        algorithms['mission']['typo_m'] = 1.0
+        with self.assertRaises(ValueError):
+            self.resolve(algorithms)
+
+    def test_retry_point_must_lie_outside_the_obstacle_inflation(self):
+        algorithms = self.shipped()
+        algorithms['mission']['retry_clearance_m'] = 4.0  # WAM-V inflation is 4.0 m
+        with self.assertRaisesRegex(ValueError, 'retry_clearance_m'):
+            self.resolve(algorithms)
+        algorithms['mission']['retry_clearance_m'] = 5.1
+        self.resolve(algorithms)
+
+    def test_mission_reaches_the_node_with_navigation_freshness(self):
+        mission = autonomy_parameters(self.resolve(self.shipped()))['mission']
+        self.assertEqual({k: v for k, v in mission.items() if k not in ('camera_max_age_s', 'odometry_max_age_s')},
+                         {k: v for k, v in self.shipped()['mission'].items()})
+        self.assertIs(type(mission['max_gate_retries']), int)
+        self.assertEqual(mission['camera_max_age_s'], self.shipped()['navigation']['stale_after_s'])
 
     def test_invalid_grid_rejected(self):
         for key, value in [('grid_resolution_m', 0), ('grid_size_m', -1), ('grid_size_m', float('nan')),

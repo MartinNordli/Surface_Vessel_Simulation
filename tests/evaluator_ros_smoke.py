@@ -21,7 +21,8 @@ from std_msgs.msg import Bool, Float64
 from builtin_interfaces.msg import Time
 from test_sensor_runtime import local_node
 from njord_sim.constants import GZ_MODEL_NAME, PROCESS_LIVENESS_S
-from njord_sim.evaluator_node import Evaluator, wall_budget_s
+from njord_sim.evaluator_node import Evaluator
+from njord_sim.scenario_core import wall_budget_s
 
 ROOT = Path(__file__).resolve().parents[1]
 

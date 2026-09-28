@@ -41,15 +41,7 @@ from rclpy.qos import qos_profile_sensor_data, QoSProfile, DurabilityPolicy
 from std_msgs.msg import Float64, Bool
 
 from .constants import GROUND_TRUTH_TOPIC, GZ_MODEL_NAME, HEARTBEATS, PROCESS_LIVENESS_S
-from .scenario_core import RaceScorer, load_scenario, scenario_digest
-
-
-def wall_budget_s(minimum_s, timeout_s, real_time_factor):
-    """Steady-time budget (s) for a run: never below ``minimum_s``, and room for
-    the scenario's ``timeout_s`` of simulation time at half the target
-    ``real_time_factor``, since a loaded host reaches less than the target.
-    It is an infrastructure watchdog; the race limit is the simulation timeout."""
-    return max(minimum_s, 2.0 * timeout_s / real_time_factor)
+from .scenario_core import RaceScorer, load_scenario, scenario_digest, wall_budget_s
 
 
 class Evaluator(Node):

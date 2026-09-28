@@ -53,6 +53,26 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 
 
+# Steady seconds a race gets beyond the evaluator's budget, for image startup,
+# the simulator handoff and teardown.
+STARTUP_ALLOWANCE_S = 300.0
+
+
+def default_wall_timeout(environment):
+    """Per-race steady budget (s): the evaluator's budget plus STARTUP_ALLOWANCE_S.
+
+    The benchmark must never cut a race the evaluator would still score. The
+    course comes from SCENARIO (a /opt/njord/scenarios/ path maps to the
+    checkout's scenarios/) and the target factor from REAL_TIME_FACTOR.
+    """
+    sys.path.insert(0, str(ROOT / "njord_sim"))
+    from njord_sim.scenario_core import wall_budget_s
+    scenario = Path(environment.get("SCENARIO") or "/opt/njord/scenarios/reference.yaml")
+    host = ROOT / "scenarios" / scenario.name
+    timeout_s = yaml.safe_load(host.read_text())["timeout_s"] if host.is_file() else 360.0
+    return wall_budget_s(600.0, timeout_s, float(environment.get("REAL_TIME_FACTOR") or 1.0)) + STARTUP_ALLOWANCE_S
+
+
 def speed_profiles(environment):
     """PROFILE names in the algorithms file the races read, or None if it is not on the host.
 
@@ -393,11 +413,14 @@ def main():
                         help="speed_profiles_mps names from algorithms.yaml (default: all of them)")
     # Per-race steady wall-clock limit in seconds (the course has its own
     # simulation-time timeout inside the evaluator).
-    parser.add_argument("--wall-timeout", type=float, default=600)
+    parser.add_argument("--wall-timeout", type=float,
+                        help="per-race steady budget in s (default: evaluator budget + 300 s)")
     parser.add_argument("--jobs", type=int, default=1, help="Concurrent races (1-100); each holds a distinct ROS domain")
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
+    if args.wall_timeout is None:
+        args.wall_timeout = default_wall_timeout(os.environ)
     known_profiles = speed_profiles(os.environ)
     if args.profiles is None:
         if known_profiles is None:

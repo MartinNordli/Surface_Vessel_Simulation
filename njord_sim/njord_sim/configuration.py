@@ -30,6 +30,7 @@ import yaml
 
 from .constants import COMMAND_TIMEOUT_S, HEARTBEATS, PROCESS_LIVENESS_S, THRUSTER_COMMAND_TOPIC, WAMV_HULL, WAMV_THRUSTERS
 from .control_core import allocation_matrix, independent_rows
+from .mission_core import SEARCH_BEARINGS_DEG
 from .mesh_geometry import geometry_vertices, geometry_volume, load_obj, validate_disjoint_volumes
 from .scenario_core import validate_scenario
 
@@ -48,10 +49,16 @@ GUIDANCE_KEYS = {
     'control_hz', 'stale_after_s', 'braking_deceleration_mps2', 'reaction_time_s',
     'stopping_margin_m',
 }
+# Reference mission geometry, freshness, search and retry (algorithms.yaml ``mission``).
+MISSION_KEYS = {
+    'min_gate_width_m', 'max_gate_width_m', 'approach_m', 'exit_m', 'arrival_tolerance_m',
+    'detection_max_age_s', 'crossing_memory_s', 'crossing_entry_m', 'search_after_s',
+    'search_radius_m', 'search_goal_s', 'search_timeout_s', 'max_gate_retries', 'retry_clearance_m',
+}
 # Algorithm values that may legitimately be zero; everything else must be > 0.
 NONNEGATIVE_ALGORITHM_KEYS = {
     'kp_yaw', 'kd_yaw', 'kp_surge', 'reaction_time_s', 'stopping_margin_m', 'safety_margin_m',
-    'self_filter_margin_m',
+    'self_filter_margin_m', 'search_after_s', 'max_gate_retries',
 }
 ENVIRONMENT_KEYS = {
     'wind_speed_mps', 'wind_direction_to_deg_enu', 'wind_variance_gain', 'wave_gain',
@@ -532,11 +539,14 @@ def resolve_scenario(data, seed=None, environment=None):
 # --------------------------------------------------------------------------
 
 def convert_algorithm_schema(algorithms):
-    """Upgrade an older algorithms file to schema 3, one version at a time.
+    """Upgrade an older algorithms file to schema 4, one version at a time.
 
     1->2 introduces the assumed timing and filter tolerances. 2->3 makes the
     occupancy grid explicit with the values the mapper used to build in:
-    0.5 m cells, a 160 m square, lower-left corner at (-40, -40) m.
+    0.5 m cells, a 160 m square, lower-left corner at (-40, -40) m. 3->4 adds
+    ``mission`` with the geometry the mission node used to build in and
+    search and retry disabled (no search, no retries), which is the previous
+    behaviour.
     """
     result = copy.deepcopy(algorithms)
     if result.get('schema_version') == 1:
@@ -551,7 +561,17 @@ def convert_algorithm_schema(algorithms):
             raise ValueError('occupancy grid settings require algorithms schema 3')
         result['schema_version'] = 3
         result['mapping'].update(grid_resolution_m=.5, grid_size_m=160., grid_origin_m=[-40., -40.])
-    _version(result, 3)
+    if result.get('schema_version') == 3:
+        if 'mission' in result:
+            raise ValueError('mission settings require algorithms schema 4')
+        result['schema_version'] = 4
+        # search_after_s beyond any race and no retries reproduce schema 3.
+        result['mission'] = dict(min_gate_width_m=8., max_gate_width_m=30., approach_m=5., exit_m=6.,
+                                 arrival_tolerance_m=2., detection_max_age_s=2., crossing_memory_s=45.,
+                                 crossing_entry_m=15., search_after_s=1e9, search_radius_m=8.,
+                                 search_goal_s=10., search_timeout_s=60., max_gate_retries=0,
+                                 retry_clearance_m=6.)
+    _version(result, 4)
     return result
 
 
@@ -579,6 +599,11 @@ def guard_requirements(components, run_mode):
     return {'required_status': status, 'require_race_active': run_mode == 'race'}
 
 
+def inflation_m(hull, algorithms):
+    """Obstacle inflation (m): the hull's circumscribed radius plus the safety margin."""
+    return math.hypot(hull['length_m'], hull['beam_m']) / 2 + algorithms['mapping']['safety_margin_m']
+
+
 def speed_profile_names(algorithms_file):
     """Sorted ``PROFILE`` names defined by ``speed_profiles_mps`` in an algorithms file."""
     profiles = _read(algorithms_file).get('speed_profiles_mps')
@@ -590,11 +615,11 @@ def speed_profile_names(algorithms_file):
 def _resolve_algorithms(algorithms, profile):
     """Validate algorithms.yaml and select the speed ceiling for ``profile``."""
     algorithms = copy.deepcopy(algorithms)
-    if algorithms.get('schema_version') in (1, 2):
+    if algorithms.get('schema_version') in (1, 2, 3):
         algorithms = convert_algorithm_schema(algorithms)
-    _version(algorithms, 3)
-    _keys(algorithms, {'schema_version', 'speed_profiles_mps', 'guidance', 'planner', 'mapping', 'navigation'},
-          where='algorithms')
+    _version(algorithms, 4)
+    _keys(algorithms, {'schema_version', 'speed_profiles_mps', 'guidance', 'planner', 'mapping', 'navigation',
+                       'mission'}, where='algorithms')
     profiles = algorithms['speed_profiles_mps']
     if not isinstance(profiles, dict) or not profiles:
         raise ValueError('speed_profiles_mps must map profile names to speeds')
@@ -608,7 +633,15 @@ def _resolve_algorithms(algorithms, profile):
     # The grid corner may be negative; every other algorithm value is a scalar >= 0.
     _vector(algorithms['mapping']['grid_origin_m'], 2, 'grid_origin_m')
     _keys(algorithms['navigation'], {'stale_after_s', 'processing_margin_s', 'clock_stall_after_s', 'sync_slop_s'}, where='navigation')
-    for group in ('guidance', 'planner', 'mapping', 'navigation'):
+    _keys(algorithms['mission'], MISSION_KEYS, where='mission')
+    retries = algorithms['mission']['max_gate_retries']
+    if type(retries) is not int:
+        raise ValueError('max_gate_retries must be an integer')
+    if algorithms['mission']['min_gate_width_m'] > algorithms['mission']['max_gate_width_m']:
+        raise ValueError('min_gate_width_m must not exceed max_gate_width_m')
+    if algorithms['mission']['search_goal_s'] * len(SEARCH_BEARINGS_DEG) > algorithms['mission']['search_timeout_s']:
+        raise ValueError('search_timeout_s must leave search_goal_s for every search bearing')
+    for group in ('guidance', 'planner', 'mapping', 'navigation', 'mission'):
         for key, value in algorithms[group].items():
             if key != 'grid_origin_m':
                 _number(value, key, 0, positive=key not in NONNEGATIVE_ALGORITHM_KEYS)
@@ -681,6 +714,11 @@ def resolve_configuration(vessel_file, scenario_file, algorithms_file, seed=None
         limits = [vessel['settings']['max_thrust_n']]
     if algorithms['guidance']['max_thrust'] > min(limits):
         raise ValueError('algorithm max_thrust exceeds physical actuator capacity')
+    # A retry waypoint inside the inflated buoy would be an invalid planner
+    # endpoint; 1 m allows for the buoy's own radius.
+    hull = vessel['hull'] if vessel['profile'] == 'njord' else WAMV_HULL
+    if algorithms['mission']['retry_clearance_m'] < inflation_m(hull, algorithms) + 1.0:
+        raise ValueError('mission.retry_clearance_m must exceed the obstacle inflation by 1 m')
     validate_scenario(scenario)
 
     resources = {str(Path(p).resolve()): hashlib.sha256(Path(p).read_bytes()).hexdigest()
@@ -728,10 +766,8 @@ def autonomy_parameters(resolved):
                                 'clock_stall_after_s': algorithms['navigation']['clock_stall_after_s'],
                                 'gps_xy_std_m': settings['gps_horizontal_noise_m'],
                                 'gps_z_std_m': settings['gps_vertical_noise_m']}
-    # Inflate obstacles by the vessel's circumscribed radius plus the margin.
     mapping = algorithms['mapping']
-    result['mapper'] = {'inflation_m': math.hypot(hull['length_m'], hull['beam_m']) / 2
-                        + mapping['safety_margin_m'],
+    result['mapper'] = {'inflation_m': inflation_m(hull, algorithms),
                         # float(): a YAML integer would not match the declared ROS double.
                         'resolution': float(mapping['grid_resolution_m']),
                         'size_m': float(mapping['grid_size_m']),
@@ -741,7 +777,10 @@ def autonomy_parameters(resolved):
                         'input_max_age_s': algorithms['navigation']['stale_after_s'],
                         'self_filter_margin_m': mapping['self_filter_margin_m'],
                         'lidar_noise_stddev_m': settings['lidar_noise_stddev']}
-    result['mission'] = {'camera_max_age_s': algorithms['navigation']['stale_after_s'],
+    # float(): a YAML integer would not match the declared ROS double.
+    result['mission'] = {**{key: value if key == 'max_gate_retries' else float(value)
+                            for key, value in algorithms['mission'].items()},
+                         'camera_max_age_s': algorithms['navigation']['stale_after_s'],
                          'odometry_max_age_s': algorithms['navigation']['stale_after_s']}
     result['perception'] = {'sync_tolerance_s': algorithms['navigation']['sync_slop_s'],
                             'input_max_age_s': algorithms['navigation']['stale_after_s']}

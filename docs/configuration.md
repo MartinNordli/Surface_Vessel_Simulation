@@ -17,8 +17,8 @@ run. Nothing needs rebuilding unless noted.
 | Gates, obstacles, start pose, default seed, race time limit | `scenarios/<course>.yaml` | course name, e.g. `./scripts/njord demo slalom` |
 | Wind, waves, current, water, physics time step | `environments:` in `scenarios/<course>.yaml` | `ENVIRONMENT=calm\|moderate` |
 | Speed ceiling of each profile, and which profiles exist | `speed_profiles_mps` in `njord_sim/config/algorithms.yaml` | `PROFILE=<name>` (shipped: `fast`, `conservative`) |
-| Guidance gains, lookahead, operating thrust limit, stopping model, planner timing, map safety margin, occupancy grid size and position | `njord_sim/config/algorithms.yaml` | `ALGORITHMS_CONFIG` (default) |
-| Other reference-node parameters (perception thresholds, mission geometry) | a ROS parameter file, e.g. `config/examples/team_params.yaml` | `ROS_PARAMS_FILE=/config/examples/…` |
+| Guidance gains, lookahead, operating thrust limit, stopping model, planner timing, map safety margin, occupancy grid size and position, mission gate geometry, search and retry | `njord_sim/config/algorithms.yaml` | `ALGORITHMS_CONFIG` (default) |
+| Other reference-node parameters (perception thresholds) | a ROS parameter file, e.g. `config/examples/team_params.yaml` | `ROS_PARAMS_FILE=/config/examples/…` |
 | EKF / GPS-transform settings | `njord_sim/config/localization.yaml` | always used |
 | World origin (GPS datum), command timeout, thruster command topic pattern, pinned WAM-V hull and thruster geometry | `njord_sim/njord_sim/constants.py` (then rebuild) | fixed platform constants |
 | Seed of a single run | — | `SEED=<n>` |
@@ -71,7 +71,8 @@ simulated second than on the boat (optimistic latency); above 1, less
 (pessimistic). Only runs that achieve a factor near 1 on hardware comparable to
 the boat's represent its computation latency. Measured: the evaluator's
 steady-time budget scales as `max(wall_timeout_s, 2 × timeout_s / factor)` so a
-slow run is not cut short; a Njord reference run at 0.3 (seed 1, CPU
+slow run is not cut short, and `benchmark` gives each race that budget plus
+300 s for startup unless `--wall-timeout` is set; a Njord reference run at 0.3 (seed 1, CPU
 rendering) reached 1 of 3 gates because the pure-Python planner spent up to
 15 s of wall time on infeasible searches, not because of actuation timing.
 
@@ -258,6 +259,18 @@ the observed-free corridor. `guidance.max_thrust` is an operating limit and
 must not exceed the vessel's physical limit. The braking model (0.25 m/s²,
 1 s reaction) is an assumption until verified by dynamics measurements.
 
+`mission` configures the reference gate mission (`mission_core.py`). Without
+a gate in view for `search_after_s` it drives to goals `search_radius_m` away
+at 0, ±40 and ±80 degrees from the course heading, each for at most
+`search_goal_s`, and reports an error after `search_timeout_s`. A gate the
+boat was seen passing outside its buoys is retried up to `max_gate_retries`
+times via a point `retry_clearance_m` beside the passed buoy; the loader
+requires that point to lie at least 1 m outside the obstacle inflation, so it
+is a valid planner goal. A position jump faster than 15 m/s (an initializing
+estimator) is not taken as a crossing. These change only the reference
+autonomy, which the real boat does not run; they do not change what the
+simulator measures.
+
 A new speed profile only needs a new `speed_profiles_mps` entry; the launch,
 the autonomy runner and `benchmark --profiles` read the names from this file.
 
@@ -313,7 +326,11 @@ Algorithms schema 2 adds `mapping.self_filter_margin_m` (0.02 m) and
 `convert_algorithm_schema` adds these explicit defaults to schema 1.
 Algorithms schema 3 adds `mapping.grid_resolution_m` (0.5 m), `grid_size_m`
 (160 m) and `grid_origin_m` ([-40, -40] m), the values the mapper previously
-built in; older files are converted step by step with those values.
+built in; older files are converted step by step with those values. Schema 4
+adds `mission`: the gate geometry the mission node previously built in, plus
+search (`search_after_s`, `search_radius_m`, `search_goal_s`,
+`search_timeout_s`) and retry (`max_gate_retries`, `retry_clearance_m`). A
+converted schema 3 file gets search and retries disabled, its old behaviour.
 Reference startup requires freshness budgets of two sensor periods plus the
 processing margin. Sensor periods round up to a physics tick, recorded in
 `resolved_configuration.json`; rates above the physics update rate fail.

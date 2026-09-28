@@ -45,8 +45,8 @@ controller only advances into an observed-free corridor.
    `autonomy_config.json` and starts `launch/dstar_demo.launch.py` with the
    public parameters.
 4. **evaluator** (`scripts/run_evaluator.py` → `evaluator_node.py`) waits for
-   the same handoff, starts the race once navigation, mission, planner and
-   contact monitoring are healthy, scores it against ground truth and writes
+   the same handoff, starts the race once the required heartbeats and contact
+   monitoring are healthy, scores it against ground truth and writes
    `run_metrics.json`. Its exit code (0 = completed) ends the run.
 
 ## Code map
@@ -70,7 +70,7 @@ them to topics, parameters and timers.
 | Perception | `perception_core.py`, `perception_node.py` | Colour blobs + lidar depth → buoy tracks |
 | Mapping | `mapping_core.py`, `mapper_node.py` | Ray-traced occupancy grid with aging and inflation |
 | Planning | `dstar_lite.py`, `planner_core.py`, `planner_node.py` | Incremental D* Lite on the occupancy grid |
-| Mission | `mission_node.py` | Ordered red-left/green-right gate sequence → goals |
+| Mission | `mission_core.py`, `mission_node.py` | Ordered red-left/green-right gate sequence → goals, with search and retry |
 | Control | `control_core.py`, `guidance_node.py` | Line-of-sight tracking, speed limits, thrust allocation |
 | Safety | `command_guard_node.py` | Single actuator authority; zero thrust on stale inputs |
 | Shared | `geometry.py` | Rigid transforms and timestamp helpers |
@@ -98,7 +98,12 @@ per vessel in its vessel file.
 The mission initializes its first search from the estimated heading. A gate
 leaving the camera field of view may be remembered for a limited time inside a
 bounded approach/crossing corridor; fresh camera frames, odometry and
-observed-free lidar guidance are still required.
+observed-free lidar guidance are still required. With no gate in view it
+searches with goals ahead along the course, and a gate passed outside its
+buoys is retried via a point beside the passed buoy, so the route never
+crosses a gate backwards (tests use the scorer's own crossing rule). Search
+and retry only make the reference autonomy a more useful baseline; the scorer
+is unchanged.
 
 The command guard requires a current navigation heartbeat, planner and mission
 heartbeats while those reference nodes run, and in a race (`RUN_MODE=race`)

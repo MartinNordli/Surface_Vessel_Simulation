@@ -4,7 +4,7 @@
 # simulator run: the values are validated at launch and take precedence over
 # node defaults and ROS_PARAMS_FILE. Physical limits belong to the vessel file;
 # values here may be lower but never exceed them. All units are SI.
-schema_version: 3
+schema_version: 4
 
 # Speed ceiling (m/s) for each PROFILE (`PROFILE=fast ./scripts/njord demo`).
 # Guidance further reduces speed for heading error, clearance and braking room.
@@ -41,6 +41,27 @@ mapping:
   grid_resolution_m: 0.5            # cell edge length
   grid_size_m: 160.0                # edge length of the square grid
   grid_origin_m: [-40.0, -40.0]     # map (x, y) of the grid's lower-left corner
+
+mission:
+  # Gate geometry of the reference mission (red buoy left, green right).
+  min_gate_width_m: 8.0             # accepted buoy separation range
+  max_gate_width_m: 30.0
+  approach_m: 5.0                   # approach point before the gate centre
+  exit_m: 6.0                       # exit point past the gate centre
+  arrival_tolerance_m: 2.0          # distance at which a mission point counts as reached
+  detection_max_age_s: 2.0          # oldest buoy sighting used outside the crossing zone
+  crossing_memory_s: 45.0           # gate memory while crossing, when the buoys leave the cameras
+  crossing_entry_m: 15.0            # crossing zone starts this far before the gate line
+  # Search when no gate is in view: goals search_radius_m from where the
+  # search began, at 0, +-40 and +-80 degrees from the course heading.
+  search_after_s: 2.0               # time without a gate before searching
+  search_radius_m: 8.0
+  search_goal_s: 10.0               # longest time on one search goal; 5 goals fit in the timeout
+  search_timeout_s: 60.0            # search time before reporting an error
+  # Retry a gate passed outside its buoys: via a point beside the passed buoy.
+  max_gate_retries: 1               # 0 disables retries
+  retry_clearance_m: 6.0            # distance of that point outside the buoy; must exceed the
+                                    # obstacle inflation (hull radius + safety_margin_m) + 1 m
 
 navigation:
   stale_after_s: 0.5

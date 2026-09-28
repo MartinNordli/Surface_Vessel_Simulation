@@ -32,8 +32,9 @@ Parameters:
 Timing and failure behaviour:
     Each message is transformed with TF looked up at its own acquisition
     stamp. Messages with no frame, older than ``input_max_age_s`` or stamped
-    in the future (relative to simulation time), or without TF at their
-    stamp are dropped; they add no evidence. Old cells expire back to
+    in the future (relative to simulation time) are dropped. A message whose
+    TF has not arrived yet waits (tf_wait.TfWaitQueue, in stamp order) until
+    it can be transformed or is older than ``input_max_age_s``. Old cells expire back to
     unknown, and because the grid keeps the newest integrated lidar stamp,
     a stalled lidar shows up as a stale map instead of being re-stamped.
     When simulation time jumps backwards (world reset) the map is discarded.
@@ -53,6 +54,7 @@ from njord_sim.geometry import stamp_seconds, transform_from_ros
 from njord_sim.defaults import node_defaults
 from njord_sim.mapping_core import OccupancyMapper
 from njord_sim.self_geometry import SelfGeometry
+from njord_sim.tf_wait import TfWaitQueue
 
 
 class Mapper(Node):
@@ -94,6 +96,17 @@ class Mapper(Node):
         self.create_subscription(LaserScan, self.p("scan_topic"), self.on_scan,
                                  qos_profile_sensor_data)
         self.create_timer(1.0/self.p("publish_hz"), self.publish_grid)
+        # Clouds and scans wait here for TF at their acquisition stamp (see
+        # tf_wait); each stream is integrated in stamp order.
+        self.waiting = {"cloud": TfWaitQueue(self.p("input_max_age_s")),
+                        "scan": TfWaitQueue(self.p("input_max_age_s"))}
+        self.create_timer(0.02, self.release)  # simulation time
+
+    def release(self):
+        """Integrate every queued measurement whose transform has arrived."""
+        now = self.observe_clock()
+        self.waiting["cloud"].release(now, self.integrate_cloud)
+        self.waiting["scan"].release(now, self.integrate_scan)
 
     def observe_clock(self):
         """Return simulation time [s]; reset the map if time went backwards.
@@ -106,6 +119,8 @@ class Mapper(Node):
         if self.last_clock is not None and now < self.last_clock:
             self.mapper = OccupancyMapper(**self.config)
             self.last_stamp = None
+            for queue in getattr(self, "waiting", {}).values():
+                queue.clear()
         self.last_clock = now
         return now
 
@@ -127,10 +142,20 @@ class Mapper(Node):
           Lower points (e.g. returns from the water surface) and max-range
           points only clear cells along their ray.
         """
+        self.queue("cloud", msg)
+
+    def queue(self, stream, msg):
+        """Queue a fresh measurement of ``stream`` and integrate what is ready."""
         now = self.observe_clock()
         stamp = stamp_seconds(msg.header.stamp)
         if not msg.header.frame_id or not 0 <= now-stamp <= self.p("input_max_age_s"):
             return
+        self.waiting[stream].push(stamp, msg)
+        self.release()
+
+    def integrate_cloud(self, msg):
+        """Integrate a queued cloud; False while TF at its stamp is not available."""
+        stamp = stamp_seconds(msg.header.stamp)
         try:
             # Both transforms at the cloud acquisition time, not "now".
             when = Time.from_msg(msg.header.stamp)
@@ -138,16 +163,16 @@ class Mapper(Node):
             to_surfaces = {frame: self.tf.lookup_transform(frame, msg.header.frame_id, when)
                            for frame in self.self_geometry}
         except TransformException:
-            return
+            return False
         raw = point_cloud2.read_points_numpy(msg, field_names=("x", "y", "z"), skip_nans=True)
         raw = np.asarray(raw).reshape(-1, 3)
         if not len(raw):
-            return
+            return True
         # Ranges are measured from the lidar origin (the cloud's own frame).
         ranges = np.linalg.norm(raw, axis=1)
         raw = raw[np.isfinite(raw).all(axis=1) & (ranges > 0.1) & (ranges <= self.p("max_range_m"))]
         if not len(raw):
-            return
+            return True
         # Reject self returns, without declaring the surrounding footprint free.
         outside_self = np.ones(len(raw), dtype=bool)
         for frame, geometry in self.self_geometry.items():
@@ -158,7 +183,7 @@ class Mapper(Node):
         # Points at (within 1 cm of) max range are treated as "no return".
         has_return = np.linalg.norm(filtered, axis=1) < self.p("max_range_m")-0.01
         if not len(world):
-            return
+            return True
         # Lidar position in map at acquisition time: the start of every ray.
         origin = transform_from_ros([[0., 0., 0.]], to_map)[0]
         # Water returns establish free visibility only up to their contact point;
@@ -168,6 +193,7 @@ class Mapper(Node):
         hit = (world[:, 2] >= self.p("min_height_m")) & has_return
         if self.mapper.update(origin, world, hit, stamp, stream="cloud"):
             self.record_stamp(msg.header.stamp)
+        return True
 
     def on_scan(self, msg):
         """Use explicit +inf range evidence; NaN/negative ranges stay unknown.
@@ -181,22 +207,23 @@ class Mapper(Node):
         max_range_m)``, is a "no return" ray; it is clipped to that maximum
         and clears the cells along it. Finite hits are not used here.
         """
-        now = self.observe_clock()
+        self.queue("scan", msg)
+
+    def integrate_scan(self, msg):
+        """Integrate a queued scan; False while TF at its stamp is not available."""
         stamp = stamp_seconds(msg.header.stamp)
-        if not msg.header.frame_id or not 0 <= now-stamp <= self.p("input_max_age_s"):
-            return
         try:
             when = Time.from_msg(msg.header.stamp)
             transform = self.tf.lookup_transform(self.p("map_frame"), msg.header.frame_id, when)
             for frame in self.self_geometry:
                 self.tf.lookup_transform(frame, msg.header.frame_id, when)
         except TransformException:
-            return
+            return False
         ranges = np.asarray(msg.ranges, dtype=float)
         angles = msg.angle_min + np.arange(len(ranges))*msg.angle_increment
         maximum = min(float(msg.range_max), self.p("max_range_m"))
         if not np.isfinite(maximum) or maximum <= 0:
-            return
+            return True
         valid = (np.isposinf(ranges) | np.isfinite(ranges)) & (ranges >= max(msg.range_min, 0.1))
         angles, ranges = angles[valid], ranges[valid]
         hit = np.isfinite(ranges) & (ranges < maximum)
@@ -211,6 +238,7 @@ class Mapper(Node):
         if len(world) and self.mapper.update(origin, world, np.zeros(len(world), dtype=bool),
                                              stamp, stream="scan"):
             self.record_stamp(msg.header.stamp)
+        return True
 
     def publish_grid(self):
         """Publish the aged and inflated grid (timer callback)."""

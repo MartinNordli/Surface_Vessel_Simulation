@@ -345,7 +345,12 @@ mesh loader, retaining spaces between pontoons. A point within
 `self_filter_margin_m + 3 * lidar_noise_stddev` of a surface is discarded
 before ray clearing. This is a narrow blind band: an external object inside
 it cannot be distinguished from a self return. Missing geometry prevents
-mapper startup; missing acquisition-time TF discards the observation.
+mapper startup. An observation whose acquisition-time TF has not arrived yet
+waits for it, in stamp order, until it is older than `input_max_age_s`
+(`tf_wait.py`); the mapper and perception both do this. Dropping them instead
+lost about 10 % of lidar clouds at real-time factor 1 and 79 % at 0.3, where
+Gazebo steps in bursts and clouds arrive before the estimator's TF (measured
+on the GPU, WAM-V reference course).
 Collision geometry remains authoritative for contacts and navigation margin;
 changing visual geometry never changes mass, inertia or damping automatically.
 

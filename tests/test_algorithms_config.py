@@ -122,6 +122,41 @@ class AlgorithmsConfigTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.resolve(algorithms)
 
+    def resolve_vessel(self, vessel, algorithms):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)/'algorithms.yaml'
+            path.write_text(yaml.safe_dump(algorithms))
+            return resolve_configuration(ROOT/f'njord_sim/config/vessels/{vessel}.yaml',
+                                         ROOT/'scenarios/reference.yaml', path)
+
+    def test_vessel_override_applies_only_to_its_vessel(self):
+        algorithms = self.shipped()
+        algorithms['vessel_overrides'] = {'njord_analytic': {'guidance': {'kp_yaw': 123.0},
+                                                             'mission': {'approach_m': 7.0}}}
+        njord = self.resolve_vessel('njord_v1', algorithms)
+        self.assertEqual(njord['algorithms']['vessel_override'], 'njord_analytic')
+        self.assertEqual(njord['algorithms']['guidance']['kp_yaw'], 123.0)
+        self.assertEqual(autonomy_parameters(njord)['mission']['approach_m'], 7.0)
+        # Other guidance values stay shared.
+        self.assertEqual(njord['algorithms']['guidance']['kp_surge'], self.shipped()['guidance']['kp_surge'])
+        wamv = self.resolve_vessel('wamv', algorithms)
+        self.assertIsNone(wamv['algorithms']['vessel_override'])
+        self.assertEqual(wamv['algorithms']['guidance']['kp_yaw'], self.shipped()['guidance']['kp_yaw'])
+        algorithms['vessel_overrides'] = {'wamv': {'guidance': {'kp_yaw': 99.0}}}
+        self.assertEqual(self.resolve_vessel('wamv', algorithms)['algorithms']['guidance']['kp_yaw'], 99.0)
+
+    def test_invalid_vessel_overrides_are_rejected_for_every_vessel(self):
+        for overrides in ({'njord_analytic': {'navigation': {'stale_after_s': 1.0}}},  # not overridable
+                          {'njord_analytic': {'guidance': {'kp_yaww': 1.0}}},  # misspelled key
+                          {'someone_else': {'guidance': {'typo': 1.0}}},  # checked even if not applied
+                          {'njord_analytic': {'guidance': {'kp_yaw': -1.0}}},  # merged value invalid
+                          {'njord_analytic': {'guidance': {'max_thrust': 5000.0}}},  # above the vessel limit
+                          {'njord_analytic': 'kp_yaw'}, 'not a mapping'):
+            algorithms = self.shipped()
+            algorithms['vessel_overrides'] = overrides
+            with self.subTest(overrides=overrides), self.assertRaises(ValueError):
+                self.resolve_vessel('njord_v1', algorithms)
+
     def test_guard_requirements(self):
         self.assertEqual(guard_requirements({'autonomy': 'reference'}, 'race'),
                          {'required_status': ['navigation', 'planner', 'mission'], 'require_race_active': True})

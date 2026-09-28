@@ -1,4 +1,5 @@
-# Reference autonomy tuning (ALGORITHMS_CONFIG), shared by every vessel.
+# Reference autonomy tuning (ALGORITHMS_CONFIG), shared by every vessel unless
+# vessel_overrides (at the end) replaces values for one vessel.
 #
 # This is the only place to tune the reference guidance, planner and mapper in a
 # simulator run: the values are validated at launch and take precedence over
@@ -68,3 +69,11 @@ navigation:
   processing_margin_s: 0.1
   clock_stall_after_s: 0.5          # monotonic wall seconds
   sync_slop_s: 0.12                # maximum camera/lidar acquisition difference
+
+# Per-vessel values that replace the shared ones above, keyed by the vessel's
+# name ('wamv' for the WAM-V, otherwise `name` in the vessel file). Only the
+# guidance, mapping and mission sections, and only keys that exist above, may be
+# overridden; the merged values pass the same checks. Values tuned against an
+# uncalibrated vessel model are not evidence of the real boat.
+vessel_overrides: {}
+

@@ -612,14 +612,49 @@ def speed_profile_names(algorithms_file):
     return sorted(profiles)
 
 
-def _resolve_algorithms(algorithms, profile):
-    """Validate algorithms.yaml and select the speed ceiling for ``profile``."""
+# Sections of algorithms.yaml a vessel may override (``vessel_overrides``).
+VESSEL_OVERRIDE_SECTIONS = ('guidance', 'mapping', 'mission')
+
+
+def vessel_key(vessel):
+    """Name that selects a vessel's ``vessel_overrides`` entry: 'wamv' or the vessel ``name``."""
+    return 'wamv' if vessel['profile'] == 'wamv_reference' else vessel['name']
+
+
+def _apply_vessel_overrides(algorithms, vessel_name):
+    """Merge the ``vessel_overrides`` entry for ``vessel_name`` into ``algorithms``.
+
+    Every entry is checked, applied or not: only VESSEL_OVERRIDE_SECTIONS and
+    keys that exist in the shared section are allowed, so a misspelled
+    setting cannot silently do nothing. The merged values are validated with
+    the shared rules afterwards. Returns the applied vessel name, or None.
+    """
+    overrides = algorithms.pop('vessel_overrides', None) or {}
+    if not isinstance(overrides, dict):
+        raise ValueError('vessel_overrides must map vessel names to sections')
+    for name, sections in overrides.items():
+        _keys(sections, (), VESSEL_OVERRIDE_SECTIONS, where=f'vessel_overrides.{name}')
+        for section, values in sections.items():
+            _keys(values, (), algorithms[section].keys(), where=f'vessel_overrides.{name}.{section}')
+    if vessel_name not in overrides:
+        return None
+    for section, values in overrides[vessel_name].items():
+        algorithms[section].update(copy.deepcopy(values))
+    return vessel_name
+
+
+def _resolve_algorithms(algorithms, profile, vessel_name='wamv'):
+    """Validate algorithms.yaml, apply the vessel's overrides and select ``profile``'s speed ceiling."""
     algorithms = copy.deepcopy(algorithms)
     if algorithms.get('schema_version') in (1, 2, 3):
         algorithms = convert_algorithm_schema(algorithms)
     _version(algorithms, 4)
     _keys(algorithms, {'schema_version', 'speed_profiles_mps', 'guidance', 'planner', 'mapping', 'navigation',
-                       'mission'}, where='algorithms')
+                       'mission'}, {'vessel_overrides'}, where='algorithms')
+    for section in VESSEL_OVERRIDE_SECTIONS:
+        if not isinstance(algorithms[section], dict):
+            raise ValueError(f'{section} must be a mapping')
+    applied = _apply_vessel_overrides(algorithms, vessel_name)
     profiles = algorithms['speed_profiles_mps']
     if not isinstance(profiles, dict) or not profiles:
         raise ValueError('speed_profiles_mps must map profile names to speeds')
@@ -646,6 +681,7 @@ def _resolve_algorithms(algorithms, profile):
             if key != 'grid_origin_m':
                 _number(value, key, 0, positive=key not in NONNEGATIVE_ALGORITHM_KEYS)
     algorithms['profile'] = profile
+    algorithms['vessel_override'] = applied
     algorithms['guidance']['max_speed'] = profiles[profile]
     return algorithms
 
@@ -679,7 +715,7 @@ def resolve_configuration(vessel_file, scenario_file, algorithms_file, seed=None
     scenario_data = _read(scenario_file)
     versioned_scenario = 'schema_version' in scenario_data
     scenario = resolve_scenario(scenario_data, seed, environment)
-    algorithms = _resolve_algorithms(_read(algorithms_file), profile or DEFAULT_PROFILE)
+    algorithms = _resolve_algorithms(_read(algorithms_file), profile or DEFAULT_PROFILE, vessel_key(vessel))
     env = scenario['environment']
     settings = vessel['settings'] if vessel['profile'] == 'wamv_reference' else vessel['sensors']['settings']
     sensor_periods = sensor_timing(settings, env['physics_step_s'])

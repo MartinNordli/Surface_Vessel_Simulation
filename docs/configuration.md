@@ -271,6 +271,21 @@ estimator) is not taken as a crossing. These change only the reference
 autonomy, which the real boat does not run; they do not change what the
 simulator measures.
 
+`vessel_overrides` replaces shared values for one vessel, keyed by `wamv` or
+the vessel file's `name` (e.g. `njord_analytic`, `munin_placeholder`):
+
+```yaml
+vessel_overrides:
+  njord_analytic:
+    guidance: {kp_yaw: 250.0, kd_yaw: 200.0}
+```
+
+Only `guidance`, `mapping` and `mission` can be overridden, and only with keys
+that exist in the shared section. Every entry is checked, also for vessels not
+in the run, and the merged values pass the same rules, including the vessel's
+thrust limit. The applied name is recorded as `algorithms.vessel_override` in
+`resolved_configuration.json`. The shipped file has no overrides.
+
 A new speed profile only needs a new `speed_profiles_mps` entry; the launch,
 the autonomy runner and `benchmark --profiles` read the names from this file.
 

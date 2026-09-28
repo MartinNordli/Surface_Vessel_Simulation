@@ -72,6 +72,18 @@ def stamp_seconds(stamp):
     return stamp.sec + stamp.nanosec * 1e-9
 
 
+# Largest x or y position variance (m^2, standard deviation 2 m) of an
+# initialized navigation estimate. The estimator reports far more while it
+# starts up; at REAL_TIME_FACTOR 0.3 its first GPS input was measured off by
+# about 5e6 m, with a reported x variance of about 300 m^2.
+ESTIMATE_MAX_POSITION_VARIANCE_M2 = 4.0
+
+
+def estimate_initialized(covariance):
+    """True if a row-major 6x6 pose covariance has x and y variances in [0, 4) m^2."""
+    return all(0 <= covariance[i] < ESTIMATE_MAX_POSITION_VARIANCE_M2 for i in (0, 7))
+
+
 def valid_odometry(msg, frame_id, child_frame_id):
     """True if an ``nav_msgs/Odometry``-like message is usable as a pose.
 

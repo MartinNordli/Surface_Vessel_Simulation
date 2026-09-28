@@ -50,7 +50,7 @@ from rclpy.node import Node
 from vision_msgs.msg import Detection3DArray
 
 from njord_sim.defaults import node_defaults
-from njord_sim.geometry import stamp_seconds, yaw_from_quaternion
+from njord_sim.geometry import estimate_initialized, stamp_seconds, yaw_from_quaternion
 from njord_sim.mission_core import GateMission, OK
 
 LEVELS = {0: DiagnosticStatus.OK, 1: DiagnosticStatus.WARN, 2: DiagnosticStatus.ERROR}
@@ -77,12 +77,14 @@ class Mission(Node):
         self.create_timer(0.1, self.step)
 
     def on_odom(self, msg):
-        """Pass a valid map-frame pose to the mission; invalid messages are ignored.
+        """Pass a valid, initialized map-frame pose to the mission; others are ignored.
 
-        Ignored odometry is not cleared here; it simply ages out and the
-        freshness check in the mission reports it as stale.
+        An estimate whose x or y variance is 4 m^2 or more is still starting
+        up (the navigation status reports it the same way) and can be far off;
+        goals and gate crossings must not be derived from it. Ignored odometry
+        is not cleared here; it ages out and the mission reports it as stale.
         """
-        if msg.header.frame_id != self.p("map_frame"):
+        if msg.header.frame_id != self.p("map_frame") or not estimate_initialized(msg.pose.covariance):
             return
         p = msg.pose.pose.position
         q = msg.pose.pose.orientation

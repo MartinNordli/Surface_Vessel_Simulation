@@ -96,15 +96,34 @@ class MissionNodeOdometryTests(unittest.TestCase):
             spec.loader.exec_module(module)
         cls.Mission = module.Mission
 
-    def test_invalid_orientation_does_not_initialize_navigation(self):
+    def node(self):
         node = self.Mission.__new__(self.Mission)
         node.p = {'map_frame': 'map'}.__getitem__
         node.core = GateMission(3, 0., SETTINGS)
+        return node
+
+    @staticmethod
+    def odom(x=0., orientation=None, variance=0.03):
+        covariance = [0.]*36
+        covariance[0] = covariance[7] = variance
+        return NS(header=NS(frame_id='map', stamp=NS(sec=10, nanosec=0)),
+                  pose=NS(pose=NS(position=NS(x=x, y=0.), orientation=orientation or NS(x=0., y=0., z=0., w=1.)),
+                          covariance=covariance))
+
+    def test_invalid_orientation_does_not_initialize_navigation(self):
+        node = self.node()
         for orientation in (NS(x=0., y=0., z=0., w=0.), NS(x=0., y=0., z=math.nan, w=1.)):
-            node.on_odom(NS(header=NS(frame_id='map', stamp=NS(sec=10, nanosec=0)),
-                            pose=NS(pose=NS(position=NS(x=0., y=0.), orientation=orientation))))
+            node.on_odom(self.odom(orientation=orientation))
             self.assertIsNone(node.core.odom_stamp)
             self.assertIsNone(node.core.position)
+
+    def test_uninitialized_estimate_is_ignored(self):
+        # Measured at real-time factor 0.3: ~1e6 m off with a variance of ~300 m^2.
+        node = self.node()
+        node.on_odom(self.odom(x=106329., variance=298.))
+        self.assertIsNone(node.core.position)
+        node.on_odom(self.odom(x=0.5))
+        self.assertEqual(node.core.position[0], 0.5)
 
 
 if __name__ == '__main__':

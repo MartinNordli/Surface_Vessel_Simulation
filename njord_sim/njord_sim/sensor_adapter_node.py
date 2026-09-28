@@ -47,7 +47,7 @@ from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus
 
 from njord_sim.constants import BASE_FRAME, GPS_RAW_TOPIC, GPS_TOPIC, IMU_RAW_TOPIC, IMU_TOPIC
 from njord_sim.defaults import node_defaults
-from njord_sim.geometry import valid_odometry
+from njord_sim.geometry import estimate_initialized, valid_odometry
 from njord_sim.sensor_noise_core import SensorNoise, covariance, noisy_orientation, noisy_fix
 
 
@@ -106,8 +106,7 @@ class SensorAdapter(Node):
         in [0, 4) m^2 (standard deviation below 2 m).
         """
         # Pose covariance is a row-major 6x6: [0] is var(x), [7] is var(y).
-        if (valid_odometry(msg, 'map', BASE_FRAME)
-                and 0 <= msg.pose.covariance[0] < 4 and 0 <= msg.pose.covariance[7] < 4):
+        if valid_odometry(msg, 'map', BASE_FRAME) and estimate_initialized(msg.pose.covariance):
             self.record('estimate', msg)
 
     def imu(self, raw):

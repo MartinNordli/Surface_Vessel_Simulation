@@ -1,0 +1,48 @@
+{
+  "created_utc": "2026-09-28T20:42:01+00:00",
+  "name": "gpu-campaign-smoke",
+  "note": "Campaign smoke with two and four thrusters: 300 N (fails, also on 51e1cde) against the 150 N default.",
+  "schema_version": 1,
+  "sources": [
+    {
+      "bytes": 133,
+      "content": {
+        "evidence_level": "actuator_integration_smoke",
+        "missing_physical_checks": [],
+        "passed": false
+      },
+      "path": "outputs/gpu-verify/campaign-two/campaign-acceptance.json",
+      "sha256": "758911b875c31fb8fc8ff68a8eb84af830d25e6bc326f74f868ec2fa39bb6a15"
+    },
+    {
+      "bytes": 133,
+      "content": {
+        "evidence_level": "actuator_integration_smoke",
+        "missing_physical_checks": [],
+        "passed": false
+      },
+      "path": "outputs/gpu-verify/campaign-two-base/campaign-acceptance.json",
+      "sha256": "758911b875c31fb8fc8ff68a8eb84af830d25e6bc326f74f868ec2fa39bb6a15"
+    },
+    {
+      "bytes": 132,
+      "content": {
+        "evidence_level": "actuator_integration_smoke",
+        "missing_physical_checks": [],
+        "passed": true
+      },
+      "path": "outputs/gpu-verify/campdef-njord_v1/campaign-acceptance.json",
+      "sha256": "224d25c1bf339b1113dd0e2fe3dd45a906e2a341667bf183b10e0dea8c3b3d96"
+    },
+    {
+      "bytes": 132,
+      "content": {
+        "evidence_level": "actuator_integration_smoke",
+        "missing_physical_checks": [],
+        "passed": true
+      },
+      "path": "outputs/gpu-verify/campdef-munin_v0/campaign-acceptance.json",
+      "sha256": "224d25c1bf339b1113dd0e2fe3dd45a906e2a341667bf183b10e0dea8c3b3d96"
+    }
+  ]
+}

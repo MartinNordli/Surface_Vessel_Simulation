@@ -1,0 +1,64 @@
+{
+  "created_utc": "2026-09-28T20:42:01+00:00",
+  "name": "gpu-selftest",
+  "note": "GPU selftest: both cameras, lidar and navigation with the vessel-neutral names.",
+  "schema_version": 1,
+  "sources": [
+    {
+      "bytes": 944,
+      "content": {
+        "estimator_accuracy_validated": false,
+        "evidence_level": "sensor_stream_and_tf_plumbing_only",
+        "passed": true,
+        "received": {
+          "left": {
+            "accepted": true,
+            "frame": "front_left_camera_link_optical",
+            "height": 360,
+            "stamp_s": 10.168,
+            "width": 640
+          },
+          "lidar": {
+            "accepted": true,
+            "finite_points": 1292,
+            "frame": "lidar_link",
+            "stamp_s": 10.2
+          },
+          "navigation": {
+            "accepted": true,
+            "frame": "map",
+            "stamp_s": 10.2
+          },
+          "right": {
+            "accepted": true,
+            "frame": "front_right_camera_link_optical",
+            "height": 360,
+            "stamp_s": 10.168,
+            "width": 640
+          }
+        },
+        "required_contiguous_sim_s": 10.0,
+        "windows": {
+          "left": [
+            0.132,
+            10.168
+          ],
+          "lidar": [
+            0.1,
+            10.2
+          ],
+          "navigation": [
+            0.1,
+            10.2
+          ],
+          "right": [
+            0.132,
+            10.168
+          ]
+        }
+      },
+      "path": "outputs/gpu-verify/selftest/sensor_validation.json",
+      "sha256": "f50905687572305e2ab62581b47b66cc77d9544837d9c93bf222781d51da6e6a"
+    }
+  ]
+}

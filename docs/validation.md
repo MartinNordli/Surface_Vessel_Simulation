@@ -90,6 +90,27 @@ geometric overlap, verified contact monitoring, and a faster median for the fast
 profile on matched seeds. Reports retain failures, timeouts and unavailable data.
 Seeds improve repeatability; GPU rendering is not promised to be bit deterministic.
 
+## GPU verification of the 2026-09 changes
+
+Simulations are run with GPU rendering; CPU rendering (`NJORD_CPU=1`) is only
+the CI fallback. On 2026-09-28 the changes to names, actuation timing, run
+modes, mission recovery, TF handling and the estimator start-up were checked
+on an RTX 5090:
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| `./scripts/njord test`, `selftest` | 258 tests OK; both cameras, lidar and navigation accepted with the vessel-neutral names | [`gpu-selftest`](evidence/gpu-selftest.json) |
+| Actuator expiry (Njord and WAM-V plugins) | 0.51–0.54 s of simulation time at factors 0.3, 1 and 3 | [`gpu-actuator-expiry`](evidence/gpu-actuator-expiry.json) |
+| WAM-V reference course | 3/3 at factor 1 (123 s) and at 0.3 on seeds 1 and 2 (113, 107 s); slalom 5/5 (192 s) | [`gpu-rtf-races`](evidence/gpu-rtf-races.json) |
+| TF wait queue at factor 0.3 | map age p95 0.10 s and 782 buoy arrays in 90 s once the estimator has started | [`gpu-tf-availability`](evidence/gpu-tf-availability.json) |
+| Mission recovery, benchmark against the previous version | slalom fast 5/5 on seeds 1–3 in both; Njord 2/0/0 before and 0/3/0 after (spread, not a trend) | [`gpu-benchmark-mission-recovery`](evidence/gpu-benchmark-mission-recovery.json) |
+| Campaign smoke, two and four thrusters | fails at 300 N (also before these changes); passes at the 150 N default | [`gpu-campaign-smoke`](evidence/gpu-campaign-smoke.json) |
+| `lab` free driving | reference autonomy moved 21 m in 40 s; an external probe's commands moved the boat 19 m and thrust stopped when they stopped | `outputs/gpu-verify/probe-lab-*.log` (not summarized) |
+
+The Njord reference autonomy still rarely completes a course (0–3 gates
+per run); this is the reference planner and tuning for that hull, not the
+simulator, and is not evidence about the real boat.
+
 ## Dynamics measurements
 
 Run dynamics measurements with **only the simulator service** running:

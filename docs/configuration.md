@@ -69,12 +69,21 @@ Computation is not simulated: an algorithm that needs 100 ms of CPU takes
 and 300 ms at 3. Below 1, algorithms therefore get more computation per
 simulated second than on the boat (optimistic latency); above 1, less
 (pessimistic). Only runs that achieve a factor near 1 on hardware comparable to
-the boat's represent its computation latency. Measured: the evaluator's
-steady-time budget scales as `max(wall_timeout_s, 2 × timeout_s / factor)` so a
-slow run is not cut short, and `benchmark` gives each race that budget plus
-300 s for startup unless `--wall-timeout` is set; a Njord reference run at 0.3 (seed 1, CPU
-rendering) reached 1 of 3 gates because the pure-Python planner spent up to
-15 s of wall time on infeasible searches, not because of actuation timing.
+the boat's represent its computation latency. The evaluator's steady-time
+budget scales as `max(wall_timeout_s, 2 × timeout_s / factor)` so a slow run is
+not cut short, and `benchmark` gives each race that budget plus 300 s for
+startup unless `--wall-timeout` is set.
+
+Measured on the GPU (RTX 5090), 2026-09-28
+([`evidence/gpu-actuator-expiry.json`](evidence/gpu-actuator-expiry.json),
+[`evidence/gpu-rtf-races.json`](evidence/gpu-rtf-races.json)): both actuator
+plugins expired a command after 0.51–0.54 s of simulation time at factors 0.3,
+1 and 3 (1.7, 0.58 and 0.35 s of wall time). The WAM-V reference course
+completed 3/3 at 0.3 on seeds 1 and 2 (113 and 107 s) and at 1 (123 s). A
+target of 3 reached only about 1.3 with rendering. Two effects of a slow
+simulator had to be fixed for this: lidar clouds and images arriving before the
+estimator's TF (now queued, see below), and the estimator's start-up
+transient (the mission waits until the estimate is initialized).
 
 ### Parameter precedence
 

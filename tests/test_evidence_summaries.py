@@ -12,7 +12,13 @@ summarize = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(summarize)
 
 
+# The image copies tests but not docs/; the checks of committed documentation
+# run in the checkout (host suite and CI's unit job).
+HAS_DOCS = (ROOT / 'docs/evidence').is_dir()
+
+
 class EvidenceSummaryTests(unittest.TestCase):
+    @unittest.skipUnless(HAS_DOCS, 'docs/ is not part of the image')
     def test_every_cited_summary_exists(self):
         cited = {match for doc in (ROOT / 'docs').glob('*.md')
                  for match in re.findall(r'evidence/([a-z0-9-]+)\.json', doc.read_text())}
@@ -21,6 +27,7 @@ class EvidenceSummaryTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertTrue((ROOT / 'docs/evidence' / f'{name}.json').is_file())
 
+    @unittest.skipUnless(HAS_DOCS, 'docs/ is not part of the image')
     def test_summaries_follow_the_schema_without_local_paths(self):
         for path in sorted((ROOT / 'docs/evidence').glob('*.json')):
             with self.subTest(path=path.name):

@@ -48,6 +48,12 @@ import uuid
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
+# Thrust of the --smoke excitation (N per thruster). Open loop, the analytic
+# test hulls are directionally unstable at speed: at 300 N a tiny yaw
+# asymmetry grew about tenfold every 2 s after ~20 s at 3.8-4.7 m/s, so the
+# 30 s smoke never became stationary. 150 N, as in the documented runtime
+# evidence, stays stationary for both the two- and four-thruster files.
+SMOKE_THRUST_N = 150.0
 sys.path.insert(0, str(ROOT / 'validation'))
 from numerical_acceptance import compare
 
@@ -416,7 +422,8 @@ def main():
     parser.add_argument('--seed', type=int)
     parser.add_argument('--environment', default='calm')
     parser.add_argument('--ros-domain', type=int, default=137)
-    parser.add_argument('--thrust', type=float, default=300.0)  # N per thruster
+    # N per thruster; default 300, or SMOKE_THRUST_N with --smoke.
+    parser.add_argument('--thrust', type=float)
     parser.add_argument('--duration', type=float, default=60.0)  # s, simulation time
     parser.add_argument('--timeout', type=float, default=600.0)  # s, wall time per trial
     parser.add_argument('--fail-fast', action='store_true',
@@ -436,6 +443,8 @@ def main():
     if args.smoke:
         args.repetitions = 1
         args.duration = 30.0
+    if args.thrust is None:
+        args.thrust = SMOKE_THRUST_N if args.smoke else 300.0
     vessel = yaml.safe_load(args.vessel.read_text())
     if args.controlled_fixture:
         vessel['center_of_mass_m'] = [0., 0., 0.]

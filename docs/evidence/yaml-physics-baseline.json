@@ -1,0 +1,35 @@
+{
+  "created_utc": "2026-09-28T00:41:20+00:00",
+  "name": "yaml-physics-baseline",
+  "note": "Original WAM-V image: container tests and sequential dynamics observations before the Njord model.",
+  "schema_version": 1,
+  "sources": [
+    {
+      "bytes": 539,
+      "path": "outputs/yaml-physics-baseline/dynamics.log",
+      "sha256": "62c7e1f2f0f4cdbc3805fce1232df8dafc7af59034f608511c87e1350c096e63",
+      "tail": [
+        "  \"turning_radius_m\": 4.846780306241175,",
+        "  \"coast_entry_speed_mps\": 1.274204571460168,",
+        "  \"coast_distance_m\": 2.293360907365494,",
+        "  \"stopped_within_observation\": true,",
+        "  \"coast_observation_s\": 6.659999999999997,",
+        "  \"thrust_per_side_n\": 300.0",
+        "}",
+        "Compare with measured boat manoeuvres; these are simulator observations."
+      ]
+    },
+    {
+      "bytes": 156,
+      "path": "outputs/yaml-physics-baseline/library-versions.txt",
+      "sha256": "2d4976f077a6b5da4e333f10fc88d094335dd4184283b08a1bc9284d05e5ac46",
+      "tail": [
+        "dpkg-query: no packages found matching libsdformat14-14",
+        "libgz-math7:amd64\t7.7.0-1~noble",
+        "libgz-physics7:amd64\t7.8.0-1~noble",
+        "libgz-sim8:amd64\t8.15.0-1~noble",
+        ""
+      ]
+    }
+  ]
+}

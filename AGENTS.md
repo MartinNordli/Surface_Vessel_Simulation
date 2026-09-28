@@ -29,6 +29,7 @@ linked guides, not here.
 │   ├── interfaces.md         ROS topics, types, frames and ownership per node
 │   ├── njord-calibration.md  Calibration protocol for the Njord model
 │   ├── njord-model-evidence.md  Measured evidence for the Njord model
+│   ├── evidence/             Compact summaries of runs the docs cite (scripts/summarize_evidence.py)
 │   ├── simulatorplattform-vrx-vs-pygemini.md  Why VRX/Gazebo (Norwegian)
 │   ├── control-autonomy-questions.md  Open questions for C&A and Naval (Norwegian)
 │   └── agent-workflows.md    How to build, verify, delegate and commit
@@ -83,7 +84,9 @@ while `*_node.py` only wires it to topics, parameters and timing.
   and coherent. Say in the commit which validation backs the change.
 - Never overwrite uncommitted user changes and never rewrite shared history.
 - Keep caches, builds, bags and generated metrics out of Git; generated results
-  go in `outputs/`, which is git-ignored.
+  go in `outputs/`, which is git-ignored. The one exception is `docs/evidence/`:
+  compact summaries that documentation cites, written only by
+  `scripts/summarize_evidence.py` and never edited by hand.
 
 ## Subagents
 

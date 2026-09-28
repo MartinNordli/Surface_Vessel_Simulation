@@ -1,0 +1,179 @@
+{
+  "created_utc": "2026-09-28T00:41:20+00:00",
+  "name": "njord-debug-race",
+  "note": "Njord reference race with WAM-V-tuned algorithms.",
+  "schema_version": 1,
+  "sources": [
+    {
+      "bytes": 4742,
+      "content": {
+        "clearance_model": "horizontal_conservative_rectangle_swept_0.1m_2deg",
+        "collision": false,
+        "contact_event_count": 0,
+        "contact_message_count": 6936,
+        "contact_status": "observed",
+        "distance_travelled_m": 58.432866960570806,
+        "environment": "calm",
+        "gate_events": [
+          {
+            "direction": 1,
+            "gate": "gate_1",
+            "time_s": 43.40391221598961
+          },
+          {
+            "direction": 1,
+            "gate": "gate_2",
+            "time_s": 90.87028223081813
+          }
+        ],
+        "gates_passed": 2,
+        "gates_total": 3,
+        "geometric_overlap": false,
+        "git_commit": "5c0a9abdeacc65efe8d7c744b59453d6310cb10f",
+        "image_identity": "sha256:9739e3c9b73d3be5bd15bace8ad4db4211f0fa365eff4c009c1b823123093264",
+        "image_source_digest": "246dbd711ca40a5c6cfd0753fffac1fa5b5334399f8e1103fdfb5cfa0c411c9f",
+        "label": "demo",
+        "manifest_sha256": "6df84d19f15ac245241fc25e2c21b7d91eb648e514f3456fa7c792f6495ce9ac",
+        "max_plan_ms": 12146.874749001654,
+        "mean_plan_ms": 171.043764124356,
+        "min_clearance_m": 3.4191149685506437,
+        "path_messages": 1707,
+        "plan_samples": 1568,
+        "profile": "fast",
+        "reached_goal": false,
+        "real_time_factor": 0.8994829969484898,
+        "replans": 1568,
+        "run_id": "03505934a9b24c91982e27b02ebf3e6d",
+        "runner_git_commit": "5c0a9abdeacc65efe8d7c744b59453d6310cb10f",
+        "scenario": {
+          "environment": {
+            "current_direction_to_deg_enu": 0.0,
+            "current_speed_mps": 0.0,
+            "physics_step_s": 0.004,
+            "water_density_kg_m3": 1000.0,
+            "water_level_m": 0.0,
+            "wave_direction_rad": 0.0,
+            "wave_gain": 0.0,
+            "wave_period_s": 5.0,
+            "wave_steepness": 0.0,
+            "wind_direction_deg": 45.0,
+            "wind_direction_to_deg_enu": 45.0,
+            "wind_speed_mps": 0.0,
+            "wind_variance_gain": 0.0
+          },
+          "environment_name": "calm",
+          "environments": {},
+          "gate_y_jitter_m": 0.75,
+          "gates": [
+            null,
+            null,
+            null
+          ],
+          "hull": {
+            "beam_m": 1.5,
+            "length_m": 3.0
+          },
+          "name": "njord_reference",
+          "obstacles": [
+            null,
+            null
+          ],
+          "resolved": true,
+          "schema_version": 1,
+          "seed": 1,
+          "start": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "timeout_s": 360.0
+        },
+        "scenario_sha256": "5ff5d6cda7eba75b4cbfa1ceb5b67f82a2472ea65a2d7b0299760c4ce81ca151",
+        "seed": 1,
+        "status": "simulation_timeout",
+        "time_s": 360.0,
+        "wall_time_s": 404.2040052320008
+      },
+      "path": "outputs/njord-debug-race/run_metrics.json",
+      "sha256": "9d28ebe220e31680675a9249fc12434bb7c86c6288c79677fb9961c33e76854e"
+    },
+    {
+      "bytes": 2879,
+      "content": {
+        "artifacts": {
+          "bridges.yaml": "532d091dbde3a08445738c9cd23baf6e45ff211454ec5fe01f86541fffe7c923",
+          "njord_course.sdf": "c7c4928650003d255717c3f62b144f1ba57ebde8f48ae1a4538dc6704e27be85",
+          "public_parameters.json": "6f7cb5d92558139dea6b69aff9b8fc475f3e64e89c0721a6a173cfef71d41ad7",
+          "resolved_configuration.json": "eaf08ccb24745acbf2eb96a27ed7ac1fbecf208f951bf5a0218d22a97e315eb1",
+          "resolved_scenario.json": "484d55ad9c9807e7bf6ea43eecff3504044293d56aa2015ccda210182d970f1e",
+          "resources/78ffe91b9ace712989356ba4a81cc006e0bbf4e490055f1a33d0b3fa6eb55ad2.yaml": "78ffe91b9ace712989356ba4a81cc006e0bbf4e490055f1a33d0b3fa6eb55ad2",
+          "resources/ce4e2cf876bfac88424ef893ad86aaf8ec50419c1bb7d9403ae6c1b481ed6ff5.yaml": "ce4e2cf876bfac88424ef893ad86aaf8ec50419c1bb7d9403ae6c1b481ed6ff5",
+          "resources/f6786507fbca1fe751c75ff4c69d41c031862f209fa3a41389ed56e14b06f41f.yaml": "f6786507fbca1fe751c75ff4c69d41c031862f209fa3a41389ed56e14b06f41f",
+          "scenario.sha256": "7ad43123c4fe7a49912b80ae00b17848e532bb88750f5c93f96c317b6ad95d5c",
+          "source_config/algorithms.yaml": "78ffe91b9ace712989356ba4a81cc006e0bbf4e490055f1a33d0b3fa6eb55ad2",
+          "source_config/scenario.yaml": "f6786507fbca1fe751c75ff4c69d41c031862f209fa3a41389ed56e14b06f41f",
+          "source_config/vessel.yaml": "ce4e2cf876bfac88424ef893ad86aaf8ec50419c1bb7d9403ae6c1b481ed6ff5",
+          "vessel_config.yaml": "67d6619d0507160353f97a41dcdcd853de9326abf58111d05599614b16845185",
+          "wamv.sdf": "183c6b159a276342c812849cff5916323b373ba655fd98e50831c259946d331f",
+          "wamv.urdf": "660a0f755c2301d45e0a6512e20a3a906a7493efce6697739cb1e9e4a5e536ff"
+        },
+        "image_identity": "sha256:9739e3c9b73d3be5bd15bace8ad4db4211f0fa365eff4c009c1b823123093264",
+        "image_source_commit": "5c0a9abdeacc65efe8d7c744b59453d6310cb10f",
+        "image_source_digest": "246dbd711ca40a5c6cfd0753fffac1fa5b5334399f8e1103fdfb5cfa0c411c9f",
+        "resources": {
+          "/config/njord_v1.yaml": "ce4e2cf876bfac88424ef893ad86aaf8ec50419c1bb7d9403ae6c1b481ed6ff5",
+          "/opt/njord/install/share/njord_sim/config/algorithms.yaml": "78ffe91b9ace712989356ba4a81cc006e0bbf4e490055f1a33d0b3fa6eb55ad2",
+          "/opt/njord/scenarios/reference.yaml": "f6786507fbca1fe751c75ff4c69d41c031862f209fa3a41389ed56e14b06f41f"
+        },
+        "run_id": "03505934a9b24c91982e27b02ebf3e6d",
+        "runner_git_commit": "5c0a9abdeacc65efe8d7c744b59453d6310cb10f",
+        "schema_version": 1,
+        "seed": 1,
+        "sources": {
+          "algorithms": {
+            "path": "source_config/algorithms.yaml",
+            "sha256": "78ffe91b9ace712989356ba4a81cc006e0bbf4e490055f1a33d0b3fa6eb55ad2"
+          },
+          "scenario": {
+            "path": "source_config/scenario.yaml",
+            "sha256": "f6786507fbca1fe751c75ff4c69d41c031862f209fa3a41389ed56e14b06f41f"
+          },
+          "vessel": {
+            "path": "source_config/vessel.yaml",
+            "sha256": "ce4e2cf876bfac88424ef893ad86aaf8ec50419c1bb7d9403ae6c1b481ed6ff5"
+          }
+        }
+      },
+      "path": "outputs/njord-debug-race/run_manifest.json",
+      "sha256": "6df84d19f15ac245241fc25e2c21b7d91eb648e514f3456fa7c792f6495ce9ac"
+    },
+    {
+      "bytes": 1244,
+      "content": {
+        "autonomy": "reference",
+        "controller": "reference",
+        "environment": "calm",
+        "expected_gates": 3,
+        "extra_launch_args": [],
+        "image_identity": "sha256:9739e3c9b73d3be5bd15bace8ad4db4211f0fa365eff4c009c1b823123093264",
+        "image_source_commit": "5c0a9abdeacc65efe8d7c744b59453d6310cb10f",
+        "image_source_digest": "246dbd711ca40a5c6cfd0753fffac1fa5b5334399f8e1103fdfb5cfa0c411c9f",
+        "manifest_sha256": "6df84d19f15ac245241fc25e2c21b7d91eb648e514f3456fa7c792f6495ce9ac",
+        "mapping": "reference",
+        "params_file": "",
+        "perception": "reference",
+        "profile": "fast",
+        "run_id": "03505934a9b24c91982e27b02ebf3e6d",
+        "runner_git_commit": "5c0a9abdeacc65efe8d7c744b59453d6310cb10f",
+        "seed": 1,
+        "vessel_config": "/outputs/vessel_config.yaml",
+        "vessel_config_sha256": "67d6619d0507160353f97a41dcdcd853de9326abf58111d05599614b16845185"
+      },
+      "path": "outputs/njord-debug-race/autonomy_config.json",
+      "sha256": "c7ebea42de91b40be05d908a89c2e6c8b6d1be4679587abe805b9c2a07a0143c"
+    }
+  ]
+}

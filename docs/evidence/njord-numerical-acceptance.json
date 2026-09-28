@@ -1,0 +1,440 @@
+{
+  "created_utc": "2026-09-28T00:41:20+00:00",
+  "name": "njord-numerical-acceptance",
+  "note": "4/2/1 ms timestep convergence, three fresh repetitions per step.",
+  "schema_version": 1,
+  "sources": [
+    {
+      "bytes": 1966,
+      "content": {
+        "absolute_tolerances": {
+          "m": 0.02,
+          "m/s": 0.01,
+          "rad/s": 0.001
+        },
+        "comparisons": [
+          {
+            "comparison_group": "9fc8a02bf38e8cc433949c6f4c15ce18650a0781d9a8d21ae9229cb2913bad24",
+            "difference": 5.897708987845363e-10,
+            "experiment": "straight",
+            "metric": "steady_speed_mps",
+            "passed": true,
+            "repetition": 0,
+            "tolerance": 0.05093257636594459
+          },
+          {
+            "comparison_group": "9fc8a02bf38e8cc433949c6f4c15ce18650a0781d9a8d21ae9229cb2913bad24",
+            "difference": 0.0,
+            "experiment": "straight",
+            "metric": "steady_yaw_rate_radps",
+            "passed": true,
+            "repetition": 0,
+            "tolerance": 0.001
+          },
+          {
+            "comparison_group": "9fc8a02bf38e8cc433949c6f4c15ce18650a0781d9a8d21ae9229cb2913bad24",
+            "difference": 5.897708987845363e-10,
+            "experiment": "straight",
+            "metric": "steady_speed_mps",
+            "passed": true,
+            "repetition": 1,
+            "tolerance": 0.05093257636594459
+          },
+          {
+            "comparison_group": "9fc8a02bf38e8cc433949c6f4c15ce18650a0781d9a8d21ae9229cb2913bad24",
+            "difference": 0.0,
+            "experiment": "straight",
+            "metric": "steady_yaw_rate_radps",
+            "passed": true,
+            "repetition": 1,
+            "tolerance": 0.001
+          },
+          {
+            "comparison_group": "9fc8a02bf38e8cc433949c6f4c15ce18650a0781d9a8d21ae9229cb2913bad24",
+            "difference": 5.897708987845363e-10,
+            "experiment": "straight",
+            "metric": "steady_speed_mps",
+            "passed": true,
+            "repetition": 2,
+            "tolerance": 0.05093257636594459
+          },
+          {
+            "comparison_group": "9fc8a02bf38e8cc433949c6f4c15ce18650a0781d9a8d21ae9229cb2913bad24",
+            "difference": 0.0,
+            "experiment": "straight",
+            "metric": "steady_yaw_rate_radps",
+            "passed": true,
+            "repetition": 2,
+            "tolerance": 0.001
+          }
+        ],
+        "evidence_level": "numerical_convergence_only",
+        "incomplete_reasons": [],
+        "passed": true,
+        "relative_tolerance": 0.02
+      },
+      "path": "outputs/njord-numerical-final/straight-acceptance.json",
+      "sha256": "2757ab5dfdc014e4c546ad1d4158b58ad371ac1cd84b5e17aded169fc3df3e6c"
+    },
+    {
+      "bytes": 1129,
+      "content": {
+        "absolute_tolerances": {
+          "m": 0.02,
+          "m/s": 0.01,
+          "rad/s": 0.001
+        },
+        "comparisons": [
+          {
+            "comparison_group": "9fc8a02bf38e8cc433949c6f4c15ce18650a0781d9a8d21ae9229cb2913bad24",
+            "difference": 0.004373591366558571,
+            "experiment": "coast",
+            "metric": "coast_distance_m",
+            "passed": true,
+            "repetition": 0,
+            "tolerance": 0.14529832311405613
+          },
+          {
+            "comparison_group": "9fc8a02bf38e8cc433949c6f4c15ce18650a0781d9a8d21ae9229cb2913bad24",
+            "difference": 0.004373591366558571,
+            "experiment": "coast",
+            "metric": "coast_distance_m",
+            "passed": true,
+            "repetition": 1,
+            "tolerance": 0.14529832311405613
+          },
+          {
+            "comparison_group": "9fc8a02bf38e8cc433949c6f4c15ce18650a0781d9a8d21ae9229cb2913bad24",
+            "difference": 0.004373591366558571,
+            "experiment": "coast",
+            "metric": "coast_distance_m",
+            "passed": true,
+            "repetition": 2,
+            "tolerance": 0.14529832311405613
+          }
+        ],
+        "evidence_level": "numerical_convergence_only",
+        "incomplete_reasons": [],
+        "passed": true,
+        "relative_tolerance": 0.02
+      },
+      "path": "outputs/njord-numerical-manoeuvres/coast-acceptance.json",
+      "sha256": "10439bc29dde271ee7a0f02d5fa3cffe1a586002a505d103f348a37ed8191804"
+    },
+    {
+      "bytes": 1081,
+      "content": {
+        "absolute_tolerances": {
+          "m": 0.02,
+          "m/s": 0.01,
+          "rad/s": 0.001
+        },
+        "comparisons": [
+          {
+            "comparison_group": "97265c2b6a285209c4067154e270f9a943f9110f9288c7f2c99a3923451624e0",
+            "difference": 2.139746213547511e-08,
+            "experiment": "hydrostatic",
+            "metric": "mean_z_m",
+            "passed": true,
+            "repetition": 0,
+            "tolerance": 0.02
+          },
+          {
+            "comparison_group": "97265c2b6a285209c4067154e270f9a943f9110f9288c7f2c99a3923451624e0",
+            "difference": 2.139746213547511e-08,
+            "experiment": "hydrostatic",
+            "metric": "mean_z_m",
+            "passed": true,
+            "repetition": 1,
+            "tolerance": 0.02
+          },
+          {
+            "comparison_group": "97265c2b6a285209c4067154e270f9a943f9110f9288c7f2c99a3923451624e0",
+            "difference": 2.139746213547511e-08,
+            "experiment": "hydrostatic",
+            "metric": "mean_z_m",
+            "passed": true,
+            "repetition": 2,
+            "tolerance": 0.02
+          }
+        ],
+        "evidence_level": "numerical_convergence_only",
+        "incomplete_reasons": [],
+        "passed": true,
+        "relative_tolerance": 0.02
+      },
+      "path": "outputs/njord-numerical-manoeuvres/hydrostatic-acceptance.json",
+      "sha256": "4b6ed33d4e7bff31f059b4023815dc58f673c1cdcd13413a1ceafa2e3dab6a36"
+    },
+    {
+      "bytes": 2937,
+      "content": {
+        "absolute_tolerances": {
+          "m": 0.02,
+          "m/s": 0.01,
+          "rad/s": 0.001
+        },
+        "comparisons": [
+          {
+            "comparison_group": "9fc8a02bf38e8cc433949c6f4c15ce18650a0781d9a8d21ae9229cb2913bad24",
+            "difference": 8.350756733543907e-05,
+            "experiment": "turn_left",
+            "metric": "steady_speed_mps",
+            "passed": true,
+            "repetition": 0,
+            "tolerance": 0.01619780548797697
+          },
+          {
+            "comparison_group": "9fc8a02bf38e8cc433949c6f4c15ce18650a0781d9a8d21ae9229cb2913bad24",
+            "difference": 1.565417391380386e-05,
+            "experiment": "turn_left",
+            "metric": "steady_yaw_rate_radps",
+            "passed": true,
+            "repetition": 0,
+            "tolerance": 0.018838150282519645
+          },
+          {
+            "comparison_group": "9fc8a02bf38e8cc433949c6f4c15ce18650a0781d9a8d21ae9229cb2913bad24",
+            "difference": 7.436644112279733e-05,
+            "experiment": "turn_left",
+            "metric": "turning_radius_m",
+            "passed": true,
+            "repetition": 0,
+            "tolerance": 0.02
+          },
+          {
+            "comparison_group": "9fc8a02bf38e8cc433949c6f4c15ce18650a0781d9a8d21ae9229cb2913bad24",
+            "difference": 8.350756732278253e-05,
+            "experiment": "turn_left",
+            "metric": "steady_speed_mps",
+            "passed": true,
+            "repetition": 1,
+            "tolerance": 0.016197805487977224
+          },
+          {
+            "comparison_group": "9fc8a02bf38e8cc433949c6f4c15ce18650a0781d9a8d21ae9229cb2913bad24",
+            "difference": 1.5654167658141205e-05,
+            "experiment": "turn_left",
+            "metric": "steady_yaw_rate_radps",
+            "passed": true,
+            "repetition": 1,
+            "tolerance": 0.01883815028264476
+          },
+          {
+            "comparison_group": "9fc8a02bf38e8cc433949c6f4c15ce18650a0781d9a8d21ae9229cb2913bad24",
+            "difference": 7.436644681990678e-05,
+            "experiment": "turn_left",
+            "metric": "turning_radius_m",
+            "passed": true,
+            "repetition": 1,
+            "tolerance": 0.02
+          },
+          {
+            "comparison_group": "9fc8a02bf38e8cc433949c6f4c15ce18650a0781d9a8d21ae9229cb2913bad24",
+            "difference": 8.350756732278253e-05,
+            "experiment": "turn_left",
+            "metric": "steady_speed_mps",
+            "passed": true,
+            "repetition": 2,
+            "tolerance": 0.016197805487977224
+          },
+          {
+            "comparison_group": "9fc8a02bf38e8cc433949c6f4c15ce18650a0781d9a8d21ae9229cb2913bad24",
+            "difference": 1.5654167658141205e-05,
+            "experiment": "turn_left",
+            "metric": "steady_yaw_rate_radps",
+            "passed": true,
+            "repetition": 2,
+            "tolerance": 0.01883815028264476
+          },
+          {
+            "comparison_group": "9fc8a02bf38e8cc433949c6f4c15ce18650a0781d9a8d21ae9229cb2913bad24",
+            "difference": 7.436644681990678e-05,
+            "experiment": "turn_left",
+            "metric": "turning_radius_m",
+            "passed": true,
+            "repetition": 2,
+            "tolerance": 0.02
+          }
+        ],
+        "evidence_level": "numerical_convergence_only",
+        "incomplete_reasons": [],
+        "passed": true,
+        "relative_tolerance": 0.02
+      },
+      "path": "outputs/njord-numerical-manoeuvres/turn_left-acceptance.json",
+      "sha256": "cdf5ce776dd9637311ca5d39e2c7445ca2f0696d95fcf5b094a44934ccdb3601"
+    },
+    {
+      "bytes": 2945,
+      "content": {
+        "absolute_tolerances": {
+          "m": 0.02,
+          "m/s": 0.01,
+          "rad/s": 0.001
+        },
+        "comparisons": [
+          {
+            "comparison_group": "9fc8a02bf38e8cc433949c6f4c15ce18650a0781d9a8d21ae9229cb2913bad24",
+            "difference": 8.350756733566111e-05,
+            "experiment": "turn_right",
+            "metric": "steady_speed_mps",
+            "passed": true,
+            "repetition": 0,
+            "tolerance": 0.01619780548797697
+          },
+          {
+            "comparison_group": "9fc8a02bf38e8cc433949c6f4c15ce18650a0781d9a8d21ae9229cb2913bad24",
+            "difference": 1.5654174073675975e-05,
+            "experiment": "turn_right",
+            "metric": "steady_yaw_rate_radps",
+            "passed": true,
+            "repetition": 0,
+            "tolerance": 0.01883815028250047
+          },
+          {
+            "comparison_group": "9fc8a02bf38e8cc433949c6f4c15ce18650a0781d9a8d21ae9229cb2913bad24",
+            "difference": 7.436644097702505e-05,
+            "experiment": "turn_right",
+            "metric": "turning_radius_m",
+            "passed": true,
+            "repetition": 0,
+            "tolerance": 0.02
+          },
+          {
+            "comparison_group": "9fc8a02bf38e8cc433949c6f4c15ce18650a0781d9a8d21ae9229cb2913bad24",
+            "difference": 8.350756733566111e-05,
+            "experiment": "turn_right",
+            "metric": "steady_speed_mps",
+            "passed": true,
+            "repetition": 1,
+            "tolerance": 0.01619780548797697
+          },
+          {
+            "comparison_group": "9fc8a02bf38e8cc433949c6f4c15ce18650a0781d9a8d21ae9229cb2913bad24",
+            "difference": 1.5654174073675975e-05,
+            "experiment": "turn_right",
+            "metric": "steady_yaw_rate_radps",
+            "passed": true,
+            "repetition": 1,
+            "tolerance": 0.01883815028250047
+          },
+          {
+            "comparison_group": "9fc8a02bf38e8cc433949c6f4c15ce18650a0781d9a8d21ae9229cb2913bad24",
+            "difference": 7.436644097702505e-05,
+            "experiment": "turn_right",
+            "metric": "turning_radius_m",
+            "passed": true,
+            "repetition": 1,
+            "tolerance": 0.02
+          },
+          {
+            "comparison_group": "9fc8a02bf38e8cc433949c6f4c15ce18650a0781d9a8d21ae9229cb2913bad24",
+            "difference": 8.350756732300457e-05,
+            "experiment": "turn_right",
+            "metric": "steady_speed_mps",
+            "passed": true,
+            "repetition": 2,
+            "tolerance": 0.016197805487977224
+          },
+          {
+            "comparison_group": "9fc8a02bf38e8cc433949c6f4c15ce18650a0781d9a8d21ae9229cb2913bad24",
+            "difference": 1.5654166699463623e-05,
+            "experiment": "turn_right",
+            "metric": "steady_yaw_rate_radps",
+            "passed": true,
+            "repetition": 2,
+            "tolerance": 0.01883815028264795
+          },
+          {
+            "comparison_group": "9fc8a02bf38e8cc433949c6f4c15ce18650a0781d9a8d21ae9229cb2913bad24",
+            "difference": 7.436644769531764e-05,
+            "experiment": "turn_right",
+            "metric": "turning_radius_m",
+            "passed": true,
+            "repetition": 2,
+            "tolerance": 0.02
+          }
+        ],
+        "evidence_level": "numerical_convergence_only",
+        "incomplete_reasons": [],
+        "passed": true,
+        "relative_tolerance": 0.02
+      },
+      "path": "outputs/njord-numerical-manoeuvres/turn_right-acceptance.json",
+      "sha256": "4dcba137a0595c49b127fed6f4337f7f8d64be54bbf330061717f34221a618a0"
+    },
+    {
+      "bytes": 1963,
+      "content": {
+        "absolute_tolerances": {
+          "m": 0.02,
+          "m/s": 0.01,
+          "rad/s": 0.001
+        },
+        "comparisons": [
+          {
+            "comparison_group": "9fc8a02bf38e8cc433949c6f4c15ce18650a0781d9a8d21ae9229cb2913bad24",
+            "difference": 3.7617109427401374e-10,
+            "experiment": "reverse",
+            "metric": "steady_speed_mps",
+            "passed": true,
+            "repetition": 0,
+            "tolerance": 0.05093257637021982
+          },
+          {
+            "comparison_group": "9fc8a02bf38e8cc433949c6f4c15ce18650a0781d9a8d21ae9229cb2913bad24",
+            "difference": 0.0,
+            "experiment": "reverse",
+            "metric": "steady_yaw_rate_radps",
+            "passed": true,
+            "repetition": 0,
+            "tolerance": 0.001
+          },
+          {
+            "comparison_group": "9fc8a02bf38e8cc433949c6f4c15ce18650a0781d9a8d21ae9229cb2913bad24",
+            "difference": 3.7617109427401374e-10,
+            "experiment": "reverse",
+            "metric": "steady_speed_mps",
+            "passed": true,
+            "repetition": 1,
+            "tolerance": 0.05093257637021982
+          },
+          {
+            "comparison_group": "9fc8a02bf38e8cc433949c6f4c15ce18650a0781d9a8d21ae9229cb2913bad24",
+            "difference": 0.0,
+            "experiment": "reverse",
+            "metric": "steady_yaw_rate_radps",
+            "passed": true,
+            "repetition": 1,
+            "tolerance": 0.001
+          },
+          {
+            "comparison_group": "9fc8a02bf38e8cc433949c6f4c15ce18650a0781d9a8d21ae9229cb2913bad24",
+            "difference": 3.7617109427401374e-10,
+            "experiment": "reverse",
+            "metric": "steady_speed_mps",
+            "passed": true,
+            "repetition": 2,
+            "tolerance": 0.05093257637021982
+          },
+          {
+            "comparison_group": "9fc8a02bf38e8cc433949c6f4c15ce18650a0781d9a8d21ae9229cb2913bad24",
+            "difference": 0.0,
+            "experiment": "reverse",
+            "metric": "steady_yaw_rate_radps",
+            "passed": true,
+            "repetition": 2,
+            "tolerance": 0.001
+          }
+        ],
+        "evidence_level": "numerical_convergence_only",
+        "incomplete_reasons": [],
+        "passed": true,
+        "relative_tolerance": 0.02
+      },
+      "path": "outputs/njord-numerical-reverse/reverse-acceptance.json",
+      "sha256": "e52c8d8d4496c883ba32bb393f98e0866aab187139c18671178fec5e61ee9ee1"
+    }
+  ]
+}

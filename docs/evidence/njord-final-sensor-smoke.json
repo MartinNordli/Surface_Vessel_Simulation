@@ -1,0 +1,23 @@
+{
+  "created_utc": "2026-09-28T00:41:20+00:00",
+  "name": "njord-final-sensor-smoke",
+  "note": "GPU sensor and navigation smoke in running Gazebo on the final physics image.",
+  "schema_version": 1,
+  "sources": [
+    {
+      "bytes": 410,
+      "path": "outputs/njord-final-sensor-smoke.log",
+      "sha256": "744e6fe742f2d7fc31ab2ec9d55043e8b3a06d1678e15c22b80875a9f9441f95",
+      "tail": [
+        "      \"height\": 360,",
+        "      \"frame\": \"wamv/front_right_camera_link_optical\"",
+        "    },",
+        "    \"navigation\": {",
+        "      \"frame\": \"map\"",
+        "    }",
+        "  }",
+        "}"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,104 @@
+{
+  "created_utc": "2026-09-28T00:41:20+00:00",
+  "name": "njord-actuator-evidence",
+  "note": "Applied thruster response, invalid-input decay and command expiry of the Njord physics plugin.",
+  "schema_version": 1,
+  "sources": [
+    {
+      "bytes": 1172,
+      "content": {
+        "checks": {
+          "all_observed_forces_finite": true,
+          "configured_response": {
+            "max_error_n": 3.765876499528531e-12,
+            "sample_pairs": 29,
+            "transient_pairs": 58
+          },
+          "invalid_command_residual_decay": {
+            "max_error_n": 5.5990767577895895e-12,
+            "sample_pairs": 31,
+            "transient_pairs": 62
+          },
+          "nonfinite_invalidates_both_targets": {
+            "wall_delay_s": 0.019606808999924397
+          },
+          "steady_wall_timeout": {
+            "configured_s": 0.5,
+            "observed_s": 0.5062395699997069
+          }
+        },
+        "failures": [],
+        "finished_utc": "2026-09-16T10:50:39.408024+00:00",
+        "manifest_sha256": "41f9f18b75a7b9978464523256b3b14fbad398f4736a6a94c978f822a1e131fb",
+        "partition": "njord-actuator-evidence",
+        "requested_force_n": [
+          80.0,
+          100.0
+        ],
+        "resolved_path": "/outputs/resolved_configuration.json",
+        "resolved_sha256": "eaf08ccb24745acbf2eb96a27ed7ac1fbecf208f951bf5a0218d22a97e315eb1",
+        "response_time_s": [
+          0.1,
+          0.1
+        ],
+        "sample_count": 161,
+        "schema_version": 1,
+        "scope": "applied actuator forces only",
+        "started_utc": "2026-09-16T10:50:35.702726+00:00",
+        "status": "passed"
+      },
+      "path": "outputs/njord-actuator-evidence/actuator_probe.json",
+      "sha256": "869a3d1f584e02804f8a58d4038c50870ab84b5c3bec57abe7f5ec442202e05f"
+    },
+    {
+      "bytes": 2879,
+      "content": {
+        "artifacts": {
+          "bridges.yaml": "532d091dbde3a08445738c9cd23baf6e45ff211454ec5fe01f86541fffe7c923",
+          "njord_course.sdf": "eeccf8875d163cc6b04e2de10cb5bd84e505e26587679e683480b7c655bc88e3",
+          "public_parameters.json": "6f7cb5d92558139dea6b69aff9b8fc475f3e64e89c0721a6a173cfef71d41ad7",
+          "resolved_configuration.json": "eaf08ccb24745acbf2eb96a27ed7ac1fbecf208f951bf5a0218d22a97e315eb1",
+          "resolved_scenario.json": "484d55ad9c9807e7bf6ea43eecff3504044293d56aa2015ccda210182d970f1e",
+          "resources/78ffe91b9ace712989356ba4a81cc006e0bbf4e490055f1a33d0b3fa6eb55ad2.yaml": "78ffe91b9ace712989356ba4a81cc006e0bbf4e490055f1a33d0b3fa6eb55ad2",
+          "resources/ce4e2cf876bfac88424ef893ad86aaf8ec50419c1bb7d9403ae6c1b481ed6ff5.yaml": "ce4e2cf876bfac88424ef893ad86aaf8ec50419c1bb7d9403ae6c1b481ed6ff5",
+          "resources/f6786507fbca1fe751c75ff4c69d41c031862f209fa3a41389ed56e14b06f41f.yaml": "f6786507fbca1fe751c75ff4c69d41c031862f209fa3a41389ed56e14b06f41f",
+          "scenario.sha256": "7ad43123c4fe7a49912b80ae00b17848e532bb88750f5c93f96c317b6ad95d5c",
+          "source_config/algorithms.yaml": "78ffe91b9ace712989356ba4a81cc006e0bbf4e490055f1a33d0b3fa6eb55ad2",
+          "source_config/scenario.yaml": "f6786507fbca1fe751c75ff4c69d41c031862f209fa3a41389ed56e14b06f41f",
+          "source_config/vessel.yaml": "ce4e2cf876bfac88424ef893ad86aaf8ec50419c1bb7d9403ae6c1b481ed6ff5",
+          "vessel_config.yaml": "67d6619d0507160353f97a41dcdcd853de9326abf58111d05599614b16845185",
+          "wamv.sdf": "183c6b159a276342c812849cff5916323b373ba655fd98e50831c259946d331f",
+          "wamv.urdf": "660a0f755c2301d45e0a6512e20a3a906a7493efce6697739cb1e9e4a5e536ff"
+        },
+        "image_identity": "sha256:07a6a3d84df64b9e1cd6819893f8a07bd34253ce6179f6c81ef315a2c20f763a",
+        "image_source_commit": "5c0a9abdeacc65efe8d7c744b59453d6310cb10f",
+        "image_source_digest": "73ad1726d973f82b6bb89d367635ea8dad004334d549c7d75fce848018bcb31e",
+        "resources": {
+          "/config/njord_v1.yaml": "ce4e2cf876bfac88424ef893ad86aaf8ec50419c1bb7d9403ae6c1b481ed6ff5",
+          "/opt/njord/install/share/njord_sim/config/algorithms.yaml": "78ffe91b9ace712989356ba4a81cc006e0bbf4e490055f1a33d0b3fa6eb55ad2",
+          "/opt/njord/scenarios/reference.yaml": "f6786507fbca1fe751c75ff4c69d41c031862f209fa3a41389ed56e14b06f41f"
+        },
+        "run_id": "7ea2d50ca0894768b86af5037f0e058f",
+        "runner_git_commit": "5c0a9abdeacc65efe8d7c744b59453d6310cb10f",
+        "schema_version": 1,
+        "seed": 1,
+        "sources": {
+          "algorithms": {
+            "path": "source_config/algorithms.yaml",
+            "sha256": "78ffe91b9ace712989356ba4a81cc006e0bbf4e490055f1a33d0b3fa6eb55ad2"
+          },
+          "scenario": {
+            "path": "source_config/scenario.yaml",
+            "sha256": "f6786507fbca1fe751c75ff4c69d41c031862f209fa3a41389ed56e14b06f41f"
+          },
+          "vessel": {
+            "path": "source_config/vessel.yaml",
+            "sha256": "ce4e2cf876bfac88424ef893ad86aaf8ec50419c1bb7d9403ae6c1b481ed6ff5"
+          }
+        }
+      },
+      "path": "outputs/njord-actuator-evidence/run_manifest.json",
+      "sha256": "41f9f18b75a7b9978464523256b3b14fbad398f4736a6a94c978f822a1e131fb"
+    }
+  ]
+}

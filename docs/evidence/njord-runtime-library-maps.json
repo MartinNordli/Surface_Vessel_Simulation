@@ -1,0 +1,23 @@
+{
+  "created_utc": "2026-09-28T00:41:20+00:00",
+  "name": "njord-runtime-library-maps",
+  "note": "Libraries loaded by the running Njord simulator process.",
+  "schema_version": 1,
+  "sources": [
+    {
+      "bytes": 10945,
+      "path": "outputs/njord-runtime-library-maps.txt",
+      "sha256": "c229332f60d823d3c9fd358ff27481ff1de24cb6c94049b9419ab41f3454ab8f",
+      "tail": [
+        "7f009e2cd000-7f009e418000 r--p 000bd000 00:56 488719                     /usr/lib/x86_64-linux-gnu/libgz-sim8-gui.so.8.15.0",
+        "7f009e418000-7f009e421000 r--p 00207000 00:56 488719                     /usr/lib/x86_64-linux-gnu/libgz-sim8-gui.so.8.15.0",
+        "7f009e421000-7f009e422000 rw-p 00210000 00:56 488719                     /usr/lib/x86_64-linux-gnu/libgz-sim8-gui.so.8.15.0",
+        "7f009e440000-7f009e453000 r--p 00000000 00:56 488783                     /usr/lib/x86_64-linux-gnu/libgz-sim8-gz.so.8.15.0",
+        "7f009e453000-7f009e480000 r-xp 00013000 00:56 488783                     /usr/lib/x86_64-linux-gnu/libgz-sim8-gz.so.8.15.0",
+        "7f009e480000-7f009e48d000 r--p 00040000 00:56 488783                     /usr/lib/x86_64-linux-gnu/libgz-sim8-gz.so.8.15.0",
+        "7f009e48d000-7f009e48f000 r--p 0004c000 00:56 488783                     /usr/lib/x86_64-linux-gnu/libgz-sim8-gz.so.8.15.0",
+        "7f009e48f000-7f009e490000 rw-p 0004e000 00:56 488783                     /usr/lib/x86_64-linux-gnu/libgz-sim8-gz.so.8.15.0"
+      ]
+    }
+  ]
+}

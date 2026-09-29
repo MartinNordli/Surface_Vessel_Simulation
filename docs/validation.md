@@ -107,9 +107,14 @@ on an RTX 5090:
 | Campaign smoke, two and four thrusters | fails at 300 N (also before these changes); passes at the 150 N default | [`gpu-campaign-smoke`](evidence/gpu-campaign-smoke.json) |
 | `lab` free driving | reference autonomy moved 21 m in 40 s; an external probe's commands moved the boat 19 m and thrust stopped when they stopped | `outputs/gpu-verify/probe-lab-*.log` (not summarized) |
 
-The Njord reference autonomy still rarely completes a course (0–3 gates
-per run); this is the reference planner and tuning for that hull, not the
-simulator, and is not evidence about the real boat.
+| Njord and Munin reference races | `njord_v1` seeds 1–5 and `munin_v0` seeds 1–3 completed 3/3 each (70–73 s) with the shared tuning | [`gpu-njord-munin-races`](evidence/gpu-njord-munin-races.json) |
+
+Before the lidar fix these races reached 0–3 gates. The cause was the
+simulator, not the reference tuning: the Njord-profile lidar had no visibility
+mask and returned the rendered sea surface 3–10 m around the boat, 0.2–0.6 m
+above the flat physical water, which the mapper kept as obstacles. It now uses
+the VRX lidar mask (`constants.LIDAR_VISIBILITY_MASK`). These are reference
+autonomy races on uncalibrated models, not evidence about the real boat.
 
 ## Dynamics measurements
 

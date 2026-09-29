@@ -75,11 +75,15 @@ heave at fixed pitch with changing waterline. Original failed artifacts remain.
   reverse trial. Reverse acceptance therefore uses a 25 s observation, in which
   the response is stationary and converged; longer reverse runs are not approved.
   Such incomplete reports are retained.
-- The reference autonomy is not tuned for the Njord fixture. In the Njord race the
-  planner repeatedly reported no feasible path, guidance saturated turn commands,
-  and after gate 2 the mission lost its tracked gate while the vessel faced away
-  from gate 3. A Njord-specific `ALGORITHMS_CONFIG` and mission tuning remain open;
-  WAM-V-tuned gains and the WAM-V-sized mapper self-filter (5×2.8 m) are used as-is.
+- The Njord race above predates three simulator fixes found on 2026-09-28/29:
+  the Njord lidar saw the rendered sea surface as obstacles (no visibility mask),
+  mapper and perception dropped measurements that arrived before their TF, and the
+  mission used the estimator's start-up transient. With them, the reference
+  autonomy with the shared (WAM-V-tuned) `algorithms.yaml` completed the reference
+  course on every seed for `njord_v1` (1–5) and `munin_v0` (1–3), see
+  [`evidence/gpu-njord-munin-races.json`](evidence/gpu-njord-munin-races.json). No
+  per-vessel tuning was needed; `vessel_overrides` stays empty. The self filter
+  uses the vessel's own visual mesh, not a WAM-V footprint.
 - Heavy parallel simulator load invalidates race evidence: run races alone.
 - Scoring uses a conservative nominal horizontal envelope, with physical contacts
   reported independently. It is not a full six-dimensional swept-hull evaluator.

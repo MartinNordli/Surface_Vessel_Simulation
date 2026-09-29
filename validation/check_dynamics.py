@@ -253,6 +253,9 @@ class DynamicsCheck(Node):
         """
         self.done = True
         self.command(0, 0)
+        # Stop gz-transport callbacks into Python before exit; one arriving
+        # during interpreter teardown crashed the validator (exit 139).
+        self.gz_node.unsubscribe(self.settings['applied_topic'])
         measure_samples = [row for row in self.samples if self.phase_start is not None
                            and row[0] <= self.phase_start + self.settings['duration_s']]
         report = summarize_experiment(measure_samples, self.experiment, self.settings["window_s"])

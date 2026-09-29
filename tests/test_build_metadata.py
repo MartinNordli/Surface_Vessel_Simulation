@@ -78,6 +78,29 @@ class BuildMetadataTests(unittest.TestCase):
                   'COPY ["scripts", "/scripts"]\n')
         self.assertEqual(metadata.copy_sources(recipe), ['docker/gz.repos', 'njord_sim', 'scripts'])
 
+    def test_executable_digest_excludes_only_config_yaml(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.fixture(root)
+            (root / 'njord_sim/config').mkdir(parents=True)
+            (root / 'njord_sim/model').mkdir()
+            with (root / 'Dockerfile').open('a') as f:
+                f.write('COPY njord_sim /app/njord_sim\n')
+            config = root / 'njord_sim/config/vessel.yaml'
+            config.write_text('mass: 100\n')
+            original, full = metadata.executable_digest(root), metadata.source_digest(root)
+            config.write_text('mass: 200\n')
+            self.assertEqual(original, metadata.executable_digest(root))
+            self.assertNotEqual(full, metadata.source_digest(root))
+            for path in ('scripts/run.py', 'njord_sim/model/model.sdf', 'njord_sim/config/loader.py'):
+                before = metadata.executable_digest(root)
+                (root / path).write_text('changed executable resource\n')
+                self.assertNotEqual(before, metadata.executable_digest(root))
+            for labels in ({}, {'io.njord.executable.digest': 'stale'}):
+                with self.assertRaises(ValueError):
+                    metadata.verify_executable(labels, root)
+            self.assertEqual(metadata.verify_executable({'io.njord.executable.digest': metadata.executable_digest(root), 'io.njord.source.digest': 'a'*64}, root), metadata.executable_digest(root))
+
     def test_missing_copy_input_fails(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -98,15 +121,15 @@ class ImagePinningTests(unittest.TestCase):
                 return json.dumps({'services': {service: {'image': env.get('NJORD_IMAGE', 'njord-sim:local')}
                                   for service in ('simulator', 'autonomy', 'evaluator')}})
             return json.dumps([{'Id': image_id, 'Config': {'Labels': {
-                'org.opencontainers.image.revision': 'image-revision', 'io.njord.source.digest': 'source-digest'}}}])
+                'org.opencontainers.image.revision': 'image-revision', 'io.njord.source.digest': 'a'*64, 'io.njord.executable.digest': 'fixture-digest'}}}])
 
-        with patch.object(benchmark, 'command_output', fake_command):
+        with patch.object(benchmark, 'command_output', fake_command), patch('build_metadata.executable_digest', return_value='fixture-digest'):
             result = benchmark.pin_image(environment)
         self.assertEqual(environment['NJORD_IMAGE'], image_id)
         self.assertEqual(environment['IMAGE_ID'], image_id)
         self.assertEqual(environment['RUNNER_GIT_COMMIT'], 'runner-revision')
         self.assertEqual(result['image_source_commit'], 'image-revision')
-        self.assertEqual(result['image_source_digest'], 'source-digest')
+        self.assertEqual(result['image_source_digest'], 'a'*64)
         self.assertEqual(len(calls), 3)
 
     def test_hardcoded_compose_image_cannot_bypass_pinning(self):

@@ -1,0 +1,111 @@
+{
+  "created_utc": "2026-09-28T00:41:20+00:00",
+  "name": "njord-runtime-final",
+  "note": "One fresh 4 ms trial per Njord manoeuvre at 150 N with physical assertions.",
+  "schema_version": 1,
+  "sources": [
+    {
+      "bytes": 11371,
+      "content": {
+        "evidence_level": "single_runtime_trials_not_convergence_or_calibration",
+        "image_identity": "sha256:9739e3c9b73d3be5bd15bace8ad4db4211f0fa365eff4c009c1b823123093264",
+        "repetitions": 1,
+        "seed": 1,
+        "step_s": 0.004,
+        "thrust_n": 150.0,
+        "trials": [
+          {
+            "all_physical_assertions_pass": true,
+            "comparison_group": "97265c2b6a285209c4067154e270f9a943f9110f9288c7f2c99a3923451624e0",
+            "complete": true,
+            "experiment": "hydrostatic",
+            "name": "hydrostatic",
+            "output": "outputs/njord-runtime-final/hydrostatic",
+            "provenance": "8870781a306e5e9247916114ee1f0ec55a82a5591de368916259ee3e5cf2bf9f",
+            "repetition": 0,
+            "step_s": 0.004
+          },
+          {
+            "all_physical_assertions_pass": true,
+            "comparison_group": "9cb0e549e77d5774b00186427f469737b4eab37ddfee9775b9bc197f8ccc9613",
+            "complete": true,
+            "experiment": "drift",
+            "name": "wind_east",
+            "output": "outputs/njord-runtime-final/wind_east",
+            "provenance": "e2f8a6d9f6350e0eef3cc2deec62e822af5f9e0981109f0eed975c39248f98b7",
+            "repetition": 0,
+            "step_s": 0.004
+          },
+          {
+            "all_physical_assertions_pass": true,
+            "comparison_group": "20df3abade3cc02c08e34b964931e5a0095f2b8eb6f03178761501d29857f1f1",
+            "complete": true,
+            "experiment": "drift",
+            "name": "current_north",
+            "output": "outputs/njord-runtime-final/current_north",
+            "provenance": "9af7381a6b41ac1c2e58232ae63e1def0bbdb3b42c243486d40622949169f452",
+            "repetition": 0,
+            "step_s": 0.004
+          },
+          {
+            "all_physical_assertions_pass": true,
+            "comparison_group": "3612e514ad3673cb7b59f555b9d5647a70210c6b87846691bddc194adc438865",
+            "complete": true,
+            "experiment": "straight",
+            "name": "asymmetric",
+            "output": "outputs/njord-runtime-final/asymmetric",
+            "provenance": "7d6b36c941756ddbbcc69ee92f542dcf33768e903eda3e6e7f8ec8095d5b0a7a",
+            "repetition": 0,
+            "step_s": 0.004
+          },
+          {
+            "all_physical_assertions_pass": true,
+            "comparison_group": "9fc8a02bf38e8cc433949c6f4c15ce18650a0781d9a8d21ae9229cb2913bad24",
+            "complete": true,
+            "experiment": "reverse",
+            "name": "reverse",
+            "output": "outputs/njord-runtime-final/reverse",
+            "provenance": "389ad63e16d716202e51db082c812267139a57733a512324240abfdbc5299745",
+            "repetition": 0,
+            "step_s": 0.004
+          },
+          {
+            "all_physical_assertions_pass": true,
+            "comparison_group": "9fc8a02bf38e8cc433949c6f4c15ce18650a0781d9a8d21ae9229cb2913bad24",
+            "complete": true,
+            "experiment": "turn_left",
+            "name": "turn_left",
+            "output": "outputs/njord-runtime-final/turn_left",
+            "provenance": "d2e21d2051b46eccfe741b9fc1d84cc94fb5fee63e231af59f4dab00be944e3b",
+            "repetition": 0,
+            "step_s": 0.004
+          },
+          {
+            "all_physical_assertions_pass": true,
+            "comparison_group": "9fc8a02bf38e8cc433949c6f4c15ce18650a0781d9a8d21ae9229cb2913bad24",
+            "complete": true,
+            "experiment": "turn_right",
+            "name": "turn_right",
+            "output": "outputs/njord-runtime-final/turn_right",
+            "provenance": "adb348cc4a0f55ac27b88bd6cf861d14994d1db11b927763d21c291eaf9b90c4",
+            "repetition": 0,
+            "step_s": 0.004
+          },
+          {
+            "all_physical_assertions_pass": true,
+            "comparison_group": "9fc8a02bf38e8cc433949c6f4c15ce18650a0781d9a8d21ae9229cb2913bad24",
+            "complete": true,
+            "experiment": "coast",
+            "name": "coast",
+            "output": "outputs/njord-runtime-final/coast",
+            "provenance": "b24acb73a581bfbb107e02661f0e73fa558c584c302b1c9fcf2f83f725c7068b",
+            "repetition": 0,
+            "step_s": 0.004
+          }
+        ]
+      },
+      "path": "outputs/njord-runtime-final/summary.json",
+      "sha256": "63bf2b9b4d529e7491f5e51b0e5d5df361f4f9ed3c4142fabd1648a5d0fe1005"
+    }
+  ]
+}

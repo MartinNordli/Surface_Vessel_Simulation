@@ -28,6 +28,26 @@ team's unpublished algorithms.
 Configuration regressions check schema validation, partial WAM-V overrides,
 speed-profile selection for every vessel and the `/config` lookup order.
 
+The mapper traces every ray of a scan with integer Bresenham steps advanced for
+all rays at once (`mapping_core.trace_rays`). `tests/test_mapping_raytrace.py`
+checks that the cells equal the per-cell `grid_line` loop, kept as the
+independent reference, for random, off-map and degenerate rays and a full
+720-ray scan. `validation/mapper_timing.py` (fixed seed, default 160 m grid,
+720 rays up to 80 m) measured a median update of 44.1 ms before and 7.3 ms
+after on the development host (2026-09-28), the same CPU work per scan.
+
+The Njord plugin's force math is header-only C++ and tested without Gazebo:
+`test/hydrostatics_test.cc` (clipped buoyancy and actuator lag) and
+`test/loads_test.cc` (wind-table interpolation, wind load and thruster wrench
+in `njord/Loads.hh`). The loads test has hand-derived cases and checks
+`test/load_vectors.csv`, which `scripts/make_load_vectors.py` writes from the
+Python mirror `physics_core.py`; `tests/test_njord_physics.py` compiles both
+C++ tests and checks that `physics_core` still reproduces the vectors, so a
+change on either side fails a test. The vectors are regenerated only by hand
+after an intended model change, never by a test. These establish that the
+implementation matches its formulas, not that the formulas match the real
+boat.
+
 On 2026-09-26, after the configuration cleanup, the container suite passed all
 166 tests, the GPU selftest passed (both 640×360 cameras, lidar, navigation in
 `map`), and `./scripts/njord demo reference` (seed 1, calm, fast) completed 3/3
@@ -69,6 +89,32 @@ requires every reference run to finish the ordered course with no contact and no
 geometric overlap, verified contact monitoring, and a faster median for the fast
 profile on matched seeds. Reports retain failures, timeouts and unavailable data.
 Seeds improve repeatability; GPU rendering is not promised to be bit deterministic.
+
+## GPU verification of the 2026-09 changes
+
+Simulations are run with GPU rendering; CPU rendering (`NJORD_CPU=1`) is only
+the CI fallback. On 2026-09-28 the changes to names, actuation timing, run
+modes, mission recovery, TF handling and the estimator start-up were checked
+on an RTX 5090:
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| `./scripts/njord test`, `selftest` | 258 tests OK; both cameras, lidar and navigation accepted with the vessel-neutral names | [`gpu-selftest`](evidence/gpu-selftest.json) |
+| Actuator expiry (Njord and WAM-V plugins) | 0.51–0.54 s of simulation time at factors 0.3, 1 and 3 | [`gpu-actuator-expiry`](evidence/gpu-actuator-expiry.json) |
+| WAM-V reference course | 3/3 at factor 1 (123 s) and at 0.3 on seeds 1 and 2 (113, 107 s); slalom 5/5 (192 s) | [`gpu-rtf-races`](evidence/gpu-rtf-races.json) |
+| TF wait queue at factor 0.3 | map age p95 0.10 s and 782 buoy arrays in 90 s once the estimator has started | [`gpu-tf-availability`](evidence/gpu-tf-availability.json) |
+| Mission recovery, benchmark against the previous version | slalom fast 5/5 on seeds 1–3 in both; Njord 2/0/0 before and 0/3/0 after (spread, not a trend) | [`gpu-benchmark-mission-recovery`](evidence/gpu-benchmark-mission-recovery.json) |
+| Campaign smoke, two and four thrusters | fails at 300 N (also before these changes); passes at the 150 N default | [`gpu-campaign-smoke`](evidence/gpu-campaign-smoke.json) |
+| `lab` free driving | reference autonomy moved 21 m in 40 s; an external probe's commands moved the boat 19 m and thrust stopped when they stopped | `outputs/gpu-verify/probe-lab-*.log` (not summarized) |
+
+| Njord and Munin reference races | `njord_v1` seeds 1–5 and `munin_v0` seeds 1–3 completed 3/3 each (70–73 s) with the shared tuning | [`gpu-njord-munin-races`](evidence/gpu-njord-munin-races.json) |
+
+Before the lidar fix these races reached 0–3 gates. The cause was the
+simulator, not the reference tuning: the Njord-profile lidar had no visibility
+mask and returned the rendered sea surface 3–10 m around the boat, 0.2–0.6 m
+above the flat physical water, which the mapper kept as obstacles. It now uses
+the VRX lidar mask (`constants.LIDAR_VISIBILITY_MASK`). These are reference
+autonomy races on uncalibrated models, not evidence about the real boat.
 
 ## Dynamics measurements
 

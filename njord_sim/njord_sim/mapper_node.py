@@ -20,18 +20,21 @@ Publishes:
 Parameters:
     ``map_frame`` (``map``, ENU) and ``base_frame`` (vessel body, x forward,
     y left, z up); grid ``resolution``, ``size_m``, ``origin_x``/``origin_y``
-    [m]; ``inflation_m`` [m] (default from the vessel hull and
-    algorithms.yaml); ``observation_ttl_s`` [s]; ``min_height_m`` and
+    [m] (from ``mapping.grid_*`` in algorithms.yaml); ``inflation_m`` [m]
+    (default from the vessel hull and algorithms.yaml);
+    ``observation_ttl_s`` [s]; ``min_height_m`` and
     ``max_height_m`` [m, map z] for obstacle hits; ``max_range_m`` [m];
-    ``self_length_m``/``self_width_m`` [m], the body-frame box around
-    ``base_frame`` whose returns are discarded as the vessel itself;
+    ``self_geometry_path``: required visible surface triangle artifact in
+    ``base_frame``; ``self_filter_margin_m`` plus three lidar noise standard
+    deviations determines the surface-distance rejection tolerance;
     ``input_max_age_s`` [s]; ``publish_hz`` [Hz].
 
 Timing and failure behaviour:
     Each message is transformed with TF looked up at its own acquisition
     stamp. Messages with no frame, older than ``input_max_age_s`` or stamped
-    in the future (relative to simulation time), or without TF at their
-    stamp are dropped; they add no evidence. Old cells expire back to
+    in the future (relative to simulation time) are dropped. A message whose
+    TF has not arrived yet waits (tf_wait.TfWaitQueue, in stamp order) until
+    it can be transformed or is older than ``input_max_age_s``. Old cells expire back to
     unknown, and because the grid keeps the newest integrated lidar stamp,
     a stalled lidar shows up as a stale map instead of being re-stamped.
     When simulation time jumps backwards (world reset) the map is discarded.
@@ -46,9 +49,12 @@ from sensor_msgs.msg import LaserScan, PointCloud2
 from sensor_msgs_py import point_cloud2
 from tf2_ros import Buffer, TransformException, TransformListener
 
-from njord_sim.geometry import stamp_seconds, transform_from_ros, yaw_from_quaternion
+from njord_sim.constants import BASE_FRAME, LIDAR_POINTS_TOPIC, LIDAR_SCAN_TOPIC
+from njord_sim.geometry import stamp_seconds, transform_from_ros
 from njord_sim.defaults import node_defaults
 from njord_sim.mapping_core import OccupancyMapper
+from njord_sim.self_geometry import SelfGeometry
+from njord_sim.tf_wait import TfWaitQueue
 
 
 class Mapper(Node):
@@ -57,17 +63,21 @@ class Mapper(Node):
     def __init__(self):
         super().__init__("mapper")
         self.declare_parameters("", [
-            ("points_topic", "/wamv/sensors/lidars/lidar_wamv_sensor/points"),
-            ("scan_topic", "/wamv/sensors/lidars/lidar_wamv_sensor/scan"),
+            ("points_topic", LIDAR_POINTS_TOPIC),
+            ("scan_topic", LIDAR_SCAN_TOPIC),
             ("grid_topic", "/njord/occupancy"), ("map_frame", "map"),
-            ("base_frame", "wamv/base_link"), ("resolution", 0.5), ("size_m", 160.0),
-            ("origin_x", -40.0), ("origin_y", -40.0),
-            *node_defaults("mapper"),  # inflation_m: hull radius + algorithms.yaml margin
+            ("base_frame", BASE_FRAME),
+            # Grid and inflation_m (hull radius + margin) come from algorithms.yaml.
+            *node_defaults("mapper"),
             ("observation_ttl_s", 5.0), ("min_height_m", 0.2), ("max_height_m", 5.0),
-            ("max_range_m", 80.0), ("self_length_m", 5.0), ("self_width_m", 2.8),
-            ("input_max_age_s", 0.5), ("publish_hz", 5.0),
+            ("self_geometry_path", ""),
+            ("publish_hz", 5.0),
         ])
         self.p = lambda name: self.get_parameter(name).value
+        self.self_geometry = SelfGeometry.load_frames(
+            self.p("self_geometry_path"),
+            self.p("self_filter_margin_m") + 3*self.p("lidar_noise_stddev_m"),
+            self.p("base_frame"))
         # Kept so the grid can be rebuilt identically after a simulation reset.
         self.config = dict(resolution=self.p("resolution"), size_m=self.p("size_m"),
                            origin=(self.p("origin_x"), self.p("origin_y")),
@@ -86,6 +96,17 @@ class Mapper(Node):
         self.create_subscription(LaserScan, self.p("scan_topic"), self.on_scan,
                                  qos_profile_sensor_data)
         self.create_timer(1.0/self.p("publish_hz"), self.publish_grid)
+        # Clouds and scans wait here for TF at their acquisition stamp (see
+        # tf_wait); each stream is integrated in stamp order.
+        self.waiting = {"cloud": TfWaitQueue(self.p("input_max_age_s")),
+                        "scan": TfWaitQueue(self.p("input_max_age_s"))}
+        self.create_timer(0.02, self.release)  # simulation time
+
+    def release(self):
+        """Integrate every queued measurement whose transform has arrived."""
+        now = self.observe_clock()
+        self.waiting["cloud"].release(now, self.integrate_cloud)
+        self.waiting["scan"].release(now, self.integrate_scan)
 
     def observe_clock(self):
         """Return simulation time [s]; reset the map if time went backwards.
@@ -98,6 +119,8 @@ class Mapper(Node):
         if self.last_clock is not None and now < self.last_clock:
             self.mapper = OccupancyMapper(**self.config)
             self.last_stamp = None
+            for queue in getattr(self, "waiting", {}).values():
+                queue.clear()
         self.last_clock = now
         return now
 
@@ -112,44 +135,55 @@ class Mapper(Node):
         Filtering, in order:
 
         * keep finite points with range from the lidar in (0.1, max_range_m];
-        * drop self returns: points inside the ``self_length_m`` x
-          ``self_width_m`` box around ``base_frame`` (body x forward, y left);
+        * drop self returns near actual visible vessel surfaces in ``base_frame``;
         * drop points higher than ``max_height_m`` in map z;
         * a remaining point is a hit if it is at least ``min_height_m`` high
           in map z and is a real return (range below ``max_range_m`` - 1 cm).
           Lower points (e.g. returns from the water surface) and max-range
           points only clear cells along their ray.
         """
+        self.queue("cloud", msg)
+
+    def queue(self, stream, msg):
+        """Queue a fresh measurement of ``stream`` and integrate what is ready."""
         now = self.observe_clock()
         stamp = stamp_seconds(msg.header.stamp)
         if not msg.header.frame_id or not 0 <= now-stamp <= self.p("input_max_age_s"):
             return
+        self.waiting[stream].push(stamp, msg)
+        self.release()
+
+    def integrate_cloud(self, msg):
+        """Integrate a queued cloud; False while TF at its stamp is not available."""
+        stamp = stamp_seconds(msg.header.stamp)
         try:
             # Both transforms at the cloud acquisition time, not "now".
             when = Time.from_msg(msg.header.stamp)
             to_map = self.tf.lookup_transform(self.p("map_frame"), msg.header.frame_id, when)
-            to_base = self.tf.lookup_transform(self.p("base_frame"), msg.header.frame_id, when)
+            to_surfaces = {frame: self.tf.lookup_transform(frame, msg.header.frame_id, when)
+                           for frame in self.self_geometry}
         except TransformException:
-            return
+            return False
         raw = point_cloud2.read_points_numpy(msg, field_names=("x", "y", "z"), skip_nans=True)
         raw = np.asarray(raw).reshape(-1, 3)
         if not len(raw):
-            return
+            return True
         # Ranges are measured from the lidar origin (the cloud's own frame).
         ranges = np.linalg.norm(raw, axis=1)
         raw = raw[np.isfinite(raw).all(axis=1) & (ranges > 0.1) & (ranges <= self.p("max_range_m"))]
         if not len(raw):
-            return
-        body = transform_from_ros(raw, to_base)
+            return True
         # Reject self returns, without declaring the surrounding footprint free.
-        outside_self = ((np.abs(body[:, 0]) > self.p("self_length_m")/2)
-                        | (np.abs(body[:, 1]) > self.p("self_width_m")/2))
+        outside_self = np.ones(len(raw), dtype=bool)
+        for frame, geometry in self.self_geometry.items():
+            body = transform_from_ros(raw, to_surfaces[frame])
+            outside_self &= ~geometry.contains_returns(body)
         filtered = raw[outside_self]
         world = transform_from_ros(filtered, to_map)
         # Points at (within 1 cm of) max range are treated as "no return".
         has_return = np.linalg.norm(filtered, axis=1) < self.p("max_range_m")-0.01
         if not len(world):
-            return
+            return True
         # Lidar position in map at acquisition time: the start of every ray.
         origin = transform_from_ros([[0., 0., 0.]], to_map)[0]
         # Water returns establish free visibility only up to their contact point;
@@ -159,6 +193,7 @@ class Mapper(Node):
         hit = (world[:, 2] >= self.p("min_height_m")) & has_return
         if self.mapper.update(origin, world, hit, stamp, stream="cloud"):
             self.record_stamp(msg.header.stamp)
+        return True
 
     def on_scan(self, msg):
         """Use explicit +inf range evidence; NaN/negative ranges stay unknown.
@@ -172,20 +207,23 @@ class Mapper(Node):
         max_range_m)``, is a "no return" ray; it is clipped to that maximum
         and clears the cells along it. Finite hits are not used here.
         """
-        now = self.observe_clock()
+        self.queue("scan", msg)
+
+    def integrate_scan(self, msg):
+        """Integrate a queued scan; False while TF at its stamp is not available."""
         stamp = stamp_seconds(msg.header.stamp)
-        if not msg.header.frame_id or not 0 <= now-stamp <= self.p("input_max_age_s"):
-            return
         try:
-            transform = self.tf.lookup_transform(self.p("map_frame"), msg.header.frame_id,
-                                                 Time.from_msg(msg.header.stamp))
+            when = Time.from_msg(msg.header.stamp)
+            transform = self.tf.lookup_transform(self.p("map_frame"), msg.header.frame_id, when)
+            for frame in self.self_geometry:
+                self.tf.lookup_transform(frame, msg.header.frame_id, when)
         except TransformException:
-            return
+            return False
         ranges = np.asarray(msg.ranges, dtype=float)
         angles = msg.angle_min + np.arange(len(ranges))*msg.angle_increment
         maximum = min(float(msg.range_max), self.p("max_range_m"))
         if not np.isfinite(maximum) or maximum <= 0:
-            return
+            return True
         valid = (np.isposinf(ranges) | np.isfinite(ranges)) & (ranges >= max(msg.range_min, 0.1))
         angles, ranges = angles[valid], ranges[valid]
         hit = np.isfinite(ranges) & (ranges < maximum)
@@ -200,6 +238,7 @@ class Mapper(Node):
         if len(world) and self.mapper.update(origin, world, np.zeros(len(world), dtype=bool),
                                              stamp, stream="scan"):
             self.record_stamp(msg.header.stamp)
+        return True
 
     def publish_grid(self):
         """Publish the aged and inflated grid (timer callback)."""

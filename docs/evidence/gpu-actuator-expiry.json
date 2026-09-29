@@ -1,0 +1,194 @@
+{
+  "created_utc": "2026-09-28T20:42:01+00:00",
+  "name": "gpu-actuator-expiry",
+  "note": "Actuator plugins on the GPU: command expiry in simulation time at REAL_TIME_FACTOR 0.3, 1 and 3.",
+  "schema_version": 1,
+  "sources": [
+    {
+      "bytes": 1303,
+      "content": {
+        "checks": {
+          "all_observed_forces_finite": true,
+          "configured_response": {
+            "max_error_n": 6.0291047390137464e-06,
+            "sample_pairs": 30,
+            "transient_pairs": 60
+          },
+          "invalid_command_residual_decay": {
+            "max_error_n": 2.5606586149251598e-06,
+            "sample_pairs": 31,
+            "transient_pairs": 62
+          },
+          "nonfinite_invalidates_all_targets": {
+            "wall_delay_s": 0.019750367995584384
+          },
+          "simulation_time_timeout": {
+            "configured_s": 0.5,
+            "observed_sim_s": 0.5400000000000027,
+            "observed_wall_s": 0.5766615210013697
+          },
+          "wrong_length_invalidates_targets": {
+            "wall_delay_s": 0.019881373998941854
+          }
+        },
+        "failures": [],
+        "finished_utc": "2026-09-28T08:05:06.204218+00:00",
+        "manifest_sha256": "f48cde253ed4abc7c741a94e3a9f9a160a37745272ef312986624b02b13d3587",
+        "partition": "njord-sim",
+        "requested_force_n": [
+          80.0,
+          100.0
+        ],
+        "resolved_path": "/outputs/resolved_configuration.json",
+        "resolved_sha256": "44356faa78ed370153cb7202d640f4d895d4478ea64e411db8dfbfae54774cba",
+        "response_time_s": [
+          0.1,
+          0.1
+        ],
+        "sample_count": 189,
+        "schema_version": 1,
+        "scope": "applied actuator forces only",
+        "started_utc": "2026-09-28T08:05:02.926206+00:00",
+        "status": "passed"
+      },
+      "path": "outputs/gpu-verify/sim-njord-rtf1/njord_actuator.json",
+      "sha256": "ea48d92b622573b1aa74eda6bae2d4d16b2ba11ff8eebd719acdef86963586ed"
+    },
+    {
+      "bytes": 1300,
+      "content": {
+        "checks": {
+          "all_observed_forces_finite": true,
+          "configured_response": {
+            "max_error_n": 6.0291047390137464e-06,
+            "sample_pairs": 30,
+            "transient_pairs": 60
+          },
+          "invalid_command_residual_decay": {
+            "max_error_n": 2.5606586149251598e-06,
+            "sample_pairs": 31,
+            "transient_pairs": 62
+          },
+          "nonfinite_invalidates_all_targets": {
+            "wall_delay_s": 0.06652850700629642
+          },
+          "simulation_time_timeout": {
+            "configured_s": 0.5,
+            "observed_sim_s": 0.5199999999999996,
+            "observed_wall_s": 1.720602642002632
+          },
+          "wrong_length_invalidates_targets": {
+            "wall_delay_s": 0.06650281600013841
+          }
+        },
+        "failures": [],
+        "finished_utc": "2026-09-28T08:05:51.578094+00:00",
+        "manifest_sha256": "0320e08aa63b3cb73f12bad980b59d74c4be5a54902b6f35f8e9a055196dfc43",
+        "partition": "njord-sim",
+        "requested_force_n": [
+          80.0,
+          100.0
+        ],
+        "resolved_path": "/outputs/resolved_configuration.json",
+        "resolved_sha256": "db343751e54234b2f8b63325f036c2e75d1fce8941bd121ae71e9257ed0bc73f",
+        "response_time_s": [
+          0.1,
+          0.1
+        ],
+        "sample_count": 192,
+        "schema_version": 1,
+        "scope": "applied actuator forces only",
+        "started_utc": "2026-09-28T08:05:38.669296+00:00",
+        "status": "passed"
+      },
+      "path": "outputs/gpu-verify/sim-njord-rtf0.3/njord_actuator.json",
+      "sha256": "76e6e982152de44d606699e9af38fadf6a2eaa1726e0c75b0f293420f395ae8e"
+    },
+    {
+      "bytes": 946,
+      "content": {
+        "checks": {
+          "finite_forces_forwarded": true,
+          "nan_zeroes_both_thrusters": true,
+          "publisher_silence_zeroes_both_thrusters": true
+        },
+        "failures": [],
+        "finished_utc": "2026-09-28T08:06:25.980761+00:00",
+        "finite_forces_n": {
+          "left": 80.0,
+          "right": 120.0
+        },
+        "liveness_s": 2.0,
+        "nan_response_limit_s": 0.25,
+        "nan_response_observed_s": {
+          "left": 0.012828503997297958,
+          "right": 0.012896890002593864
+        },
+        "partition": "njord-sim",
+        "schema_version": 1,
+        "started_utc": "2026-09-28T08:06:24.008364+00:00",
+        "status": "passed",
+        "timeout_limit_sim_s": 0.75,
+        "timeout_observed_sim_s": {
+          "left": 0.508,
+          "right": 0.508
+        },
+        "timeout_observed_wall_s": {
+          "left": 1.693094766997092,
+          "right": 1.693238546999055
+        },
+        "topics": {
+          "input": "/njord/actuator_forces",
+          "left": "/wamv/thrusters/left/thrust",
+          "right": "/wamv/thrusters/right/thrust"
+        },
+        "watchdog_timeout_s": 0.5
+      },
+      "path": "outputs/gpu-verify/sim-wamv-rtf0.3/actuator_timeout.json",
+      "sha256": "c1f7e049293ab8e977128f8ec01effdc73ee814a61e9810b5fc2cba84d4448d1"
+    },
+    {
+      "bytes": 978,
+      "content": {
+        "checks": {
+          "finite_forces_forwarded": true,
+          "nan_zeroes_both_thrusters": true,
+          "publisher_silence_zeroes_both_thrusters": true
+        },
+        "failures": [],
+        "finished_utc": "2026-09-28T08:06:59.012357+00:00",
+        "finite_forces_n": {
+          "left": 80.0,
+          "right": 120.0
+        },
+        "liveness_s": 2.0,
+        "nan_response_limit_s": 0.25,
+        "nan_response_observed_s": {
+          "left": 0.0010481640056241304,
+          "right": 0.0011710990002029575
+        },
+        "partition": "njord-sim",
+        "schema_version": 1,
+        "started_utc": "2026-09-28T08:06:58.395616+00:00",
+        "status": "passed",
+        "timeout_limit_sim_s": 0.75,
+        "timeout_observed_sim_s": {
+          "left": 0.5079999999999991,
+          "right": 0.5079999999999991
+        },
+        "timeout_observed_wall_s": {
+          "left": 0.35196782799903303,
+          "right": 0.35207289500249317
+        },
+        "topics": {
+          "input": "/njord/actuator_forces",
+          "left": "/wamv/thrusters/left/thrust",
+          "right": "/wamv/thrusters/right/thrust"
+        },
+        "watchdog_timeout_s": 0.5
+      },
+      "path": "outputs/gpu-verify/sim-wamv-rtf3/actuator_timeout.json",
+      "sha256": "21723e2a9c663012a6b9b98073b50dcb24998803dbda132fc45710dfdee97b22"
+    }
+  ]
+}

@@ -1,0 +1,447 @@
+{
+  "created_utc": "2026-09-28T20:42:01+00:00",
+  "name": "gpu-rtf-races",
+  "note": "WAM-V reference course on the GPU at REAL_TIME_FACTOR 1 and 0.3 after the TF wait queue and the estimate fix.",
+  "schema_version": 1,
+  "sources": [
+    {
+      "bytes": 5013,
+      "content": {
+        "clearance_model": "horizontal_conservative_rectangle_swept_0.1m_2deg",
+        "collision": false,
+        "contact_event_count": 0,
+        "contact_message_count": 2378,
+        "contact_status": "observed",
+        "distance_travelled_m": 76.88702274898809,
+        "environment": "calm",
+        "estimator_accuracy_validated": false,
+        "evidence_scope": "sensor_navigation_scoring",
+        "gate_events": [
+          {
+            "direction": 1,
+            "gate": "gate_1",
+            "time_s": 32.37450971186989
+          },
+          {
+            "direction": 1,
+            "gate": "gate_2",
+            "time_s": 78.77870224488593
+          },
+          {
+            "direction": 1,
+            "gate": "gate_3",
+            "time_s": 122.679064735952
+          }
+        ],
+        "gates_passed": 3,
+        "gates_total": 3,
+        "geometric_overlap": false,
+        "git_commit": "ea6fb15921965a2050d5e1e66b05ff939b36f74f",
+        "image_identity": "sha256:da8d1fdc457df895021a7196388233420ac78cd17a34a298147b517927753b3d",
+        "image_source_digest": "8cd2ddccaf0ac090f0717f1a38e49ea0e61cac95820bd7b80195ef640694d410",
+        "label": "demo",
+        "manifest_sha256": "c9478a61c4ac146865ee4e6dfae44c70da9a07c48afc6dc7c02777f907c5f38c",
+        "max_plan_ms": 16.804686005343683,
+        "mean_plan_ms": 4.702561868093531,
+        "min_clearance_m": 3.2942230235813064,
+        "path_messages": 1020,
+        "plan_samples": 925,
+        "profile": "fast",
+        "reached_goal": true,
+        "real_time_factor": 0.9118001312127114,
+        "real_time_factor_target": 1.0,
+        "replans": 925,
+        "run_id": "d83a45cf188a401d9df7ec7fb9d312a0",
+        "runner_git_commit": "ea6fb15921965a2050d5e1e66b05ff939b36f74f",
+        "scenario": {
+          "environment": {
+            "current_direction_to_deg_enu": 0.0,
+            "current_speed_mps": 0.0,
+            "physics_step_s": 0.004,
+            "water_density_kg_m3": 1000.0,
+            "water_level_m": 0.0,
+            "wave_direction_rad": 0.0,
+            "wave_gain": 0.0,
+            "wave_period_s": 5.0,
+            "wave_steepness": 0.0,
+            "wind_direction_deg": 45.0,
+            "wind_direction_to_deg_enu": 45.0,
+            "wind_speed_mps": 0.0,
+            "wind_variance_gain": 0.0
+          },
+          "environment_name": "calm",
+          "environments": {},
+          "gate_y_jitter_m": 0.75,
+          "gates": [
+            null,
+            null,
+            null
+          ],
+          "hull": {
+            "beam_m": 3.3,
+            "length_m": 6.0
+          },
+          "name": "njord_reference",
+          "obstacles": [
+            null,
+            null
+          ],
+          "resolved": true,
+          "schema_version": 1,
+          "seed": 1,
+          "start": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "timeout_s": 360.0
+        },
+        "scenario_sha256": "058e9f09068b026a9c033cd3740d5df06e452248840cfbc509e296ba30298872",
+        "seed": 1,
+        "state_source": "estimate",
+        "status": "completed",
+        "time_s": 122.679064735952,
+        "wall_budget_s": 720.0,
+        "wall_time_s": 140.0025714749936
+      },
+      "path": "outputs/gpu-verify/est-wamv-rtf1/run_metrics.json",
+      "sha256": "aff9985c0576f493640772b73b5f7edc83e320b6f17adef82b65b1144a71bef3"
+    },
+    {
+      "bytes": 5019,
+      "content": {
+        "clearance_model": "horizontal_conservative_rectangle_swept_0.1m_2deg",
+        "collision": false,
+        "contact_event_count": 0,
+        "contact_message_count": 2591,
+        "contact_status": "observed",
+        "distance_travelled_m": 76.53296108647602,
+        "environment": "calm",
+        "estimator_accuracy_validated": false,
+        "evidence_scope": "sensor_navigation_scoring",
+        "gate_events": [
+          {
+            "direction": 1,
+            "gate": "gate_1",
+            "time_s": 33.86183887929276
+          },
+          {
+            "direction": 1,
+            "gate": "gate_2",
+            "time_s": 75.07903132240003
+          },
+          {
+            "direction": 1,
+            "gate": "gate_3",
+            "time_s": 113.35147198109443
+          }
+        ],
+        "gates_passed": 3,
+        "gates_total": 3,
+        "geometric_overlap": false,
+        "git_commit": "ea6fb15921965a2050d5e1e66b05ff939b36f74f",
+        "image_identity": "sha256:da8d1fdc457df895021a7196388233420ac78cd17a34a298147b517927753b3d",
+        "image_source_digest": "8cd2ddccaf0ac090f0717f1a38e49ea0e61cac95820bd7b80195ef640694d410",
+        "label": "demo",
+        "manifest_sha256": "1e4b9b97aa865c3326ca293c055cf7f5a1a28a80ac9cae3f9e4711081fd8a53d",
+        "max_plan_ms": 75.20151900826022,
+        "mean_plan_ms": 4.85175764478212,
+        "min_clearance_m": 3.5732130545072858,
+        "path_messages": 1356,
+        "plan_samples": 1168,
+        "profile": "fast",
+        "reached_goal": true,
+        "real_time_factor": 0.29998276608842267,
+        "real_time_factor_target": 0.3,
+        "replans": 1168,
+        "run_id": "9e31c1a60f614baba65b52550ad56bde",
+        "runner_git_commit": "ea6fb15921965a2050d5e1e66b05ff939b36f74f",
+        "scenario": {
+          "environment": {
+            "current_direction_to_deg_enu": 0.0,
+            "current_speed_mps": 0.0,
+            "physics_step_s": 0.004,
+            "water_density_kg_m3": 1000.0,
+            "water_level_m": 0.0,
+            "wave_direction_rad": 0.0,
+            "wave_gain": 0.0,
+            "wave_period_s": 5.0,
+            "wave_steepness": 0.0,
+            "wind_direction_deg": 45.0,
+            "wind_direction_to_deg_enu": 45.0,
+            "wind_speed_mps": 0.0,
+            "wind_variance_gain": 0.0
+          },
+          "environment_name": "calm",
+          "environments": {},
+          "gate_y_jitter_m": 0.75,
+          "gates": [
+            null,
+            null,
+            null
+          ],
+          "hull": {
+            "beam_m": 3.3,
+            "length_m": 6.0
+          },
+          "name": "njord_reference",
+          "obstacles": [
+            null,
+            null
+          ],
+          "resolved": true,
+          "schema_version": 1,
+          "seed": 1,
+          "start": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "timeout_s": 360.0
+        },
+        "scenario_sha256": "058e9f09068b026a9c033cd3740d5df06e452248840cfbc509e296ba30298872",
+        "seed": 1,
+        "state_source": "estimate",
+        "status": "completed",
+        "time_s": 113.35147198109443,
+        "wall_budget_s": 2400.0,
+        "wall_time_s": 453.7200993709994
+      },
+      "path": "outputs/gpu-verify/est-wamv-rtf0.3-s1/run_metrics.json",
+      "sha256": "186e6abcd619646ead2f85628d6179422686ee625cda8990d6a9720b80e27200"
+    },
+    {
+      "bytes": 5023,
+      "content": {
+        "clearance_model": "horizontal_conservative_rectangle_swept_0.1m_2deg",
+        "collision": false,
+        "contact_event_count": 0,
+        "contact_message_count": 2573,
+        "contact_status": "observed",
+        "distance_travelled_m": 76.35453275382184,
+        "environment": "calm",
+        "estimator_accuracy_validated": false,
+        "evidence_scope": "sensor_navigation_scoring",
+        "gate_events": [
+          {
+            "direction": 1,
+            "gate": "gate_1",
+            "time_s": 29.96557138533915
+          },
+          {
+            "direction": 1,
+            "gate": "gate_2",
+            "time_s": 66.17937746413357
+          },
+          {
+            "direction": 1,
+            "gate": "gate_3",
+            "time_s": 106.49857488071417
+          }
+        ],
+        "gates_passed": 3,
+        "gates_total": 3,
+        "geometric_overlap": false,
+        "git_commit": "ea6fb15921965a2050d5e1e66b05ff939b36f74f",
+        "image_identity": "sha256:da8d1fdc457df895021a7196388233420ac78cd17a34a298147b517927753b3d",
+        "image_source_digest": "8cd2ddccaf0ac090f0717f1a38e49ea0e61cac95820bd7b80195ef640694d410",
+        "label": "demo",
+        "manifest_sha256": "c46c91e061a4240887218526ef2be35c77519a0468fc15057432a53c6f7a28c0",
+        "max_plan_ms": 86.22091799043119,
+        "mean_plan_ms": 4.720312704825523,
+        "min_clearance_m": 3.756831714488312,
+        "path_messages": 1348,
+        "plan_samples": 1152,
+        "profile": "fast",
+        "reached_goal": true,
+        "real_time_factor": 0.29990950808281386,
+        "real_time_factor_target": 0.3,
+        "replans": 1152,
+        "run_id": "556f23e60e0640fca6993081221e805e",
+        "runner_git_commit": "ea6fb15921965a2050d5e1e66b05ff939b36f74f",
+        "scenario": {
+          "environment": {
+            "current_direction_to_deg_enu": 0.0,
+            "current_speed_mps": 0.0,
+            "physics_step_s": 0.004,
+            "water_density_kg_m3": 1000.0,
+            "water_level_m": 0.0,
+            "wave_direction_rad": 0.0,
+            "wave_gain": 0.0,
+            "wave_period_s": 5.0,
+            "wave_steepness": 0.0,
+            "wind_direction_deg": 45.0,
+            "wind_direction_to_deg_enu": 45.0,
+            "wind_speed_mps": 0.0,
+            "wind_variance_gain": 0.0
+          },
+          "environment_name": "calm",
+          "environments": {},
+          "gate_y_jitter_m": 0.75,
+          "gates": [
+            null,
+            null,
+            null
+          ],
+          "hull": {
+            "beam_m": 3.3,
+            "length_m": 6.0
+          },
+          "name": "njord_reference",
+          "obstacles": [
+            null,
+            null
+          ],
+          "resolved": true,
+          "schema_version": 1,
+          "seed": 2,
+          "start": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "timeout_s": 360.0
+        },
+        "scenario_sha256": "675924809d8e04ed43d09cdcdf0504777abba6473ceb91e3de329d82dbe167d8",
+        "seed": 2,
+        "state_source": "estimate",
+        "status": "completed",
+        "time_s": 106.49857488071417,
+        "wall_budget_s": 2400.0,
+        "wall_time_s": 450.66033817100106
+      },
+      "path": "outputs/gpu-verify/est-wamv-rtf0.3-s2/run_metrics.json",
+      "sha256": "91ac5dd6997af50e14fd7b7dbedef33852a2333f01dfc799719a2c6c37f09a0e"
+    },
+    {
+      "bytes": 6164,
+      "content": {
+        "clearance_model": "horizontal_conservative_rectangle_swept_0.1m_2deg",
+        "collision": false,
+        "contact_event_count": 0,
+        "contact_message_count": 3707,
+        "contact_status": "observed",
+        "distance_travelled_m": 113.10974880839417,
+        "environment": "calm",
+        "estimator_accuracy_validated": false,
+        "evidence_scope": "sensor_navigation_scoring",
+        "gate_events": [
+          {
+            "direction": 1,
+            "gate": "gate_1",
+            "time_s": 23.153535286864415
+          },
+          {
+            "direction": 1,
+            "gate": "gate_2",
+            "time_s": 66.92270539022498
+          },
+          {
+            "direction": 1,
+            "gate": "gate_3",
+            "time_s": 110.06637355179396
+          },
+          {
+            "direction": 1,
+            "gate": "gate_4",
+            "time_s": 151.7460164015788
+          },
+          {
+            "direction": 1,
+            "gate": "gate_5",
+            "time_s": 192.07234939946886
+          }
+        ],
+        "gates_passed": 5,
+        "gates_total": 5,
+        "geometric_overlap": false,
+        "git_commit": "ea6fb15921965a2050d5e1e66b05ff939b36f74f",
+        "image_identity": "sha256:da8d1fdc457df895021a7196388233420ac78cd17a34a298147b517927753b3d",
+        "image_source_digest": "8cd2ddccaf0ac090f0717f1a38e49ea0e61cac95820bd7b80195ef640694d410",
+        "label": "demo",
+        "manifest_sha256": "31f73e7883464a8f64453bb44cfc7e62748198a5ea1584cb3df0a399197c26a1",
+        "max_plan_ms": 17.90059699851554,
+        "mean_plan_ms": 5.643304587814679,
+        "min_clearance_m": 3.012720386550014,
+        "path_messages": 1611,
+        "plan_samples": 1477,
+        "profile": "fast",
+        "reached_goal": true,
+        "real_time_factor": 0.910667889473985,
+        "real_time_factor_target": 1.0,
+        "replans": 1477,
+        "run_id": "4f077c03ea04412591a5cb57b58b0d26",
+        "runner_git_commit": "ea6fb15921965a2050d5e1e66b05ff939b36f74f",
+        "scenario": {
+          "environment": {
+            "current_direction_to_deg_enu": 0.0,
+            "current_speed_mps": 0.0,
+            "physics_step_s": 0.004,
+            "water_density_kg_m3": 1000.0,
+            "water_level_m": 0.0,
+            "wave_direction_rad": 0.0,
+            "wave_gain": 0.0,
+            "wave_period_s": 5.0,
+            "wave_steepness": 0.0,
+            "wind_direction_deg": 45.0,
+            "wind_direction_to_deg_enu": 45.0,
+            "wind_speed_mps": 0.0,
+            "wind_variance_gain": 0.0
+          },
+          "environment_name": "calm",
+          "environments": {},
+          "gate_y_jitter_m": 0.5,
+          "gates": [
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "hull": {
+            "beam_m": 3.3,
+            "length_m": 6.0
+          },
+          "name": "njord_slalom",
+          "obstacles": [
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "resolved": true,
+          "schema_version": 1,
+          "seed": 1,
+          "start": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "timeout_s": 480.0
+        },
+        "scenario_sha256": "1c0c9f50ae5b56b3b74e5c9a21f34d80dfd080753978a7b03ca301eed5406c52",
+        "seed": 1,
+        "state_source": "estimate",
+        "status": "completed",
+        "time_s": 192.07234939946886,
+        "wall_budget_s": 960.0,
+        "wall_time_s": 216.06859220701153
+      },
+      "path": "outputs/gpu-verify/est-wamv-slalom/run_metrics.json",
+      "sha256": "561953937897aee69bd406b24cf7ceffab6b8db8c2dfc4e82e8a908c7c01bcd2"
+    }
+  ]
+}

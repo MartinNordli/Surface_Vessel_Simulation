@@ -40,32 +40,36 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data, QoSProfile, DurabilityPolicy
 from std_msgs.msg import Float64, Bool
 
-from .scenario_core import RaceScorer, load_scenario, scenario_digest
+from .constants import GROUND_TRUTH_TOPIC, GZ_MODEL_NAME, HEARTBEATS, PROCESS_LIVENESS_S
+from .scenario_core import RaceScorer, load_scenario, scenario_digest, wall_budget_s
 
 
 class Evaluator(Node):
     """ROS wrapper around RaceScorer with readiness gating and watchdogs.
 
     Subscribes: ground-truth odometry (``odom_topic``), ``contacts_topic``,
-    ``path_topic``, ``/njord/plan_ms`` and the three ``/njord/*_status``
-    diagnostics. Publishes: ``/njord/race_active`` (std_msgs/Bool, latched).
+    ``path_topic``, ``/njord/plan_ms`` and the ``/njord/*_status``
+    diagnostics named in ``required_status`` (constants.HEARTBEATS keys, from
+    configuration.guard_requirements). Publishes: ``/njord/race_active``
+    (std_msgs/Bool, latched).
     """
 
     def __init__(self):
         super().__init__("evaluator")
         self.declare_parameters("", [
-            ("scenario_file", ""), ("odom_topic", "/wamv/ground_truth/odometry"),
+            ("scenario_file", ""), ("odom_topic", GROUND_TRUTH_TOPIC),
             ("path_topic", "/njord/path"), ("contacts_topic", "/njord/contacts"),
             ("output", "outputs/run_metrics.json"), ("run_label", "run"),
             ("profile", "conservative"), ("state_source", "estimate"), ("wall_timeout_s", 600.0),
-            ("odom_wall_timeout_s", 30.0),
+            ("odom_wall_timeout_s", 30.0), ("required_status", list(HEARTBEATS)),
             ("wait_for_ready", True),
             ("git_commit", os.environ.get("NJORD_IMAGE_SOURCE_COMMIT", "unknown")),
             ("image_source_digest", os.environ.get("NJORD_IMAGE_SOURCE_DIGEST", "unknown")),
             ("runner_git_commit", os.environ.get("RUNNER_GIT_COMMIT", "unknown")),
             ("image_identity", os.environ.get("IMAGE_ID", "unknown")),
         ])
-        # wall_timeout_s: steady-time budget for the whole run, startup included.
+        # wall_timeout_s: minimum steady-time budget for the whole run, startup
+        #   included; see wall_budget_s for the scaling with the real-time factor.
         # odom_wall_timeout_s: steady time without advancing odometry.
         # wait_for_ready: False starts scoring on the first odometry message.
         p = lambda name: self.get_parameter(name).value
@@ -75,7 +79,10 @@ class Evaluator(Node):
         self.first_odom_wall = None
         self.last_odom_wall = None
         self.output = FilePath(p("output"))
+        self.wall_budget_s = wall_budget_s(p("wall_timeout_s"), self.scenario["timeout_s"],
+                                           self.real_time_factor_target())
         self.done = False
+        self.last_clock_s = None
         self.exit_code = 2  # nonzero unless the race completes
         self.path_messages = 0
         self.latencies = []
@@ -87,8 +94,12 @@ class Evaluator(Node):
         # Transient-local so a late-joining command guard still gets the state.
         self.active_pub = self.create_publisher(Bool, "/njord/race_active",
             QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
-        for topic in ("mission_status", "planner_status", "navigation_status"):
-            self.create_subscription(DiagnosticArray, "/njord/" + topic, self.on_readiness, 10)
+        required = list(p("required_status"))
+        if not required or set(required) - set(HEARTBEATS):
+            raise ValueError(f"required_status must be a nonempty subset of {sorted(HEARTBEATS)}")
+        self.required_names = [HEARTBEATS[key][1] for key in required]
+        for key in required:
+            self.create_subscription(DiagnosticArray, HEARTBEATS[key][0], self.on_readiness, 10)
         self.create_subscription(Odometry, p("odom_topic"), self.on_odom, qos_profile_sensor_data)
         self.create_subscription(Path, p("path_topic"), self.on_path, 10)
         self.create_subscription(Float64, "/njord/plan_ms", self.on_latency, 10)
@@ -101,6 +112,13 @@ class Evaluator(Node):
         # /clock never starts or stops advancing.
         self.create_timer(0.1, self.check_timeout, clock=Clock(clock_type=ClockType.STEADY_TIME))
 
+    def real_time_factor_target(self):
+        """REAL_TIME_FACTOR of a managed run (resolved_configuration.json), else 1."""
+        resolved = self.output.parent / 'resolved_configuration.json'
+        if resolved.is_file():
+            return json.loads(resolved.read_text()).get('run', {}).get('real_time_factor', 1.0)
+        return 1.0
+
     def on_readiness(self, message):
         """Store (ok, sim stamp, steady receive time) per diagnostic status name."""
         stamp = message.header.stamp.sec + message.header.stamp.nanosec * 1e-9
@@ -111,28 +129,29 @@ class Evaluator(Node):
         """Require both acquisition freshness and a live advancing stream.
 
         The last accepted contact message must be at most 0.5 s old in
-        simulation time and have arrived within 0.5 s of steady time.
+        simulation time and have arrived within PROCESS_LIVENESS_S of steady
+        time; the steady limit only catches a dead stream while /clock stalls.
         """
         if self.contact_last_stamp is None or self.contact_last_wall is None:
             return False
         age = self.get_clock().now().nanoseconds * 1e-9 - self.contact_last_stamp
-        return 0 <= age <= 0.5 and time.monotonic() - self.contact_last_wall <= 0.5
+        return 0 <= age <= 0.5 and time.monotonic() - self.contact_last_wall <= PROCESS_LIVENESS_S
 
     def ready(self):
         """True when every input needed to score a race is live.
 
-        Odometry must have advanced within 0.5 s of steady time, contacts
-        must be fresh, and the ``njord/planner``, ``mission`` and
-        ``navigation`` diagnostics must be OK and at most 0.5 s old in both
-        simulation and steady time.
+        Odometry must have advanced within PROCESS_LIVENESS_S of steady time,
+        contacts must be fresh, and every required diagnostic must be OK, at
+        most 0.5 s old in simulation time and received within
+        PROCESS_LIVENESS_S of steady time.
         """
         now_sim = self.get_clock().now().nanoseconds * 1e-9
         now_wall = time.monotonic()
-        return self.latest_ground_truth is not None and self.last_odom_wall is not None and now_wall - self.last_odom_wall <= 0.5 and self.contact_fresh() and all(
+        return self.latest_ground_truth is not None and self.last_odom_wall is not None and now_wall - self.last_odom_wall <= PROCESS_LIVENESS_S and self.contact_fresh() and all(
             name in self.readiness and self.readiness[name][0]
             and 0 <= now_sim - self.readiness[name][1] <= 0.5
-            and now_wall - self.readiness[name][2] <= 0.5
-            for name in ("njord/planner", "mission", "navigation"))
+            and now_wall - self.readiness[name][2] <= PROCESS_LIVENESS_S
+            for name in self.required_names)
 
     def on_path(self, _):
         self.path_messages += 1
@@ -145,8 +164,9 @@ class Evaluator(Node):
         """Accept a fresh contact message; end the race if it involves the vessel.
 
         Empty messages are heartbeats from the ContactMonitor plugin and only
-        refresh liveness. A contact involves the vessel when either collision
-        name contains ``wamv`` (the model name of both vessel profiles).
+        refresh liveness. A contact involves the vessel when either scoped
+        collision name (``model::link::collision``) belongs to the vessel
+        model, ``constants.GZ_MODEL_NAME``.
         """
         if self.done:
             return
@@ -158,7 +178,8 @@ class Evaluator(Node):
         self.contact_last_stamp, self.contact_last_wall = stamp, time.monotonic()
         def name(collision):
             return getattr(collision, "name", str(collision))
-        involved = any("wamv" in name(c.collision1) or "wamv" in name(c.collision2)
+        vessel = GZ_MODEL_NAME + "::"
+        involved = any(name(c.collision1).startswith(vessel) or name(c.collision2).startswith(vessel)
                        for c in message.contacts)
         self.scorer.contact(involved)
         if involved:
@@ -172,8 +193,9 @@ class Evaluator(Node):
         stamp = message.header.stamp.sec + message.header.stamp.nanosec * 1e-9
         # Only an advancing stamp proves the simulation is alive; a repeated
         # stamp (paused or frozen simulator) must not reset the watchdog.
-        if self.latest_ground_truth is None or stamp > self.latest_ground_truth[0]:
-            self.last_odom_wall = wall
+        if self.latest_ground_truth is not None and stamp <= self.latest_ground_truth[0]:
+            return  # Reordered/replayed transport samples cannot reset scoring or liveness.
+        self.last_odom_wall = wall
         q = message.pose.pose.orientation
         # Yaw (rotation about world z, ENU) from the orientation quaternion.
         yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
@@ -198,14 +220,20 @@ class Evaluator(Node):
         if self.done:
             return
         now = time.monotonic()
+        now_sim = self.get_clock().now().nanoseconds * 1e-9
+        if self.last_clock_s is not None and now_sim < self.last_clock_s:
+            self.scorer.status = "clock_reset"
+            self.finish()
+            return
+        self.last_clock_s = now_sim
         if not self.started and self.ready():
             self.started = True
             self.first_odom_wall = now
             # The latest pose becomes the race start (time zero).
             self.scorer.update(*self.latest_ground_truth)
-            self.get_logger().info("Navigation, mission and planner ready; race started")
+            self.get_logger().info("Required heartbeats and contacts ready; race started")
         self.active_pub.publish(Bool(data=self.started and self.scorer.status == "running"))
-        if now - self.wall_start >= self.get_parameter("wall_timeout_s").value:
+        if now - self.wall_start >= self.wall_budget_s:
             self.scorer.status = "wall_timeout"
         elif self.last_odom_wall is not None and now - self.last_odom_wall >= self.get_parameter("odom_wall_timeout_s").value:
             self.scorer.status = "odometry_timeout"
@@ -234,6 +262,9 @@ class Evaluator(Node):
             "profile": self.get_parameter("profile").value,
             # 'truth' means autonomy navigated on ground truth, not on sensors.
             "state_source": self.get_parameter("state_source").value,
+            "estimator_accuracy_validated": False,
+            "evidence_scope": ("truth_navigation_scoring" if self.get_parameter("state_source").value == "truth"
+                               else "sensor_navigation_scoring"),
             "seed": self.scenario["seed"], "environment": self.scenario["environment_name"],
             "scenario": self.scenario, "scenario_sha256": scenario_digest(self.scenario),
             "git_commit": self.get_parameter("git_commit").value,
@@ -250,6 +281,8 @@ class Evaluator(Node):
         })
         # Tie the metrics to the sealed run inputs when a manifest exists.
         manifest = self.output.parent / 'run_manifest.json'
+        metrics['real_time_factor_target'] = self.real_time_factor_target()
+        metrics['wall_budget_s'] = self.wall_budget_s
         if manifest.is_file():
             from njord_sim.run_manifest import sha256
             metrics['manifest_sha256'] = sha256(manifest)

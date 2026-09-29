@@ -1,6 +1,5 @@
 """Real DDS regression for evaluator readiness and contact-stream failure."""
 import json
-import os
 from pathlib import Path
 import sys
 import tempfile
@@ -16,11 +15,13 @@ from nav_msgs.msg import Odometry
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile
-from ros_gz_interfaces.msg import Contacts
+from ros_gz_interfaces.msg import Contact, Contacts, Entity
 from std_msgs.msg import Bool, Float64
 from builtin_interfaces.msg import Time
 from test_sensor_runtime import local_node
+from njord_sim.constants import GZ_MODEL_NAME, PROCESS_LIVENESS_S
 from njord_sim.evaluator_node import Evaluator
+from njord_sim.scenario_core import wall_budget_s
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -39,7 +40,7 @@ class EvaluatorReadinessTests(unittest.TestCase):
             states = []
             driver.create_subscription(Bool, "/njord/race_active", lambda m: states.append(m.data),
                 QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
-            odom = driver.create_publisher(Odometry, "/wamv/ground_truth/odometry", 10)
+            odom = driver.create_publisher(Odometry, "/sim/ground_truth/odometry", 10)
             contacts = driver.create_publisher(Contacts, "/njord/contacts", 10)
             topics = [("mission", "/njord/mission_status"), ("navigation", "/njord/navigation_status"),
                       ("njord/planner", "/njord/planner_status")]
@@ -50,7 +51,7 @@ class EvaluatorReadinessTests(unittest.TestCase):
                 stamp = driver.get_clock().now().to_msg()
                 truth = Odometry()
                 truth.header.stamp, truth.header.frame_id = stamp, "world"
-                truth.child_frame_id, truth.pose.pose.orientation.w = "wamv/base_link", 1.0
+                truth.child_frame_id, truth.pose.pose.orientation.w = "base_link", 1.0
                 odom.publish(truth)
                 if with_contacts:
                     message = Contacts()
@@ -101,6 +102,40 @@ class EvaluatorReadinessTests(unittest.TestCase):
                 rclpy.shutdown()
 
 
+class ExternalAutonomyReadinessTests(unittest.TestCase):
+    """An external stack's race starts on navigation alone (AUTONOMY=external)."""
+    def test_only_required_heartbeats_gate_the_start(self):
+        with tempfile.TemporaryDirectory(prefix="njord-evaluator-external-") as temporary:
+            context = local_node(Evaluator, {"scenario_file": str(ROOT/"scenarios/reference.yaml"),
+                                             "output": str(Path(temporary)/"metrics.json"),
+                                             "required_status": ["navigation"]})
+            node, clock, _ = context.__enter__()
+            try:
+                clock.seconds = 100.
+                truth = Odometry()
+                truth.header.stamp = clock.now().to_msg()
+                truth.pose.pose.orientation.w = 1.
+                node.on_odom(truth)
+                contacts = Contacts()
+                contacts.header.stamp = Time(sec=100, nanosec=0)
+                node.on_contacts(contacts)
+                self.assertFalse(node.ready())
+                message = DiagnosticArray()
+                message.header.stamp = clock.now().to_msg()
+                message.status = [DiagnosticStatus(name="navigation", level=DiagnosticStatus.OK)]
+                node.on_readiness(message)
+                self.assertTrue(node.ready())
+            finally:
+                context.__exit__(None, None, None)
+
+
+class WallBudgetTests(unittest.TestCase):
+    def test_budget_leaves_room_for_the_simulation_timeout_at_slow_factors(self):
+        self.assertEqual(wall_budget_s(600, 360, 1.0), 720)
+        self.assertAlmostEqual(wall_budget_s(600, 360, 0.3), 2400)
+        self.assertEqual(wall_budget_s(600, 100, 3.0), 600)
+
+
 class EvaluatorCallbackTests(unittest.TestCase):
     """Actual ROS messages; local doubles keep targeted checks free of DDS."""
     def setUp(self):
@@ -125,11 +160,26 @@ class EvaluatorCallbackTests(unittest.TestCase):
             message.status = [DiagnosticStatus(name=name, level=DiagnosticStatus.OK)]
             self.node.on_readiness(message)
 
-    def contact(self, seconds):
+    def contact(self, seconds, pairs=()):
+        """Deliver a contact message; ``pairs`` are scoped collision names."""
         ns = round(seconds*1e9)
         message = Contacts()
         message.header.stamp = Time(sec=ns//10**9, nanosec=ns%10**9)
+        message.contacts = [Contact(collision1=Entity(name=first), collision2=Entity(name=second))
+                            for first, second in pairs]
         self.node.on_contacts(message)
+
+    def test_only_contacts_of_the_vessel_model_count_as_collision(self):
+        # Scoped names as Gazebo reports them: model::link::collision.
+        self.contact(99.9, [("obstacle_1::link::collision", "ground_plane::link::collision"),
+                            ("obstacle_1::link::collision", f"not_{GZ_MODEL_NAME}::link::collision")])
+        self.assertEqual(self.node.scorer.contact_events, 0)
+        self.assertFalse(self.node.done)
+        self.contact(100., [("obstacle_1::link::collision",
+                               f"{GZ_MODEL_NAME}::base_link::base_link_fixed_joint_lump__top_base_collision_24")])
+        self.assertEqual(self.node.scorer.contact_events, 1)
+        self.assertEqual(self.node.scorer.status, "collision")
+        self.assertTrue(self.node.done)
 
     def test_old_and_future_contacts_cannot_start_or_count_as_evidence(self):
         for stamp in (1., 99.49, 101.):
@@ -143,7 +193,7 @@ class EvaluatorCallbackTests(unittest.TestCase):
     def test_repeated_stamp_does_not_refresh_receipt_watchdog(self):
         self.contact(100.)
         received = self.node.contact_last_wall
-        with patch("njord_sim.evaluator_node.time.monotonic", return_value=received+0.6):
+        with patch("njord_sim.evaluator_node.time.monotonic", return_value=received+PROCESS_LIVENESS_S+0.1):
             self.contact(100.)
             self.assertEqual(self.node.contact_last_wall, received)
             self.assertEqual(self.node.scorer.contact_messages, 1)
@@ -166,6 +216,19 @@ class EvaluatorCallbackTests(unittest.TestCase):
         self.node.finish()
         self.assertEqual(self.node.exit_code, 2)
         self.assertEqual(json.loads(self.result.read_text())["status"], "contact_monitor_timeout")
+
+    def test_clock_rollback_ends_scoring_and_replayed_odom_is_ignored(self):
+        previous = self.node.latest_ground_truth
+        truth = Odometry()
+        truth.header.stamp = Time(sec=99)
+        truth.pose.pose.orientation.w = 1.
+        self.node.on_odom(truth)
+        self.assertEqual(self.node.latest_ground_truth, previous)
+        self.contact(100.)
+        self.node.check_timeout()
+        self.clock.seconds = 90.
+        self.node.check_timeout()
+        self.assertEqual(json.loads(self.result.read_text())["status"], "clock_reset")
 
     def test_path_messages_and_computations_are_counted_separately(self):
         for _ in range(5):

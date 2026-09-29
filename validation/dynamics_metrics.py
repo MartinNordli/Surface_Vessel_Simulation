@@ -118,7 +118,7 @@ def summarize_experiment(samples, experiment, window_s=10.0):
       initially excited, and each excited angle's window mean has at least
       halved.
     """
-    if experiment not in {"straight", "reverse", "turn_left", "turn_right", "coast", "drift", "hydrostatic"}:
+    if experiment not in {"straight", "reverse", "turn_left", "turn_right", "coast", "drift", "hydrostatic", "excitation", "oscillator_heave", "oscillator_roll", "oscillator_pitch"}:
         raise ValueError("unknown experiment")
     if len(samples) < 2 or any(len(s) < 5 or not all(math.isfinite(v) for v in s) for s in samples):
         return {"complete": False, "reason": "insufficient or invalid samples", "metrics": {}}
@@ -141,6 +141,17 @@ def summarize_experiment(samples, experiment, window_s=10.0):
         early = [s for s in samples if s[0] <= samples[0][0] + 2.0]
         if len(early) > 1:
             metrics["observed_initial_surge_acceleration_mps2"] = (early[-1][8] - early[0][8]) / (early[-1][0] - early[0][0])
+    if experiment.startswith("oscillator_"):
+        complete = stable and len(samples[0]) >= 14
+        return {"complete": complete, "reason": None if complete else "missing settled restoring trajectory", "metrics": metrics}
+    if experiment == "excitation":
+        # Command-specific sign/oracle checks belong to campaign acceptance;
+        # coverage alone never claims physical accuracy.
+        if stable:
+            metrics.update(steady_speed_mps=sum(s[3] for s in tail)/len(tail),
+                           steady_yaw_rate_radps=sum(s[4] for s in tail)/len(tail))
+        return {"complete": stable and samples[-1][0]-samples[0][0] >= window_s,
+                "reason": None if stable else "stationary excitation response not established", "metrics": metrics}
     if experiment == "hydrostatic":
         if len(samples[0]) < 12:
             return {"complete": False, "reason": "hydrostatic pose and velocity channels missing", "metrics": metrics}
@@ -162,8 +173,8 @@ def summarize_experiment(samples, experiment, window_s=10.0):
         metrics.update(steady_speed_mps=speed, steady_yaw_rate_radps=yaw)
         if experiment.startswith("turn"):
             metrics["turning_radius_m"] = speed / abs(yaw) if abs(yaw) > 0.001 else None
-            stable = abs(yaw) > 0.001
+            stable = yaw > 0.001 if experiment == "turn_left" else yaw < -0.001
     if experiment in {"straight", "reverse"}:
         direction_ok = len(samples[0]) >= 12 and (metrics["mean_surge_mps"] > 0.01 if experiment == "straight" else metrics["mean_surge_mps"] < -0.01)
         stable = stable and direction_ok
-    return {"complete": stable, "reason": None if stable else "stationary response or commanded surge direction not established", "metrics": metrics}
+    return {"complete": stable, "reason": None if stable else "stationary response or commanded direction not established", "metrics": metrics}

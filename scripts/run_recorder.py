@@ -22,33 +22,30 @@ per-thruster command topics come from the run's public_parameters.json, so
 they always match the vessel file of the run.
 Fails with FileExistsError if OUTPUT_DIR/bag already exists.
 
-The bag includes ground truth (/wamv/ground_truth/odometry) for offline
+The bag includes ground truth (/sim/ground_truth/odometry) for offline
 evaluation only; keep it out of autonomy inputs when replaying.
 """
 import json
 import os
 from pathlib import Path
 
+from njord_sim.constants import (CAMERAS, GPS_RAW_TOPIC, GPS_TOPIC, GROUND_TRUTH_TOPIC, IMU_RAW_TOPIC, IMU_TOPIC,
+                                 LIDAR_POINTS_TOPIC, LIDAR_SCAN_TOPIC, camera_topic)
 from njord_sim.run_manifest import wait_ready
 
 
 # Recorded topics: clock/TF, raw and processed sensors, the reference
 # autonomy's outputs, thrust commands and evaluation-only truth/contacts.
 # The per-thruster command topics are added from the run (see thruster_topics).
-CAMERAS = ('front_left_camera_sensor', 'front_right_camera_sensor')
 TOPICS = (
-    '/clock', '/tf', '/tf_static', '/robot_description', '/wamv/joint_states',
-    *(f'/wamv/sensors/cameras/{camera}/{suffix}'
-      for camera in CAMERAS for suffix in ('image_raw', 'camera_info')),
-    '/wamv/sensors/lidars/lidar_wamv_sensor/points',
-    '/wamv/sensors/lidars/lidar_wamv_sensor/scan',
-    '/wamv/sensors/gps/gps/fix_raw', '/wamv/sensors/gps/gps/fix',
-    '/wamv/sensors/imu/imu/data_raw', '/wamv/sensors/imu/imu/data',
+    '/clock', '/tf', '/tf_static', '/robot_description', '/joint_states',
+    *(camera_topic(camera, name) for camera in CAMERAS for name in ('image_raw', 'camera_info')),
+    LIDAR_POINTS_TOPIC, LIDAR_SCAN_TOPIC, GPS_RAW_TOPIC, GPS_TOPIC, IMU_RAW_TOPIC, IMU_TOPIC,
     '/njord/local/odometry', '/njord/gps/odometry', '/njord/odometry',
     '/njord/occupancy', '/njord/buoys', '/njord/goal', '/njord/path',
     '/njord/mission_status', '/njord/planner_status', '/njord/navigation_status',
     '/njord/plan_ms', '/njord/race_active',
-    '/njord/actuator_forces', '/wamv/ground_truth/odometry', '/njord/contacts',
+    '/njord/actuator_forces', GROUND_TRUTH_TOPIC, '/njord/contacts',
 )
 
 

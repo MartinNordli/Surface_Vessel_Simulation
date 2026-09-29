@@ -10,7 +10,7 @@ run manifest checksums, then replaces itself with
 
 Inputs (environment): OUTPUT_DIR (default /outputs), RUN_ID (required),
 AUTONOMY / CONTROLLER / PERCEPTION / MAPPING ("reference" or "external"),
-STATE_SOURCE ("estimate" or "truth"), PROFILE ("fast" or "conservative"), SEED, ROS_PARAMS_FILE, ENVIRONMENT and the
+STATE_SOURCE ("estimate" or "truth"), RUN_MODE ("race" or "free"), PROFILE (a speed_profiles_mps name in algorithms.yaml), SEED, ROS_PARAMS_FILE, ENVIRONMENT and the
 provenance variables IMAGE_ID, NJORD_IMAGE_SOURCE_COMMIT,
 NJORD_IMAGE_SOURCE_DIGEST and RUNNER_GIT_COMMIT. Extra command-line arguments
 are passed to the launch; ``name:=value`` for one of the settings above
@@ -31,6 +31,7 @@ import json
 import os
 from pathlib import Path
 import sys
+from njord_sim.configuration import DEFAULT_PROFILE, RUN_MODES, config_path, speed_profile_names
 from njord_sim.run_manifest import atomic_text, wait_ready
 
 
@@ -56,8 +57,9 @@ def prepare(output, run_id, environment=None, args=()):
     settings = {name: environment.get(name.upper(), 'reference')
                 for name in ('autonomy', 'controller', 'perception', 'mapping')}
     settings.update(state_source=environment.get('STATE_SOURCE', 'estimate'),
-                    profile=environment.get('PROFILE', 'fast'),
-                    seed=environment.get('SEED', '1'),
+                    run_mode=environment.get('RUN_MODE', 'race'),
+                    profile=environment.get('PROFILE', DEFAULT_PROFILE),
+                    seed=str(metadata.get('seed', environment.get('SEED') or '1')),
                     params_file=environment.get('ROS_PARAMS_FILE', ''))
     extra_args = list(args)
     public_file = output / 'public_parameters.json'
@@ -67,31 +69,43 @@ def prepare(output, run_id, environment=None, args=()):
         if separator and name in settings:
             settings[name] = value
     # The simulator's sensor seed wins so the recorded seed is the one used.
-    if public_file.is_file():
-        public = json.loads(public_file.read_text())
+    public = json.loads(public_file.read_text()) if public_file.is_file() else {}
+    if public:
         settings['seed'] = str(public.get('sensor_adapter', {}).get('seed', settings['seed']))
+        if '_profile' in public:
+            if any(argument.startswith('profile:=') and argument.partition(':=')[2] != public['_profile'] for argument in extra_args):
+                raise ValueError('profile override conflicts with resolved simulation profile')
+            settings['profile'] = public['_profile']
     for name in ('autonomy', 'controller', 'perception', 'mapping'):
         if settings[name] not in ('reference', 'external'):
             raise ValueError(f'{name} must be reference or external')
     if settings['state_source'] not in ('estimate', 'truth'):
         raise ValueError('state_source must be estimate or truth')
-    if settings['profile'] not in ('fast', 'conservative'):
-        raise ValueError('profile must be fast or conservative')
+    if settings['run_mode'] not in RUN_MODES:
+        raise ValueError(f'run_mode must be one of {RUN_MODES}')
+    # Profile names live in algorithms.yaml; the simulator's resolved profile wins.
+    profiles = ([public['_profile']] if '_profile' in public
+                else speed_profile_names(config_path('algorithms.yaml')))
+    if settings['profile'] not in profiles:
+        raise ValueError(f'profile must be one of {profiles}')
+    if 'seed' in metadata and any(argument.startswith('seed:=') and argument.partition(':=')[2] != str(metadata['seed']) for argument in extra_args):
+        raise ValueError('seed override conflicts with resolved simulation seed')
+    settings['seed'] = str(metadata.get('seed', settings['seed']))
     seed = int(settings['seed'])
     params_digest = None
-    # Copy the team parameter file into the run so later edits to the original
-    # cannot change what this run used; the launch reads the copy.
+    # Simulator freezes every YAML input before starting nodes. Never reopen
+    # a caller's mutable ROS file after the handoff.
+    frozen_params = output / 'source_config' / 'ros_params.yaml'
+    if settings['params_file'] and not frozen_params.is_file():
+        raise ValueError('Simulator did not freeze ROS_PARAMS_FILE')
+    settings['params_file'] = str(frozen_params) if frozen_params.is_file() else ''
     if settings['params_file']:
-        params_bytes = Path(settings['params_file']).read_bytes()
-        snapshot = output / 'ros_params.yaml'
-        temporary = snapshot.with_suffix('.yaml.tmp')
-        temporary.write_bytes(params_bytes)
-        temporary.replace(snapshot)
-        settings['params_file'] = str(snapshot)
-        params_digest = hashlib.sha256(params_bytes).hexdigest()
+        params_digest = hashlib.sha256(frozen_params.read_bytes()).hexdigest()
+    localization = output / 'source_config' / 'localization.yaml'
     command = ['ros2', 'launch', 'njord_sim', 'dstar_demo.launch.py',
                *[f'{name}:={value}' for name, value in settings.items() if name != 'params_file'],
-               *extra_args,
+               *[argument for argument in extra_args if argument.partition(':=')[0] not in settings],
+               *(['localization_config:=' + str(localization)] if localization.is_file() else []),
                'expected_gates:=' + str(metadata['expected_gates']),
                *(['public_parameters:=' + str(public_file)] if public_file.is_file() else []),
                *(['params_file:=' + settings['params_file']] if settings['params_file'] else []),
@@ -105,6 +119,7 @@ def prepare(output, run_id, environment=None, args=()):
         'image_identity': environment.get('IMAGE_ID', 'unknown'),
         'image_source_commit': environment.get('NJORD_IMAGE_SOURCE_COMMIT', 'unknown'),
         'image_source_digest': environment.get('NJORD_IMAGE_SOURCE_DIGEST', 'unknown'),
+        'image_executable_digest': environment.get('NJORD_IMAGE_EXECUTABLE_DIGEST', 'unknown'),
         'runner_git_commit': environment.get('RUNNER_GIT_COMMIT', 'unknown'),
         'vessel_config': str(vessel),
         'vessel_config_sha256': hashlib.sha256(vessel_bytes).hexdigest(),
@@ -119,6 +134,10 @@ def main():
     """Prepare the run and exec the launch (this process is replaced)."""
     args = prepare(os.environ.get('OUTPUT_DIR', '/outputs'), os.environ.get('RUN_ID', ''),
                    args=sys.argv[1:])
+    frozen = Path(os.environ.get('OUTPUT_DIR', '/outputs')) / 'frozen_config'
+    if not frozen.is_dir():
+        raise ValueError('Simulator did not freeze default configuration')
+    os.environ['NJORD_CONFIG_DIR'] = str(frozen)
     os.execvp(args[0], args)
 
 

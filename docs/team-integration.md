@@ -32,7 +32,7 @@ result.
 | `CONTROLLER=external` | `guidance` | Per-thruster force in newtons from your own controller |
 | `PERCEPTION=external` | `perception` | Buoy detections from your own CV/fusion system |
 | `MAPPING=external` | `mapper` | Your own occupancy map |
-| `AUTONOMY=external` | All five: mapper, perception, mission, planner, guidance | The whole algorithm chain and its status messages |
+| `AUTONOMY=external` | All five: mapper, perception, mission, planner, guidance | The whole algorithm chain; no Njord status messages are needed |
 
 The three single settings can be combined. The GPS/IMU adapter, localization and
 command guard always run. `AUTONOMY=external` overrides the single settings.
@@ -102,9 +102,12 @@ base configuration does not give the team container a GPU.
    ```
 
 5. The controller must zero thrust itself on an empty, invalid or stale path, a
-   stale map or stale odometry. The guard requires fresh planner, mission and
-   navigation status plus the evaluator's race-active signal. Missing commands for
-   0.5 s of wall-clock time remove thrust; the boat keeps its momentum and can drift.
+   stale map or stale odometry. The guard requires fresh navigation status, the
+   planner and mission status while those reference nodes run, and in a race
+   (`demo`, `benchmark`) the evaluator's race-active signal. Missing commands for
+   0.5 s of simulation time remove thrust (or 2 s of wall-clock time if
+   simulation time stalls); the boat keeps its momentum and can drift. Why the
+   guard currently passes or blocks thrust is published on `/njord/guard_status`.
 
 A concrete connection test without your own package is to run the reference
 controller as a separate process while `CONTROLLER=external` is set:
@@ -139,10 +142,10 @@ physics, not Munin.
 
 | Direction | Topic | Type | Content |
 | --- | --- | --- | --- |
-| to the controller | `/njord/odometry` | `nav_msgs/Odometry` | Pose of `wamv/base_link` in `map`; twist in the body frame. EKF estimate, or ground truth with `STATE_SOURCE=truth` |
+| to the controller | `/njord/odometry` | `nav_msgs/Odometry` | Pose of `base_link` in `map`; twist in the body frame. EKF estimate, or ground truth with `STATE_SOURCE=truth` |
 | to the controller | `/njord/path`, `/njord/goal` | `nav_msgs/Path`, `geometry_msgs/PoseStamped` | Planned route and current mission goal in `map` |
-| to the controller | `/wamv/sensors/gps/gps/fix` | `sensor_msgs/NavSatFix` | Noisy GNSS fix, for your own estimator |
-| to the controller | `/wamv/sensors/imu/imu/data` | `sensor_msgs/Imu` | Noisy attitude, angular rate and acceleration, for your own estimator |
+| to the controller | `/sensors/gps/fix` | `sensor_msgs/NavSatFix` | Noisy GNSS fix, for your own estimator |
+| to the controller | `/sensors/imu/data` | `sensor_msgs/Imu` | Noisy attitude, angular rate and acceleration, for your own estimator |
 | to the controller | `/clock` | `rosgraph_msgs/Clock` | Simulation time; use `use_sim_time:=true` |
 | from the controller | `/thruster_1/command` … `/thruster_4/command` | `std_msgs/Float64` | Force in newtons along each thruster's direction |
 
@@ -159,12 +162,14 @@ the geometry by hand.
   in `constants.py`. Poses, paths and goals are in `map`.
 - `odom`: continuous local frame between `map` and the boat. In truth mode it
   coincides with `map`.
-- `wamv/base_link`: the boat body, FLU (x forward, y left/port, z up). Thruster
+- `base_link`: the boat body, FLU (x forward, y left/port, z up). Thruster
   positions in the vessel file and the odometry twist are in this frame.
-- Sensor frames such as `wamv/imu_wamv_link` hang below `wamv/base_link` at the
+- Sensor frames (`imu_link`, `gps_link`, `lidar_link`, `front_{left,right}_camera_link`
+  and their `_optical` frames) hang below `base_link` at the
   mounting poses from the vessel file (robot_state_publisher).
 
-The tree is `map` → `odom` → `wamv/base_link` → sensors. Heading (yaw) in
+The tree is `map` → `odom` → `base_link` → sensors. The names are the same
+for every vessel ([interfaces.md](interfaces.md)). Heading (yaw) in
 `map` is counter-clockwise from east.
 
 **ENU/FLU and NED/FRD.** The simulator uses the ROS convention (REP 103). If
@@ -185,28 +190,34 @@ adapter is open question 8.
 
 ## 5. Test your own computer vision or map
 
-To inspect sensors without a race ending while you develop:
+To develop without a race ending, use `lab`, which drives freely without an
+evaluator (`RUN_MODE=free`). With `AUTONOMY=external` and no commands of your
+own it is a passive sensor session:
 
 ```bash
 AUTONOMY=external ./scripts/njord lab slalom
 # Another terminal:
 docker compose exec simulator /entrypoint.sh ros2 topic list
 docker compose exec simulator /entrypoint.sh ros2 topic hz \
-  /wamv/sensors/cameras/front_left_camera_sensor/image_raw
+  /sensors/cameras/front_left/image_raw
 docker compose exec simulator /entrypoint.sh ros2 topic echo \
-  /wamv/sensors/cameras/front_left_camera_sensor/camera_info --once
-docker compose exec simulator /entrypoint.sh ros2 topic hz /wamv/sensors/lidars/lidar_wamv_sensor/points
-docker compose exec simulator /entrypoint.sh ros2 run tf2_ros tf2_echo map wamv/front_left_camera_link_optical
+  /sensors/cameras/front_left/camera_info --once
+docker compose exec simulator /entrypoint.sh ros2 topic hz /sensors/lidar/points
+docker compose exec simulator /entrypoint.sh ros2 run tf2_ros tf2_echo map front_left_camera_link_optical
 ```
 
 `lab` starts the simulator, estimation and the selected reference nodes, without
-an evaluator. Stop earlier races first (`docker compose down` with your Compose
+an evaluator, and sets `RUN_MODE=free`: the guard passes thrust without a
+race-active signal. With the reference autonomy the boat drives the course; with
+`CONTROLLER=external` or `AUTONOMY=external` your node drives it (for example a
+dynamic-positioning controller), and without commands thrust stays zero. The
+guard's other checks still apply, and `/njord/guard_status` says what blocks
+thrust. Stop earlier races first (`docker compose down` with your Compose
 configuration); use only one simulator/evaluator per ROS domain and Gazebo
-partition. `lab` does not stop an evaluator that is already running. The guard
-keeps thrust at zero without a race-active signal from an evaluator on the same
-domain. Exit with Ctrl-C before starting a new race. This is a passive sensor
-test; wind and waves can still move the boat. Measured Hz values are wall-clock
-receive rates and depend on the simulator's real-time factor.
+partition. `lab` does not stop an evaluator that is already running. Exit with
+Ctrl-C before starting a new race. Wind and waves can move the boat even
+without thrust. Measured Hz values are wall-clock receive rates and depend on
+the simulator's real-time factor.
 
 To feed your own CV results into the reference mission, planner and controller:
 
@@ -319,11 +330,11 @@ export OUTPUT_HOST="$PWD/outputs/run-REPLACE-WITH-ACTUAL-DIRECTORY"
 ROS_DOMAIN_ID=43 docker compose run --rm autonomy ros2 bag info /outputs/bag
 ROS_DOMAIN_ID=43 docker compose run --rm autonomy ros2 bag play /outputs/bag \
   --clock --topics /tf /tf_static /njord/odometry \
-  /wamv/sensors/cameras/front_left_camera_sensor/image_raw \
-  /wamv/sensors/cameras/front_left_camera_sensor/camera_info \
-  /wamv/sensors/cameras/front_right_camera_sensor/image_raw \
-  /wamv/sensors/cameras/front_right_camera_sensor/camera_info \
-  /wamv/sensors/lidars/lidar_wamv_sensor/points
+  /sensors/cameras/front_left/image_raw \
+  /sensors/cameras/front_left/camera_info \
+  /sensors/cameras/front_right/image_raw \
+  /sensors/cameras/front_right/camera_info \
+  /sensors/lidar/points
 unset OUTPUT_HOST
 ```
 

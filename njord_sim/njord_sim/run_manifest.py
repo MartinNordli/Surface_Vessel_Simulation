@@ -3,7 +3,7 @@
 The simulator launch prepares a fresh run directory in this order:
 
 1. ``freeze_resources``  copy checksummed mesh files into ``resources/``
-2. (model and world generation write wamv.sdf, njord_course.sdf, ...)
+2. (model and world generation write vessel.sdf, njord_course.sdf, ...)
 3. ``write_manifest``    snapshot inputs, hash every generated artifact
 4. ``publish_ready``     atomically write ``run_ready.json`` last
 
@@ -41,7 +41,8 @@ def publish_ready(output, run_id, scenario, manifest_sha256=None):
     if not run_id:
         raise ValueError('RUN_ID is required; use scripts/njord or set a unique run identifier')
     # Do not expose hidden gate positions to the mission process.
-    metadata = {'run_id': run_id, 'expected_gates': len(scenario['gates'])}
+    metadata = {'run_id': run_id, 'expected_gates': len(scenario['gates']),
+                'seed': scenario.get('seed', 1)}
     if manifest_sha256 is not None:
         metadata['manifest_sha256'] = manifest_sha256
     atomic_text(Path(output) / 'run_ready.json', json.dumps(metadata) + '\n')
@@ -86,6 +87,19 @@ def freeze_resources(output, resolved):
     rewrite(resolved['vessel'])
 
 
+def freeze_default_configuration(output, directory):
+    """Snapshot all editable default YAML before publishing run readiness."""
+    output, directory = Path(output), Path(directory)
+    for source in sorted(directory.rglob('*')):
+        if source.is_file() and source.suffix in ('.yaml', '.yml'):
+            destination = output/'frozen_config'/source.relative_to(directory)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(source.read_bytes())
+    for required in ('vessels/wamv.yaml', 'algorithms.yaml', 'localization.yaml'):
+        if not (output/'frozen_config'/required).is_file():
+            raise ValueError(f'missing default configuration snapshot: {required}')
+
+
 def write_manifest(output, run_id, resolved, sources, public_parameters):
     """Freeze inputs and generated artifacts before publishing the run handoff.
 
@@ -108,21 +122,23 @@ def write_manifest(output, run_id, resolved, sources, public_parameters):
     # are not part of the sealed run inputs.
     atomic_text(output/'resolved_configuration.json', json.dumps(resolved, indent=2, allow_nan=False)+'\n')
     atomic_text(output/'public_parameters.json', json.dumps(public_parameters, indent=2, allow_nan=False)+'\n')
-    immutable = {'wamv.sdf', 'wamv.urdf', 'bridges.yaml', 'vessel_config.yaml',
+    immutable = {'vessel.sdf', 'vessel.urdf', 'bridges.yaml', 'vessel_config.yaml',
                  'njord_course.sdf', 'resolved_configuration.json', 'resolved_scenario.json',
-                 'scenario.sha256', 'public_parameters.json'}
+                 'scenario.sha256', 'public_parameters.json', 'self_geometry.json'}
     artifacts = {str(path.relative_to(output)): sha256(path)
                  for path in sorted(output.rglob('*')) if path.is_file()
                  and (path.parent == output and path.name in immutable
-                      or path.relative_to(output).parts[0] in ('resources', 'source_config'))}
+                      or path.relative_to(output).parts[0] in ('resources', 'source_config', 'frozen_config'))}
     # Provenance: which image and which runner commit produced this run.
     manifest = {
         'schema_version': 1, 'run_id': run_id, 'seed': resolved['scenario']['seed'],
+        'profile': resolved.get('algorithms', {}).get('profile'),
         'sources': snapshots, 'artifacts': artifacts,
         'resources': resolved.get('resources', {}),
         'image_identity': os.environ.get('IMAGE_ID', 'unknown'),
         'image_source_commit': os.environ.get('NJORD_IMAGE_SOURCE_COMMIT', 'unknown'),
         'image_source_digest': os.environ.get('NJORD_IMAGE_SOURCE_DIGEST', 'unknown'),
+        'image_executable_digest': os.environ.get('NJORD_IMAGE_EXECUTABLE_DIGEST', 'unknown'),
         'runner_git_commit': os.environ.get('RUNNER_GIT_COMMIT', 'unknown'),
     }
     atomic_text(output/'run_manifest.json', json.dumps(manifest, indent=2, allow_nan=False)+'\n')

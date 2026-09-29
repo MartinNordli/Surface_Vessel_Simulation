@@ -39,6 +39,54 @@ def grid_line(start, end):
             y += sy
 
 
+def trace_rays(start, ends, hits, size):
+    """Cells crossed by rays from one start cell, all rays advanced together.
+
+    The same integer Bresenham steps as ``grid_line`` (kept as the independent
+    reference), vectorized over rays instead of looping over cells in Python.
+    A ray stops at the map edge; nothing beyond it is stored.
+
+    Args:
+        start: (column, row) cell of the sensor.
+        ends: (N, 2) integer end cells.
+        hits: N booleans; a hit ray marks its end cell occupied.
+        size: cells per grid side.
+
+    Returns:
+        (free, hit): linear cell indices ``row*size + column``, each unique;
+        a cell that is a hit for any ray is not also free.
+    """
+    ends = np.asarray(ends, dtype=np.int64).reshape(-1, 2)
+    hits = np.asarray(hits, dtype=bool)
+    x1, y1 = ends[:, 0], ends[:, 1]
+    x = np.full(len(ends), start[0], dtype=np.int64)
+    y = np.full(len(ends), start[1], dtype=np.int64)
+    dx, dy = np.abs(x1-x), -np.abs(y1-y)
+    sx, sy = np.where(x < x1, 1, -1), np.where(y < y1, 1, -1)
+    err = dx+dy
+    active = np.arange(len(ends))
+    free, hit = [], []
+    while len(active):
+        cx, cy = x[active], y[active]
+        # Stop at the map edge: this cell and the rest of the ray are dropped.
+        inside = (cx >= 0) & (cx < size) & (cy >= 0) & (cy < size)
+        active, cx, cy = active[inside], cx[inside], cy[inside]
+        at_end = (cx == x1[active]) & (cy == y1[active])
+        is_hit = at_end & hits[active]
+        cells = cy*size + cx
+        hit.append(cells[is_hit])
+        free.append(cells[~is_hit])
+        active = active[~at_end]
+        twice = 2*err[active]
+        step_x, step_y = twice >= dy[active], twice <= dx[active]
+        err[active] += np.where(step_x, dy[active], 0) + np.where(step_y, dx[active], 0)
+        x[active] += np.where(step_x, sx[active], 0)
+        y[active] += np.where(step_y, sy[active], 0)
+    hit = np.unique(np.concatenate(hit)) if hit else np.empty(0, dtype=np.int64)
+    free = np.unique(np.concatenate(free)) if free else np.empty(0, dtype=np.int64)
+    return np.setdiff1d(free, hit, assume_unique=True), hit
+
+
 class OccupancyMapper:
     """Square occupancy grid with per-cell evidence timestamps.
 
@@ -66,8 +114,7 @@ class OccupancyMapper:
     time of arrival or processing.
     """
 
-    def __init__(self, resolution=0.5, size_m=160.0, origin=(-40., -40.),
-                 inflation_m=3.0, observation_ttl_s=5.0):
+    def __init__(self, resolution, size_m, origin, inflation_m=3.0, observation_ttl_s=5.0):
         if resolution <= 0 or size_m <= 0 or observation_ttl_s <= 0 or inflation_m < 0:
             raise ValueError("invalid map dimensions, inflation or observation lifetime")
         self.resolution = float(resolution)
@@ -96,7 +143,7 @@ class OccupancyMapper:
     def update(self, sensor_origin, endpoints, occupied, stamp, stream="cloud"):
         """Integrate already filtered world-space rays; occupied=False clears to endpoint.
 
-        Reject regressions within each input stream, not between scan and cloud.
+        Reject duplicate stamps and regressions within each input stream, not between scan and cloud.
         Each cell retains the acquisition time of its free and occupied evidence;
         hits win over free evidence up to 0.3 seconds newer, independent of arrival
         order. A clock reset explicitly resets this instance in the adapter.
@@ -120,37 +167,34 @@ class OccupancyMapper:
         call, a cell that is a hit for any ray is not also counted as free.
         """
         stamp = float(stamp)
-        if not math.isfinite(stamp) or stamp < self.stream_stamps.get(stream, -math.inf):
+        if not math.isfinite(stamp) or stamp <= self.stream_stamps.get(stream, -math.inf):
             return False
         start = self.cell(sensor_origin)
         if not self.inside(start):
             return False
-        free, hits = set(), set()
+        points = np.asarray(endpoints, dtype=float)
+        points = points.reshape(-1, points.shape[-1])[:, :2] if points.size else np.empty((0, 2))
+        occupied = np.asarray(occupied, dtype=bool).reshape(-1)
+        finite = np.isfinite(points).all(axis=1)
+        ends = np.floor((points[finite]-self.origin)/self.resolution).astype(np.int64)
+        occupied = occupied[finite]
+        # Bound traversal even for corrupted or very distant endpoints.
+        near = np.abs(ends-np.asarray(start)).max(axis=1) <= self.size*4 if len(ends) else np.zeros(0, bool)
+        ends, occupied = ends[near], occupied[near]
         # Many rays end in the same cell; tracing each (cell, hit) pair once is enough.
-        rays = {(self.cell(point), bool(hit)) for point, hit in zip(endpoints, occupied)
-                if np.isfinite(point).all()}
-        for end, hit in rays:
-            # Bound traversal even for corrupted or very distant endpoints.
-            if max(abs(end[0]-start[0]), abs(end[1]-start[1])) > self.size*4:
-                continue
-            for cell in grid_line(start, end):
-                # Stop at the map edge: nothing beyond it is stored.
-                if not self.inside(cell):
-                    break
-                if cell == end and hit:
-                    hits.add(cell)
-                else:
-                    free.add(cell)
+        if len(ends):
+            rays = np.unique(np.column_stack((ends, occupied)), axis=0)
+            ends, occupied = rays[:, :2], rays[:, 2].astype(bool)
+        free, hits = trace_rays(start, ends, occupied, self.size)
         # Record evidence times. np.maximum keeps the newest stamp per cell, so
         # a late-arriving older message cannot overwrite newer evidence.
-        for cells, timestamps in ((free-hits, self.free_observed), (hits, self.hit_observed)):
-            if cells:
-                xy = np.asarray(list(cells))
-                rows, cols = xy[:, 1], xy[:, 0]
+        for cells, timestamps in ((free, self.free_observed), (hits, self.hit_observed)):
+            if len(cells):
+                rows, cols = cells // self.size, cells % self.size
                 timestamps[rows, cols] = np.maximum(timestamps[rows, cols], stamp)
-        if free or hits:
-            xy = np.asarray(list(free | hits))
-            rows, cols = xy[:, 1], xy[:, 0]
+        if len(free) or len(hits):
+            cells = np.union1d(free, hits)
+            rows, cols = cells // self.size, cells % self.size
             free_times, hit_times = self.free_observed[rows, cols], self.hit_observed[rows, cols]
             # Occupied unless free evidence is more than 0.3 s newer than the
             # last hit: biased towards keeping obstacles.

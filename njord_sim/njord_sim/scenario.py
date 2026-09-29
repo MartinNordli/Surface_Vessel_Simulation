@@ -20,7 +20,7 @@ import json
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
-from .constants import WORLD_ORIGIN_WGS84
+from .constants import BASE_FRAME, GZ_MODEL_NAME, WORLD_ORIGIN_WGS84
 from .scenario_core import load_scenario, obstacles, scenario_digest
 from .run_manifest import atomic_text
 
@@ -33,11 +33,12 @@ def element(parent, tag, text=None, **attrs):
     return node
 
 
-def world_xml(scenario, vessel_profile='wamv_reference'):
+def world_xml(scenario, vessel_profile='wamv_reference', real_time_factor=1.0):
     """Return the SDF world text for a resolved ``scenario``.
 
     ``vessel_profile`` is ``'wamv_reference'`` (VRX wind and wave plugins) or
     ``'njord'`` (flat water, no upstream environment forces).
+    ``real_time_factor`` is the target of simulated seconds per wall second.
     """
     sdf = ET.Element("sdf", version="1.9")
     world = element(sdf, "world", name="njord_course")
@@ -45,12 +46,12 @@ def world_xml(scenario, vessel_profile='wamv_reference'):
         # Match the hydrostatics adapter's gravity constant. SDF otherwise
         # defaults to 9.8, producing a systematic displacement error.
         element(world, 'gravity', '0 0 -9.81')
-    # Fixed physics step in seconds; real_time_factor 1 is a target, not a
-    # guarantee (slow hosts run slower than real time, sim time stays exact).
+    # Fixed physics step in seconds; real_time_factor is a target, not a
+    # guarantee (slow hosts run slower, simulation time stays exact).
     step = scenario['environment'].get('physics_step_s', 0.004)
     physics = element(world, "physics", name=f"{step * 1000:g}ms", type="dart")
     element(physics, "max_step_size", step)
-    element(physics, "real_time_factor", 1.0)
+    element(physics, "real_time_factor", real_time_factor)
     # World systems: physics, entity spawning, GUI/scene state, rendered and
     # non-rendered sensors, and contact detection for the markers.
     for library, name in [("physics", "Physics"), ("user-commands", "UserCommands"),
@@ -124,8 +125,8 @@ def world_xml(scenario, vessel_profile='wamv_reference'):
     # direction set by configuration.resolve_scenario.
     wind = element(world, "plugin", filename="libUSVWind.so", name="vrx::USVWind")
     obj = element(wind, "wind_obj")
-    element(obj, "name", "wamv")
-    element(obj, "link_name", "wamv/base_link")
+    element(obj, "name", GZ_MODEL_NAME)
+    element(obj, "link_name", BASE_FRAME)
     element(obj, "coeff_vector", "0.5 0.5 0.33")
     for key, value in {"wind_direction": env["wind_direction_deg"],
                        "wind_mean_velocity": env["wind_speed_mps"],

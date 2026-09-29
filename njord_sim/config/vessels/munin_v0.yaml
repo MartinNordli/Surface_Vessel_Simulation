@@ -12,7 +12,7 @@
 # hydrodynamics, wind response, thrusters and sensors are all read from here.
 # Units are SI. Body axes are forward/left/up (x/y/z); poses are
 # [x, y, z, roll, pitch, yaw] relative to the body origin.
-schema_version: 2
+schema_version: 3
 profile: njord
 name: munin_placeholder
 revision: placeholder-x4-v0
@@ -53,7 +53,7 @@ hydrodynamics:
 
 # Wind loads: reference areas [frontal, lateral] in m^2 and a yaw reference
 # length. Coefficients are interpolated periodically over the angle of the
-# relative air velocity toward the body (degrees, 0 = from ahead).
+# direction the air moves toward in body axes (degrees, 0 = forward).
 wind:
   reference_area_m2: [0.9, 1.8]
   reference_length_m: 3.0
@@ -113,6 +113,9 @@ sensors:
     gps_horizontal_noise_m: 0.3
     gps_vertical_noise_m: 0.5
     imu_orientation_noise_rad: 0.005
+    # Assumed standard deviations; not measured boat calibration.
+    imu_angular_velocity_noise_rad_s: 0.009
+    imu_linear_acceleration_noise_m_s2: 0.021
   # Mounting poses [x, y, z, roll, pitch, yaw] in the body frame.
   poses:
     camera: [0.75, 0.15, 0.7, 0.0, 0.05, 0.0]        # front left camera

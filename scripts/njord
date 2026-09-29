@@ -48,11 +48,12 @@ Image
 Run (course defaults to SCENARIO, else reference)
   demo [course]       Headless race: simulator + autonomy + evaluator; exits with the result
   gui [course]        Same race with the Gazebo window and RViz
-  lab [course]        Simulator + autonomy without an evaluator; keeps running for inspection
+  lab [course]        Free driving: simulator + autonomy, no evaluator (RUN_MODE=free)
   simulator [course]  Simulator service only
   benchmark [course]  Seed x environment x profile race matrix (see --help)
   film [course] [gif options]  Race filmed by a chase camera, then an animated GIF
                       (options: python3 scripts/make_film_gif.py --help)
+  campaign           Fresh-process physical parameter and timestep trials (see --help)
 
 Test
   test            Full unit/integration suite inside the container
@@ -67,35 +68,46 @@ rendering on hosts without a usable GPU.
 EOF
 }
 
-# Verify that the local image exists and was built from this checkout's Docker
-# inputs. A mismatch warns, or fails with NJORD_STRICT_IMAGE=1 (used by CI).
+# Resolve the tag once before checking labels or starting any service.
+pin_image() {
+  local pinned
+  pinned="$(docker image inspect "$local_image" --format '{{.Id}}')"
+  export NJORD_IMAGE="$pinned" IMAGE_ID="$pinned"
+  local_image="$pinned"
+  docker compose config --format json | python3 -c '
+import json, os, sys
+services = json.load(sys.stdin)["services"]
+for name in ("simulator", "autonomy", "evaluator", "tests"):
+    if name in services and services[name]["image"] != os.environ["NJORD_IMAGE"]:
+        raise SystemExit("Compose service " + name + " must honor NJORD_IMAGE")
+'
+
+}
+
+# Image tests require all build inputs; runs permit editable config YAML only.
 check_image() {
-  local built expected
-  if ! built="$(docker image inspect "$local_image" --format '{{ index .Config.Labels "io.njord.source.digest" }}' 2>/dev/null)"; then
-    echo "Image $local_image is missing. Run ./scripts/njord pull (published image) or ./scripts/njord build." >&2
+  local kind="${1:-source}" built expected full
+  pin_image
+  built="$(docker image inspect "$local_image" --format "{{ index .Config.Labels \"io.njord.${kind}.digest\" }}")"
+  expected="$(python3 scripts/build_metadata.py --field "${kind}_digest")"
+  full="$(docker image inspect "$local_image" --format '{{ index .Config.Labels "io.njord.source.digest" }}')"
+  if [[ ! "$full" =~ ^[0-9a-f]{64}$ ]]; then
+    echo 'Image full source digest is missing or malformed; rebuild.' >&2
     return 1
   fi
-  expected="$(python3 scripts/build_metadata.py --field source_digest)"
-  if [ "$built" = "$expected" ]; then
-    echo "Image $local_image matches this checkout"
-    return 0
-  fi
-  echo "Image $local_image was built from different sources than this checkout" >&2
-  echo "  image digest: ${built:-none}" >&2
-  echo "  checkout:     $expected" >&2
-  echo "Run ./scripts/njord pull for a pushed commit, or ./scripts/njord build after local changes." >&2
-  if [ "${NJORD_STRICT_IMAGE:-0}" = 1 ]; then
+  if [ "$built" != "$expected" ]; then
+    echo "Image $local_image has a missing or mismatched $kind digest" >&2
+    echo "  image: ${built:-none}; checkout: $expected" >&2
+    echo 'Run ./scripts/njord build after source/model changes.' >&2
     return 1
   fi
-  return 0
+  echo "Image $local_image matches this checkout ($kind)"
 }
 
 # Pin the immutable image ID, create a unique run ID and a fresh output
 # directory. A directory that already holds a finished run is never reused.
 prepare_run() {
-  check_image
-  export NJORD_IMAGE="$(docker image inspect "$local_image" --format '{{.Id}}')"
-  export IMAGE_ID="$NJORD_IMAGE"
+  check_image executable
   export RUN_ID="$(python3 -c 'import uuid; print(uuid.uuid4().hex)')"
   export OUTPUT_HOST="${OUTPUT_HOST:-$PWD/outputs/$1-$(date -u +%Y%m%dT%H%M%S)}"
   if [ -e "$OUTPUT_HOST/run_ready.json" ]; then
@@ -142,11 +154,12 @@ case "$action" in
     source_digest="$(python3 scripts/build_metadata.py --field source_digest)"
     docker compose build \
       --build-arg "NJORD_IMAGE_SOURCE_COMMIT=$RUNNER_GIT_COMMIT" \
-      --build-arg "NJORD_IMAGE_SOURCE_DIGEST=$source_digest" "$@"
+      --build-arg "NJORD_IMAGE_SOURCE_DIGEST=$source_digest" \
+      --build-arg "NJORD_IMAGE_EXECUTABLE_DIGEST=$(python3 scripts/build_metadata.py --field executable_digest)" "$@"
     ;;
-  check-image) NJORD_STRICT_IMAGE=1 check_image ;;
-  test)
-    check_image
+  check-image) check_image ;;
+  test|runtime-test)
+    if [ "$action" = runtime-test ]; then check_image executable; else check_image; fi
     mkdir -p outputs/demo
     docker compose run --rm tests "$@"
     ;;
@@ -176,6 +189,8 @@ case "$action" in
     if [ "$action" = simulator ]; then
       docker compose up simulator "$@"
     elif [ "$action" = lab ]; then
+      # Free driving: the guard needs no race-active signal from an evaluator.
+      export RUN_MODE=free
       # Interactive inspection uses short-lived compose run containers. Their
       # exit must not tear down the ongoing sensor session.
       docker compose up simulator autonomy "$@"
@@ -194,7 +209,8 @@ case "$action" in
     python3 scripts/make_film_gif.py "$OUTPUT_HOST/film" "$@"
     ;;
   benchmark) exec python3 scripts/benchmark.py "$@" ;;
-  smoke) docker compose run --rm autonomy python3 /opt/njord/validation/check_runtime.py "$@" ;;
+  campaign) exec python3 scripts/dynamics_campaign.py "$@" ;;
+  smoke) check_image executable; docker compose run --rm autonomy python3 /opt/njord/validation/check_runtime.py "$@" ;;
   doctor)
     docker version
     docker compose version

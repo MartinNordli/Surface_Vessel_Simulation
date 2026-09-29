@@ -8,16 +8,16 @@ Truth mode is recorded in autonomy_config.json and run_metrics.json; results
 from it say nothing about estimator performance.
 
 Subscribes:
-    ``/wamv/ground_truth/odometry`` (``nav_msgs/Odometry``, sensor QoS):
-        Gazebo odometry of ``wamv/base_link`` in ``map``; the twist is in the
+    ``/sim/ground_truth/odometry`` (``nav_msgs/Odometry``, sensor QoS):
+        Gazebo odometry of ``base_link`` in ``map``; the twist is in the
         body frame.
 
 Publishes:
     ``/njord/odometry`` (``nav_msgs/Odometry``): the same message, unchanged:
         same header stamp (simulation time of the pose), frames, pose, twist
         and covariance. It is never re-stamped.
-    TF ``odom`` -> ``wamv/base_link`` from each relayed pose, and a static
-        identity ``map`` -> ``odom``, so ``map`` -> ``wamv/base_link`` is the
+    TF ``odom`` -> ``base_link`` from each relayed pose, and a static
+        identity ``map`` -> ``odom``, so ``map`` -> ``base_link`` is the
         ground truth pose (the EKFs, which own these transforms in estimate
         mode, are not running).
 
@@ -34,6 +34,7 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from tf2_ros import StaticTransformBroadcaster, TransformBroadcaster
 
+from njord_sim.constants import BASE_FRAME, GROUND_TRUTH_TOPIC
 from njord_sim.geometry import valid_odometry
 
 
@@ -43,8 +44,8 @@ class TruthRelay(Node):
     def __init__(self):
         super().__init__('truth_relay')
         self.declare_parameters('', [
-            ('input_topic', '/wamv/ground_truth/odometry'), ('output_topic', '/njord/odometry'),
-            ('map_frame', 'map'), ('odom_frame', 'odom'), ('base_frame', 'wamv/base_link'),
+            ('input_topic', GROUND_TRUTH_TOPIC), ('output_topic', '/njord/odometry'),
+            ('map_frame', 'map'), ('odom_frame', 'odom'), ('base_frame', BASE_FRAME),
         ])
         self.p = lambda name: self.get_parameter(name).value
         self.pub = self.create_publisher(Odometry, self.p('output_topic'), 10)

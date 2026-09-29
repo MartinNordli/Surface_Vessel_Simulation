@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Run paired, isolated Docker races and report completion and time evidence.
 
-Defaults: 10 seeds x 2 environments x 2 profiles (40 races), one job at a time.
+Defaults: 10 seeds x 2 environments x every speed profile in algorithms.yaml
+(40 races with the shipped fast and conservative), one job at a time.
 Use --jobs 4 to run four races concurrently. Each race uses a
 fresh Compose project, Gazebo partition, ROS domain and output directory.
 COMPOSE_FILE supports additional platform overlays, e.g. compose.wsl.yaml.
@@ -47,7 +48,44 @@ import subprocess
 import sys
 import time
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[1]
+
+
+# Steady seconds a race gets beyond the evaluator's budget, for image startup,
+# the simulator handoff and teardown.
+STARTUP_ALLOWANCE_S = 300.0
+
+
+def default_wall_timeout(environment):
+    """Per-race steady budget (s): the evaluator's budget plus STARTUP_ALLOWANCE_S.
+
+    The benchmark must never cut a race the evaluator would still score. The
+    course comes from SCENARIO (a /opt/njord/scenarios/ path maps to the
+    checkout's scenarios/) and the target factor from REAL_TIME_FACTOR.
+    """
+    sys.path.insert(0, str(ROOT / "njord_sim"))
+    from njord_sim.scenario_core import wall_budget_s
+    scenario = Path(environment.get("SCENARIO") or "/opt/njord/scenarios/reference.yaml")
+    host = ROOT / "scenarios" / scenario.name
+    timeout_s = yaml.safe_load(host.read_text())["timeout_s"] if host.is_file() else 360.0
+    return wall_budget_s(600.0, timeout_s, float(environment.get("REAL_TIME_FACTOR") or 1.0)) + STARTUP_ALLOWANCE_S
+
+
+def speed_profiles(environment):
+    """PROFILE names in the algorithms file the races read, or None if it is not on the host.
+
+    Races read ALGORITHMS_CONFIG (default /config/algorithms.yaml) inside the
+    container, where /config is the host's CONFIG_HOST (default
+    njord_sim/config). A file elsewhere in the container cannot be checked here;
+    the simulator still rejects an unknown profile before Gazebo starts.
+    """
+    container = environment.get("ALGORITHMS_CONFIG") or "/config/algorithms.yaml"
+    if not container.startswith("/config/"):
+        return None
+    path = ROOT / environment.get("CONFIG_HOST", "njord_sim/config") / container.removeprefix("/config/")
+    return sorted(yaml.safe_load(path.read_text())["speed_profiles_mps"])
 
 
 class DomainUnavailable(RuntimeError):
@@ -193,7 +231,11 @@ def summarize(runs):
             "fast_improves_median_without_failures": bool(paired) and len(safe_pairs) == len(paired)
             and statistics.median(fast) < statistics.median(conservative),
         }
+    sources = sorted({r.get("state_source", "unknown") for r in runs})
     return {"groups": summary, "comparisons": comparisons,
+            "state_source": sources[0] if len(sources) == 1 else "mixed",
+            "estimator_validation_passed": sources == ["estimate"] and bool(runs) and all(safe_run(r) for r in runs),
+            "truth_course_validation_passed": sources == ["truth"] and bool(runs) and all(safe_run(r) for r in runs),
             "all_runs_verified": bool(runs) and all(safe_run(r) for r in runs)}
 
 
@@ -203,6 +245,16 @@ def command_output(args, env=None):
     Raises subprocess.CalledProcessError on a nonzero exit.
     """
     return subprocess.check_output(args, cwd=ROOT, env=env, text=True, stderr=subprocess.STDOUT).strip()
+
+
+def default_compose_files(environment):
+    """Apply the same renderer overlay as scripts/njord for direct entrypoints."""
+    paths = [ROOT / 'compose.yaml']
+    if environment.get('NJORD_CPU') == '1':
+        paths.append(ROOT / 'compose.cpu.yaml')
+    elif 'microsoft' in Path('/proc/sys/kernel/osrelease').read_text().lower():
+        paths.append(ROOT / 'compose.wsl.yaml')
+    return ':'.join(map(str, paths))
 
 
 def pin_image(environment):
@@ -228,6 +280,9 @@ def pin_image(environment):
     inspection = json.loads(command_output(['docker', 'image', 'inspect', images.pop()], environment))[0]
     image_id = inspection['Id']
     labels = inspection.get('Config', {}).get('Labels') or {}
+    sys.path.insert(0, str(ROOT / "scripts"))
+    from build_metadata import verify_executable
+    verify_executable(labels, ROOT)
     environment['NJORD_IMAGE'] = image_id
     environment['IMAGE_ID'] = image_id
     # Re-resolve with the pinned ID to prove every service now uses it.
@@ -236,7 +291,8 @@ def pin_image(environment):
     return {'image_identity': image_id,
             'image_source_commit': labels.get('org.opencontainers.image.revision', 'unknown')
             if 'io.njord.source.digest' in labels else 'unknown',
-            'image_source_digest': labels.get('io.njord.source.digest', 'unknown')}
+            'image_source_digest': labels.get('io.njord.source.digest', 'unknown'),
+            'image_executable_digest': labels['io.njord.executable.digest']}
 
 
 def run_one(index, item, total, output, base_env, wall_timeout, domain_id, cancelled):
@@ -340,6 +396,7 @@ def run_one(index, item, total, output, base_env, wall_timeout, domain_id, cance
         # No usable evaluator output: record an explicitly unsafe placeholder.
         metrics = {"status": reason or "missing_metrics", "collision": None,
                    "contact_status": "unavailable", "geometric_overlap": None}
+    metrics.setdefault("state_source", base_env.get("STATE_SOURCE", "estimate"))
     metrics.update({"label": label, "environment": environment, "seed": seed, "profile": profile,
                     "runner_git_commit": base_env.get("RUNNER_GIT_COMMIT", "unknown"),
                     "image_identity": base_env.get("IMAGE_ID", "unknown"),
@@ -352,14 +409,25 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--seeds", type=int, nargs="+", default=list(range(1, 11)))
     parser.add_argument("--environments", choices=["calm", "moderate"], nargs="+", default=["calm", "moderate"])
-    parser.add_argument("--profiles", choices=["conservative", "fast"], nargs="+", default=["conservative", "fast"])
+    parser.add_argument("--profiles", nargs="+",
+                        help="speed_profiles_mps names from algorithms.yaml (default: all of them)")
     # Per-race steady wall-clock limit in seconds (the course has its own
     # simulation-time timeout inside the evaluator).
-    parser.add_argument("--wall-timeout", type=float, default=600)
+    parser.add_argument("--wall-timeout", type=float,
+                        help="per-race steady budget in s (default: evaluator budget + 300 s)")
     parser.add_argument("--jobs", type=int, default=1, help="Concurrent races (1-100); each holds a distinct ROS domain")
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
+    if args.wall_timeout is None:
+        args.wall_timeout = default_wall_timeout(os.environ)
+    known_profiles = speed_profiles(os.environ)
+    if args.profiles is None:
+        if known_profiles is None:
+            parser.error("--profiles is required when ALGORITHMS_CONFIG is not under /config/")
+        args.profiles = known_profiles
+    elif known_profiles is not None and not set(args.profiles) <= set(known_profiles):
+        parser.error(f"unknown profiles; algorithms.yaml defines {known_profiles}")
     if any(seed <= 0 for seed in args.seeds) or args.wall_timeout <= 0:
         parser.error("seeds and timeout must be positive")
     if len(set(args.seeds)) != len(args.seeds):
@@ -400,7 +468,7 @@ def run_benchmark(args, matrix, output, stamp, leased_domains):
     # exist_ok=False: never mix results into an earlier benchmark directory.
     output.mkdir(parents=True, exist_ok=False)
     base_env = os.environ.copy()
-    base_env.setdefault("COMPOSE_FILE", str(ROOT / "compose.yaml"))
+    base_env.setdefault("COMPOSE_FILE", default_compose_files(base_env))
     base_env["RUNNER_GIT_COMMIT"] = command_output(["git", "rev-parse", "HEAD"])
     image_metadata = pin_image(base_env)
     # Provenance: which code, image, matrix and domains produced these results.

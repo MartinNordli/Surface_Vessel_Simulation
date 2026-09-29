@@ -42,12 +42,14 @@ class TeamRunnerTests(unittest.TestCase):
         original = self.output / 'requested.yaml'
         payload = b'guidance:\n  ros__parameters:\n    kp_surge: 125.0\n'
         original.write_bytes(payload)
+        (self.output / 'source_config').mkdir()
+        (self.output / 'source_config/ros_params.yaml').write_bytes(payload)
         command = runner.prepare(self.output, 'run-1', {
             'ROS_PARAMS_FILE': str(original), 'CONTROLLER': 'external', 'PERCEPTION': 'external',
             'PROFILE': 'conservative', 'SEED': '9', 'IMAGE_ID': 'sha256:test',
             'NJORD_IMAGE_SOURCE_COMMIT': 'source-commit', 'RUNNER_GIT_COMMIT': 'runner-commit',
         })
-        snapshot = self.output / 'ros_params.yaml'
+        snapshot = self.output / 'source_config/ros_params.yaml'
         self.assertEqual(snapshot.read_bytes(), payload)
         original.write_text('changed after run preparation')
         self.assertEqual(snapshot.read_bytes(), payload)
@@ -67,6 +69,8 @@ class TeamRunnerTests(unittest.TestCase):
     def test_cli_override_is_snapshotted_and_recorded_as_effective_setting(self):
         params = self.output / 'cli.yaml'
         params.write_text('/**:\n  ros__parameters:\n    use_sim_time: true\n')
+        (self.output / 'source_config').mkdir()
+        (self.output / 'source_config/ros_params.yaml').write_bytes(params.read_bytes())
         extra = ['perception:=external', 'profile:=conservative', 'seed:=17', f'params_file:={params}']
         command = runner.prepare(self.output, 'run-1', {'ROS_PARAMS_FILE': '/missing/env.yaml'}, extra)
         metadata = self.metadata()
@@ -74,7 +78,7 @@ class TeamRunnerTests(unittest.TestCase):
         self.assertEqual(metadata['perception'], 'external')
         self.assertEqual(metadata['profile'], 'conservative')
         self.assertEqual(metadata['seed'], 17)
-        self.assertEqual(command[-2], f'params_file:={self.output / "ros_params.yaml"}')
+        self.assertEqual(command[-2], f'params_file:={self.output / "source_config/ros_params.yaml"}')
 
     def test_no_requested_params_omits_malformed_empty_launch_argument(self):
         command = runner.prepare(self.output, 'run-1', {})
@@ -89,7 +93,7 @@ class TeamRunnerTests(unittest.TestCase):
         self.assertFalse((self.output / 'autonomy_config.json').exists())
 
     def test_missing_requested_params_fails_without_provenance(self):
-        with self.assertRaises(FileNotFoundError):
+        with self.assertRaisesRegex(ValueError, 'freeze'):
             runner.prepare(self.output, 'run-1', {'ROS_PARAMS_FILE': '/missing/team.yaml'})
         self.assertFalse((self.output / 'autonomy_config.json').exists())
 
@@ -103,10 +107,29 @@ class TeamRunnerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'state_source'):
             runner.prepare(self.output, 'run-1', {'STATE_SOURCE': 'perfect'})
 
+    def test_run_mode_defaults_to_race_and_free_is_recorded(self):
+        command = runner.prepare(self.output, 'run-1', {})
+        self.assertIn('run_mode:=race', command)
+        command = runner.prepare(self.output, 'run-1', {'RUN_MODE': 'free'})
+        self.assertIn('run_mode:=free', command)
+        self.assertEqual(self.metadata()['run_mode'], 'free')
+        with self.assertRaisesRegex(ValueError, 'run_mode'):
+            runner.prepare(self.output, 'run-1', {'RUN_MODE': 'practice'})
+
     def test_invalid_mode_fails_without_provenance(self):
         with self.assertRaisesRegex(ValueError, 'controller'):
             runner.prepare(self.output, 'run-1', {'CONTROLLER': 'typo'})
         self.assertFalse((self.output / 'autonomy_config.json').exists())
+
+    def test_profile_names_come_from_algorithms_or_the_simulator_handoff(self):
+        with self.assertRaisesRegex(ValueError, 'profile'):
+            runner.prepare(self.output, 'run-1', {'PROFILE': 'typo'})
+        self.assertFalse((self.output / 'autonomy_config.json').exists())
+        # A profile the simulator resolved from a team's algorithms.yaml is
+        # accepted without a second list of names on the autonomy side.
+        (self.output / 'public_parameters.json').write_text(json.dumps({'_profile': 'survey'}))
+        runner.prepare(self.output, 'run-1', {'PROFILE': 'survey'})
+        self.assertEqual(self.metadata()['profile'], 'survey')
 
     def test_failed_handoff_never_starts_or_writes_team_configuration(self):
         with patch.object(runner, 'wait_ready', side_effect=TimeoutError('wrong run')) as wait:

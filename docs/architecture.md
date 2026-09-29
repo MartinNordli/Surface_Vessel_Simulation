@@ -45,8 +45,8 @@ controller only advances into an observed-free corridor.
    `autonomy_config.json` and starts `launch/dstar_demo.launch.py` with the
    public parameters.
 4. **evaluator** (`scripts/run_evaluator.py` → `evaluator_node.py`) waits for
-   the same handoff, starts the race once navigation, mission, planner and
-   contact monitoring are healthy, scores it against ground truth and writes
+   the same handoff, starts the race once the required heartbeats and contact
+   monitoring are healthy, scores it against ground truth and writes
    `run_metrics.json`. Its exit code (0 = completed) ends the run.
 
 ## Code map
@@ -61,7 +61,7 @@ them to topics, parameters and timers.
 | | `constants.py` | Fixed platform constants (world origin, command timeout, WAM-V geometry) |
 | | `defaults.py` | Fallback node parameters, read from the configuration files |
 | Model and world | `vessel.py` | WAM-V model from the VRX xacro, sensor settings and bridges |
-| | `njord_model.py`, `mesh_geometry.py`, `physics_core.py` | Njord model generation, convex mesh import, reference force calculations |
+| | `njord_model.py`, `mesh_geometry.py`, `physics_core.py` | Njord model generation, convex mesh import, Python mirror of the plugin force math (`njord/Hydrostatics.hh`, `njord/Loads.hh`) |
 | | `scenario.py` | World SDF: buoys, obstacles, water, wind and waves |
 | | `run_manifest.py` | Atomic, checksummed handoff between the services |
 | Scoring | `scenario_core.py`, `evaluator_node.py` | Gate crossing, clearance and race status from ground truth |
@@ -70,13 +70,13 @@ them to topics, parameters and timers.
 | Perception | `perception_core.py`, `perception_node.py` | Colour blobs + lidar depth → buoy tracks |
 | Mapping | `mapping_core.py`, `mapper_node.py` | Ray-traced occupancy grid with aging and inflation |
 | Planning | `dstar_lite.py`, `planner_core.py`, `planner_node.py` | Incremental D* Lite on the occupancy grid |
-| Mission | `mission_node.py` | Ordered red-left/green-right gate sequence → goals |
+| Mission | `mission_core.py`, `mission_node.py` | Ordered red-left/green-right gate sequence → goals, with search and retry |
 | Control | `control_core.py`, `guidance_node.py` | Line-of-sight tracking, speed limits, thrust allocation |
 | Safety | `command_guard_node.py` | Single actuator authority; zero thrust on stale inputs |
 | Shared | `geometry.py` | Rigid transforms and timestamp helpers |
 
 Gazebo plugins in `njord_gz_plugins/`: `ActuatorWatchdog` (WAM-V thrust with a
-steady-time timeout), `NjordPhysics` (Njord hydrostatics, wind and thrusters)
+simulation-time timeout and a steady-time liveness limit), `NjordPhysics` (Njord hydrostatics, wind and thrusters)
 and `ContactMonitor` (contact heartbeat so silence never means "no contact").
 
 ## Configuration
@@ -98,11 +98,22 @@ per vessel in its vessel file.
 The mission initializes its first search from the estimated heading. A gate
 leaving the camera field of view may be remembered for a limited time inside a
 bounded approach/crossing corridor; fresh camera frames, odometry and
-observed-free lidar guidance are still required.
+observed-free lidar guidance are still required. With no gate in view it
+searches with goals ahead along the course, and a gate passed outside its
+buoys is retried via a point beside the passed buoy, so the route never
+crosses a gate backwards (tests use the scorer's own crossing rule). Search
+and retry only make the reference autonomy a more useful baseline; the scorer
+is unchanged.
 
-The command guard requires current planner, mission, navigation and evaluator
-heartbeats, and commands expire after `COMMAND_TIMEOUT_S` of steady time. A
-separate Gazebo plugin removes thrust if the ROS guard or bridge disappears.
+The command guard requires a current navigation heartbeat, planner and mission
+heartbeats while those reference nodes run, and in a race (`RUN_MODE=race`)
+the evaluator's race-active signal (`configuration.guard_requirements`). Commands and heartbeats expire after `COMMAND_TIMEOUT_S` (0.5 s) of
+simulation time, so a command acts on the boat for the same simulated time at
+any real-time factor; `PROCESS_LIVENESS_S` (2 s) of steady time only catches a
+stopped `/clock` or a dead process. The guard forwards each complete set of
+thruster commands as it arrives, without a rate of its own. A separate Gazebo
+plugin applies the same two limits and removes thrust if the ROS guard or
+bridge disappears.
 Zero thrust leaves momentum and wind drift; it is not an instant stop or a
 collision guarantee.
 

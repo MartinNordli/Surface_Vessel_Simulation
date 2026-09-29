@@ -18,7 +18,9 @@
 //   <wind_velocity>    constant world ENU wind velocity (m/s)
 //   <wind_area_x/y>    frontal / lateral reference areas (m^2)
 //   <wind_length>      yaw-moment reference length (m)
-//   <timeout_s>        steady wall-clock command lifetime (s)
+//   <timeout_s>        command lifetime in simulation time (s)
+//   <liveness_timeout_s> steady wall-clock limit that catches a dead command
+//                      publisher while simulation time is stalled (s)
 //   <buoyancy_volume>  repeated; <vertex>x y z</vertex> (body frame, m) and
 //                      <triangle>i j k</triangle> (zero-based, outward winding)
 //   <thruster name>    two or more, in command order: <position>, <axis>
@@ -34,13 +36,16 @@
 //              (N), then 1 when the command was live, else 0
 //
 // Failure behavior: invalid configuration throws in Configure. A stale
-// (older than timeout_s in steady time) command, a non-finite value or a
+// command (received more than timeout_s of simulation time or
+// liveness_timeout_s of steady time ago), a non-finite value or a
 // wrong number of values sets every target to zero; the applied force then decays with the thruster time constant and
 // the hull keeps its momentum. Simulation time going backwards resets the
 // thruster state and invalidates the last command.
 #include "njord/Hydrostatics.hh"
+#include "njord/Loads.hh"
 #include <chrono>
 #include <gz/msgs/float_v.pb.h>
+#include <gz/msgs/wrench.pb.h>
 #include <gz/plugin/Register.hh>
 #include <gz/sim/Link.hh>
 #include <gz/sim/Model.hh>
@@ -61,34 +66,38 @@ class Physics final : public gz::sim::System,
     V position, axis;
     double forward, reverse, tau, force{};
   };
-  // One row of the wind table; angle (deg) is the direction the relative air
-  // flow moves toward in the body frame, counter-clockwise from forward.
-  struct Coefficient {
-    double angle, cx, cy, cn;
-  };
   gz::sim::Link link;
   std::vector<hydro::Mesh> meshes;
   V com, wind;
-  double density{}, level{}, areaX{}, areaY{}, length{}, timeout{};
+  std::string bodyFrame;
+  double density{}, level{}, areaX{}, areaY{}, length{}, timeout{}, liveness{};
   std::vector<Thruster> motors;
-  std::vector<Coefficient> table;
+  std::vector<loads::WindRow> table;  // sorted by angle
   gz::transport::Node node;
-  gz::transport::Node::Publisher telemetry;
+  gz::transport::Node::Publisher telemetry, wrenchTelemetry;
   std::chrono::steady_clock::duration lastTelemetry{};  // simulation time
   // Guards the command state below, which the transport callback thread
   // writes and the simulation thread reads.
   std::mutex mutex;
   Clock::time_point received{};  // steady time of the last command
+  // Simulation time of the first step after the last command arrived; the
+  // transport thread only flags the arrival (stampPending).
+  std::chrono::steady_clock::duration receivedSim{};
+  bool stampPending{};
   std::vector<double> commands;  // requested force per thruster (N)
   bool valid{};                  // one finite command per thruster
+
+  // Conversions between gz::math and the header-only vector type.
+  static hydro::Vec Hv(const V &v) { return {v.X(), v.Y(), v.Z()}; }
+  static V Gv(const hydro::Vec &v) { return V(v.x, v.y, v.z); }
 
 public:
   void Configure(const gz::sim::Entity &entity,
                  const std::shared_ptr<const sdf::Element> &s,
                  gz::sim::EntityComponentManager &ecm,
                  gz::sim::EventManager &) override {
-    link = gz::sim::Link(gz::sim::Model(entity).LinkByName(
-        ecm, s->Get<std::string>("link_name")));
+    bodyFrame = s->Get<std::string>("link_name");
+    link = gz::sim::Link(gz::sim::Model(entity).LinkByName(ecm, bodyFrame));
     if (!link.Valid(ecm))
       throw std::invalid_argument("Njord physics link missing");
     link.EnableVelocityChecks(ecm);
@@ -97,6 +106,12 @@ public:
     density = s->Get<double>("water_density");
     level = s->Get<double>("water_level");
     timeout = s->Get<double>("timeout_s");
+    liveness = s->Get<double>("liveness_timeout_s");
+    if (!s->HasElement("timeout_s") || !s->HasElement("liveness_timeout_s") ||
+        !(timeout > 0) || !(liveness > 0) || !std::isfinite(timeout) ||
+        !std::isfinite(liveness))
+      throw std::invalid_argument(
+          "Njord physics timeout_s and liveness_timeout_s must be positive");
     // Clone because Element iteration is mutable in sdformat's API.
     auto mutableS = s->Clone();
     for (auto volume = mutableS->GetElement("buoyancy_volume"); volume;
@@ -170,6 +185,7 @@ public:
       throw std::invalid_argument("wind table requires two angles");
     node.Subscribe("/njord/actuator_forces", &Physics::Command, this);
     telemetry = node.Advertise<gz::msgs::Float_V>("/njord/actuator_applied");
+    wrenchTelemetry = node.Advertise<gz::msgs::Wrench>("/njord/actuator_wrench");
   }
   // Transport callback: store the raw forces; limits are applied per step.
   // A command must hold exactly one finite value per thruster.
@@ -181,6 +197,7 @@ public:
       valid = valid && std::isfinite(commands[i]);
     }
     received = Clock::now();
+    stampPending = true;
   }
   void PreUpdate(const gz::sim::UpdateInfo &info,
                  gz::sim::EntityComponentManager &ecm) override {
@@ -220,12 +237,21 @@ public:
     // Compute at COM, then transport the wrench to the link origin below.
     {
       std::lock_guard<std::mutex> lock(mutex);
-      // Command freshness uses steady wall time, not simulation time.
+      // Freshness in simulation time bounds how long a command acts on the
+      // boat at any real-time factor; steady time only catches a dead
+      // publisher while simulation time is stalled.
+      if (stampPending) {
+        receivedSim = info.simTime;
+        stampPending = false;
+      }
       bool live =
           valid &&
+          std::chrono::duration<double>(info.simTime - receivedSim).count() <=
+              timeout &&
           std::chrono::duration<double>(Clock::now() - received).count() <=
-              timeout;
+              liveness;
       std::vector<double> targets(motors.size(), 0.0);
+      V actuatorForce, actuatorMoment;
       for (unsigned i = 0; i < motors.size(); i++) {
         auto &t = motors[i];
         double target =
@@ -236,9 +262,12 @@ public:
             std::max(0., std::chrono::duration<double>(info.dt).count()),
             t.tau);
         // Thrust acts along the body-fixed axis at the thruster position.
-        auto f = rot.RotateVector(t.axis * t.force);
-        force += f;
-        torque += rot.RotateVector(t.position - com).Cross(f);
+        auto w = loads::ThrusterWrench(t.force, Hv(t.position), Hv(t.axis),
+                                       Hv(com));
+        actuatorForce += Gv(w.force);
+        actuatorMoment += Gv(w.torque);
+        force += rot.RotateVector(Gv(w.force));
+        torque += rot.RotateVector(Gv(w.torque));
       }
       // Evaluation-only force telemetry, never an autonomy input. The state
       // includes this step's response integration, hence its end-step stamp.
@@ -255,6 +284,18 @@ public:
           msg.add_data(target);
         msg.add_data(live ? 1 : 0);
         telemetry.Publish(msg);
+        gz::msgs::Wrench wrench;
+        *wrench.mutable_header() = msg.header();
+        auto frame = wrench.mutable_header()->add_data();
+        frame->set_key("frame_id");
+        frame->add_value(bodyFrame);
+        wrench.mutable_force()->set_x(actuatorForce.X());
+        wrench.mutable_force()->set_y(actuatorForce.Y());
+        wrench.mutable_force()->set_z(actuatorForce.Z());
+        wrench.mutable_torque()->set_x(actuatorMoment.X());
+        wrench.mutable_torque()->set_y(actuatorMoment.Y());
+        wrench.mutable_torque()->set_z(actuatorMoment.Z());
+        wrenchTelemetry.Publish(wrench);
         lastTelemetry = stamp;
       }
     }
@@ -263,32 +304,10 @@ public:
     auto velocity = link.WorldLinearVelocity(ecm, com);
     if (velocity) {
       auto air = rot.RotateVectorReverse(wind - *velocity);
-      // Direction the air moves toward, degrees in [0, 360) from forward.
-      double angle = std::atan2(air.Y(), air.X()) * 180 / M_PI;
-      angle = std::fmod(angle + 360., 360.);
-      // Periodic linear interpolation between neighbouring table rows a and
-      // b; the table wraps from its last row to its first across 360 deg.
-      // Same math as physics_core.wind_coefficients.
-      auto upper = std::upper_bound(
-          table.begin(), table.end(), angle,
-          [](double a, const Coefficient &b) { return a < b.angle; });
-      auto b = upper == table.end() ? table.front() : *upper;
-      auto a = upper == table.begin() ? table.back() : *(upper - 1);
-      double aa = a.angle, bb = b.angle;
-      if (bb <= aa)
-        bb += 360;
-      if (angle < aa)
-        angle += 360;
-      double f = (angle - aa) / (bb - aa);
-      // Dynamic pressure q = 0.5 * rho_air * |v_air,horizontal|^2 with
-      // rho_air = 1.225 kg/m^3. Body-frame loads: X = q Ax cx, Y = q Ay cy,
-      // yaw moment N = q Ay L cn.
-      double pressure = .5 * 1.225 * (air.X() * air.X() + air.Y() * air.Y());
-      force +=
-          rot.RotateVector(V(pressure * areaX * (a.cx + f * (b.cx - a.cx)),
-                             pressure * areaY * (a.cy + f * (b.cy - a.cy)), 0));
-      torque += rot.RotateVector(
-          V(0, 0, pressure * areaY * length * (a.cn + f * (b.cn - a.cn))));
+      // Body-frame {X, Y, N}; same math as physics_core.wind_load.
+      auto load = loads::WindLoad(Hv(air), areaX, areaY, length, table);
+      force += rot.RotateVector(V(load[0], load[1], 0));
+      torque += rot.RotateVector(V(0, 0, load[2]));
     }
     // Apply the summed wrench with its point of application at the COM
     // (offset `com` in the link frame).

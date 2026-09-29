@@ -105,7 +105,7 @@ Leave out reference nodes and connect your own over ROS 2 (domain 42, `use_sim_t
 CONTROLLER=external ./scripts/njord demo slalom   # publish /thruster_<i>/command in newtons
 PERCEPTION=external ./scripts/njord demo slalom   # publish buoy detections
 MAPPING=external    ./scripts/njord demo slalom   # publish an occupancy grid
-AUTONOMY=external   ./scripts/njord lab slalom    # sensors only, no race
+AUTONOMY=external   ./scripts/njord lab slalom    # free driving, no race; your stack drives
 ```
 
 See the [team integration guide](docs/team-integration.md) for the full
@@ -115,6 +115,7 @@ walkthrough and [interfaces](docs/interfaces.md) for every topic and frame.
 
 | Guide | Contents |
 |---|---|
+| [How a run fits together](docs/run-concepts.md) | Start here: inputs, processes, the thrust path, the two clocks |
 | [Running](docs/running.md) | Commands, courses, rendering, WSL, recording and CI/CD |
 | [Configuration](docs/configuration.md) | Where every setting lives; vessel, scenario and algorithm files |
 | [Team integration](docs/team-integration.md) | Step-by-step for Control Systems and Perception/CV |

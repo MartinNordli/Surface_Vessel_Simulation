@@ -32,10 +32,10 @@ downloads it instead of compiling Gazebo and VRX:
 and tags it `njord-sim:local`; every other command uses that tag. Pull again after
 `git pull` or `git checkout`.
 
-Commands that use the image compare its baked-in source digest with the checkout
-and warn when they differ, for example when the image is older than the checkout
-or after local edits to files copied into the image. `./scripts/njord check-image`
-performs the same check and fails on a mismatch.
+Commands pin one immutable image ID and reject a missing or mismatched executable
+digest. Editable YAML under `njord_sim/config` may change without rebuilding.
+`./scripts/njord check-image`, `test` and CI additionally require the full source
+digest, including YAML. There is no stale-image validation bypass.
 
 An image exists only after the CI run for that commit has passed. For unpushed
 commits or local changes, build instead with `./scripts/njord build`. An uncached
@@ -53,7 +53,7 @@ services.
 | `selftest` | Starts simulator and autonomy, checks live cameras, lidar and navigation, then stops |
 | `demo [course]` | Headless race with simulator, autonomy and evaluator |
 | `gui [course]` | Same race with the Gazebo window and RViz |
-| `lab [course]` | Simulator, estimation and selected reference nodes, no evaluator |
+| `lab [course]` | Free driving (`RUN_MODE=free`): simulator, estimation and selected reference nodes, no evaluator; the boat drives without a race |
 | `benchmark [course]` | Seed × environment × profile matrix, e.g. `--jobs 2` or `--dry-run` |
 | `film [course]` | Headless race filmed by a chase camera, then a sped-up GIF (see [Filming](#filming)) |
 | `simulator` | Simulator service only |
@@ -83,8 +83,9 @@ Courses are the files in `scenarios/`:
   required to complete every run.
 - **`dynamics`**: open water for dynamics measurements, not a race.
 
-All support `SEED`, `ENVIRONMENT` (`calm`, `moderate`) and `PROFILE`
-(`conservative`, `fast`). An explicit course name overrides `SCENARIO` for that
+All support `SEED`, `ENVIRONMENT` (`calm`, `moderate`) and `PROFILE` (a
+`speed_profiles_mps` name in `algorithms.yaml`: `conservative` or `fast` as
+shipped). An explicit course name overrides `SCENARIO` for that
 invocation; without one, `SCENARIO` (a path inside the container) still works.
 Additional arguments follow the course name, for example
 `./scripts/njord demo slalom recorder`.

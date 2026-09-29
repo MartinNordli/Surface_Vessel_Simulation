@@ -14,7 +14,7 @@ class RunHandoffTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as output:
             publish_ready(output, 'new-run', {'gates': [{'red': [99, 7]}] * 4})
             metadata = wait_ready(output, 'new-run', timeout=0)
-            self.assertEqual(metadata, {'run_id': 'new-run', 'expected_gates': 4})
+            self.assertEqual(metadata, {'run_id': 'new-run', 'expected_gates': 4, 'seed': 1})
             self.assertFalse((Path(output)/'run_ready.json.tmp').exists())
 
     def test_previous_or_partial_run_does_not_authorize_start(self):

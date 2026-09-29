@@ -31,7 +31,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: python -m pip install numpy pyyaml opencv-python-headless
+      - run: python -m pip install numpy pyyaml opencv-python-headless ruff==0.16.9
+      - run: ruff check .  # errors and pyflakes only, see ruff.toml
       - run: python tests/test_dstar_lite.py
       - run: python -m unittest discover -s tests -p 'test_*.py'
 
@@ -65,6 +66,7 @@ jobs:
             echo "image=$image"
             echo "tags=$tags"
             echo "source_digest=$(python3 scripts/build_metadata.py --field source_digest)"
+            echo "executable_digest=$(python3 scripts/build_metadata.py --field executable_digest)"
           } >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-buildx-action@v3
@@ -85,6 +87,7 @@ jobs:
           build-args: |
             NJORD_IMAGE_SOURCE_COMMIT=${{ github.sha }}
             NJORD_IMAGE_SOURCE_DIGEST=${{ steps.meta.outputs.source_digest }}
+            NJORD_IMAGE_EXECUTABLE_DIGEST=${{ steps.meta.outputs.executable_digest }}
           labels: org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
           cache-from: type=registry,ref=${{ steps.meta.outputs.image }}:buildcache
           cache-to: ${{ env.PUBLISH == 'true' && format('type=registry,ref={0}:buildcache,mode=max', steps.meta.outputs.image) || '' }}
@@ -98,10 +101,16 @@ jobs:
       - name: CPU-rendered sensor and navigation selftest
         env:
           NJORD_CPU: '1'
-          NJORD_STRICT_IMAGE: '1'
           OUTPUT_HOST: ${{ runner.temp }}/selftest
           SMOKE_TIMEOUT_S: '600'
         run: ./scripts/njord selftest
+
+      - name: Two and four thruster actuator smoke
+        env:
+          NJORD_CPU: '1'
+        run: |
+          ./scripts/njord campaign --smoke --seed 1 --vessel njord_sim/config/vessels/njord_v1.yaml --output "${{ runner.temp }}/actuator-two"
+          ./scripts/njord campaign --smoke --seed 1 --vessel njord_sim/config/vessels/munin_v0.yaml --output "${{ runner.temp }}/actuator-four"
 
       # Same inputs as "Build image": the builder cache supplies every layer, so
       # the published image is the one tested above.
@@ -115,6 +124,7 @@ jobs:
           build-args: |
             NJORD_IMAGE_SOURCE_COMMIT=${{ github.sha }}
             NJORD_IMAGE_SOURCE_DIGEST=${{ steps.meta.outputs.source_digest }}
+            NJORD_IMAGE_EXECUTABLE_DIGEST=${{ steps.meta.outputs.executable_digest }}
           labels: org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
           cache-from: type=registry,ref=${{ steps.meta.outputs.image }}:buildcache
 

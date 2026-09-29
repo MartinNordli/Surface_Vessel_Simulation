@@ -28,8 +28,9 @@ import re
 
 import yaml
 
-from .constants import COMMAND_TIMEOUT_S, THRUSTER_COMMAND_TOPIC, WAMV_HULL, WAMV_THRUSTERS
+from .constants import COMMAND_TIMEOUT_S, PROCESS_LIVENESS_S, THRUSTER_COMMAND_TOPIC, WAMV_HULL, WAMV_THRUSTERS
 from .control_core import allocation_matrix, independent_rows
+from .mission_core import SEARCH_BEARINGS_DEG
 from .mesh_geometry import geometry_vertices, geometry_volume, load_obj, validate_disjoint_volumes
 from .scenario_core import validate_scenario
 
@@ -39,6 +40,7 @@ SENSOR_KEYS = {
     'camera_noise_stddev', 'lidar_range', 'lidar_samples', 'lidar_vertical_samples',
     'lidar_rate', 'lidar_noise_stddev', 'gps_rate', 'imu_rate', 'gps_horizontal_noise_m',
     'gps_vertical_noise_m', 'imu_orientation_noise_rad',
+    'imu_angular_velocity_noise_rad_s', 'imu_linear_acceleration_noise_m_s2',
 }
 # The WAM-V profile exposes the sensors plus its thrust limit (vessels/wamv.yaml).
 WAMV_SETTING_KEYS = SENSOR_KEYS | {'max_thrust_n'}
@@ -47,9 +49,16 @@ GUIDANCE_KEYS = {
     'control_hz', 'stale_after_s', 'braking_deceleration_mps2', 'reaction_time_s',
     'stopping_margin_m',
 }
+# Reference mission geometry, freshness, search and retry (algorithms.yaml ``mission``).
+MISSION_KEYS = {
+    'min_gate_width_m', 'max_gate_width_m', 'approach_m', 'exit_m', 'arrival_tolerance_m',
+    'detection_max_age_s', 'crossing_memory_s', 'crossing_entry_m', 'search_after_s',
+    'search_radius_m', 'search_goal_s', 'search_timeout_s', 'max_gate_retries', 'retry_clearance_m',
+}
 # Algorithm values that may legitimately be zero; everything else must be > 0.
 NONNEGATIVE_ALGORITHM_KEYS = {
     'kp_yaw', 'kd_yaw', 'kp_surge', 'reaction_time_s', 'stopping_margin_m', 'safety_margin_m',
+    'self_filter_margin_m', 'search_after_s', 'max_gate_retries',
 }
 ENVIRONMENT_KEYS = {
     'wind_speed_mps', 'wind_direction_to_deg_enu', 'wind_variance_gain', 'wave_gain',
@@ -57,6 +66,8 @@ ENVIRONMENT_KEYS = {
     'current_direction_to_deg_enu', 'water_density_kg_m3', 'water_level_m', 'physics_step_s',
 }
 DEFAULT_PROFILE = 'fast'
+# Fixed occupancy grid of the reference mapper, in algorithms.yaml ``mapping``.
+MAP_GRID_KEYS = {'grid_resolution_m', 'grid_size_m', 'grid_origin_m'}
 
 
 # --------------------------------------------------------------------------
@@ -120,14 +131,16 @@ def _read(path):
 def config_path(relative):
     """Locate a file under njord_sim/config, preferring the editable copy.
 
-    Search order: $NJORD_CONFIG_DIR (compose.yaml sets /config, the host's
-    njord_sim/config mounted read-only), the source tree, then the installed
-    package. Host edits therefore apply to the next run without a rebuild,
-    and a team CONFIG_HOST without the file falls back to the image's copy.
+    When NJORD_CONFIG_DIR is set, require the file there. Managed runs use
+    the frozen workspace defaults. Unmanaged host tools can use the source
+    tree or installed package when no configuration directory was specified.
     """
     candidates = []
     if os.environ.get('NJORD_CONFIG_DIR'):
-        candidates.append(Path(os.environ['NJORD_CONFIG_DIR']) / relative)
+        path = Path(os.environ['NJORD_CONFIG_DIR']) / relative
+        if not path.is_file():
+            raise ValueError(f'required mounted configuration is missing: {path}')
+        return path
     candidates.append(Path(__file__).resolve().parents[1] / 'config' / relative)
     for path in candidates:
         if path.exists():
@@ -148,7 +161,7 @@ def wamv_defaults_file():
 def wamv_profile_from_settings(settings):
     """Wrap complete flat WAM-V settings in the versioned vessel structure."""
     _keys(settings, WAMV_SETTING_KEYS, where='WAM-V settings')
-    return {'schema_version': 1, 'profile': 'wamv_reference', 'settings': copy.deepcopy(settings)}
+    return {'schema_version': 2, 'profile': 'wamv_reference', 'settings': copy.deepcopy(settings)}
 
 
 def _validate_sensors(settings):
@@ -354,17 +367,39 @@ def fully_actuated(vessel):
     return independent_rows(allocation_matrix(positions, [v for t in table for v in t['axis']])) == 3
 
 
+def convert_sensor_schema(vessel):
+    """Explicit upgrade: WAM-V 1->2, Njord 2->3; new noise is assumed.
+
+    Values reproduce prior nominal Gazebo IMU noise, with bias removed. They
+    are engineering defaults, never a claim of measured vessel calibration.
+    """
+    result = copy.deepcopy(vessel)
+    old = 2 if result.get('profile') == 'njord' else 1
+    if result.get('schema_version') != old:
+        raise ValueError('sensor conversion expects the previous vessel schema')
+    settings = result['sensors']['settings'] if old == 2 else result['settings']
+    for key, value in {'imu_angular_velocity_noise_rad_s': .009,
+                       'imu_linear_acceleration_noise_m_s2': .021}.items():
+        if key in settings:
+            raise ValueError(f'{key} requires the new vessel schema')
+        settings[key] = value
+    result['schema_version'] = old + 1
+    return result
+
+
 def validate_vessel(vessel, resource_base=None, resource_files=None):
     """Validate a versioned vessel (``wamv_reference`` or ``njord``) in place.
 
     ``resource_base`` resolves relative mesh paths; loaded mesh paths are
     appended to ``resource_files`` so the run manifest can checksum them.
-    WAM-V files are schema 1 and Njord files schema 2; a schema 1 Njord file
-    is converted by ``convert_legacy_vessel`` and the converted copy returned.
+    WAM-V files are schema 2 and Njord files schema 3. Previous schemas
+    are explicitly converted on copies, preserving the source files.
     """
     if vessel.get('profile') == 'njord' and vessel.get('schema_version') == 1:
         vessel = convert_legacy_vessel(vessel)
-    _version(vessel, 2 if vessel.get('profile') == 'njord' else 1)
+    if vessel.get('schema_version') == (2 if vessel.get('profile') == 'njord' else 1):
+        vessel = convert_sensor_schema(vessel)
+    _version(vessel, 3 if vessel.get('profile') == 'njord' else 2)
     if vessel.get('profile') == 'wamv_reference':
         _keys(vessel, {'schema_version', 'profile', 'settings'}, where='WAM-V vessel')
         _keys(vessel['settings'], WAMV_SETTING_KEYS, where='WAM-V settings')
@@ -503,11 +538,123 @@ def resolve_scenario(data, seed=None, environment=None):
 # Algorithms
 # --------------------------------------------------------------------------
 
-def _resolve_algorithms(algorithms, profile):
-    """Validate algorithms.yaml and select the speed ceiling for ``profile``."""
-    _version(algorithms)
-    _keys(algorithms, {'schema_version', 'speed_profiles_mps', 'guidance', 'planner', 'mapping'},
-          where='algorithms')
+def convert_algorithm_schema(algorithms):
+    """Upgrade an older algorithms file to schema 4, one version at a time.
+
+    1->2 introduces the assumed timing and filter tolerances. 2->3 makes the
+    occupancy grid explicit with the values the mapper used to build in:
+    0.5 m cells, a 160 m square, lower-left corner at (-40, -40) m. 3->4 adds
+    ``mission`` with the geometry the mission node used to build in and
+    search and retry disabled (no search, no retries), which is the previous
+    behaviour.
+    """
+    result = copy.deepcopy(algorithms)
+    if result.get('schema_version') == 1:
+        if 'navigation' in result or 'self_filter_margin_m' in result.get('mapping', {}):
+            raise ValueError('new timing/filter settings require algorithms schema 2')
+        result['schema_version'] = 2
+        result['mapping']['self_filter_margin_m'] = .02
+        result['navigation'] = dict(stale_after_s=.5, processing_margin_s=.1,
+                                    clock_stall_after_s=.5, sync_slop_s=.12)
+    if result.get('schema_version') == 2:
+        if MAP_GRID_KEYS & set(result.get('mapping', {})):
+            raise ValueError('occupancy grid settings require algorithms schema 3')
+        result['schema_version'] = 3
+        result['mapping'].update(grid_resolution_m=.5, grid_size_m=160., grid_origin_m=[-40., -40.])
+    if result.get('schema_version') == 3:
+        if 'mission' in result:
+            raise ValueError('mission settings require algorithms schema 4')
+        result['schema_version'] = 4
+        # search_after_s beyond any race and no retries reproduce schema 3.
+        result['mission'] = dict(min_gate_width_m=8., max_gate_width_m=30., approach_m=5., exit_m=6.,
+                                 arrival_tolerance_m=2., detection_max_age_s=2., crossing_memory_s=45.,
+                                 crossing_entry_m=15., search_after_s=1e9, search_radius_m=8.,
+                                 search_goal_s=10., search_timeout_s=60., max_gate_retries=0,
+                                 retry_clearance_m=6.)
+    _version(result, 4)
+    return result
+
+
+# RUN_MODE: 'race' scores a course and only allows thrust while the evaluator
+# reports the race active; 'free' runs without an evaluator (./scripts/njord lab).
+RUN_MODES = ('race', 'free')
+
+
+def guard_requirements(components, run_mode):
+    """What the command guard (and, in a race, the evaluator) requires before thrust.
+
+    ``components`` maps 'autonomy' to 'reference' or 'external'. Navigation
+    always runs, so its heartbeat is always required. Planner and mission
+    heartbeats are required only when the simulator starts those reference
+    nodes; an external stack only has to send fresh thruster commands and zero
+    them itself on bad input. The evaluator's run-active signal is required
+    only in a race. Returns {'required_status': [...], 'require_race_active': bool}.
+    """
+    if run_mode not in RUN_MODES:
+        raise ValueError(f'RUN_MODE must be one of {RUN_MODES}')
+    autonomy = components.get('autonomy', 'reference')
+    if autonomy not in ('reference', 'external'):
+        raise ValueError('autonomy must be reference or external')
+    status = ['navigation'] + (['planner', 'mission'] if autonomy == 'reference' else [])
+    return {'required_status': status, 'require_race_active': run_mode == 'race'}
+
+
+def inflation_m(hull, algorithms):
+    """Obstacle inflation (m): the hull's circumscribed radius plus the safety margin."""
+    return math.hypot(hull['length_m'], hull['beam_m']) / 2 + algorithms['mapping']['safety_margin_m']
+
+
+def speed_profile_names(algorithms_file):
+    """Sorted ``PROFILE`` names defined by ``speed_profiles_mps`` in an algorithms file."""
+    profiles = _read(algorithms_file).get('speed_profiles_mps')
+    if not isinstance(profiles, dict) or not profiles:
+        raise ValueError('speed_profiles_mps must map profile names to speeds')
+    return sorted(profiles)
+
+
+# Sections of algorithms.yaml a vessel may override (``vessel_overrides``).
+VESSEL_OVERRIDE_SECTIONS = ('guidance', 'mapping', 'mission')
+
+
+def vessel_key(vessel):
+    """Name that selects a vessel's ``vessel_overrides`` entry: 'wamv' or the vessel ``name``."""
+    return 'wamv' if vessel['profile'] == 'wamv_reference' else vessel['name']
+
+
+def _apply_vessel_overrides(algorithms, vessel_name):
+    """Merge the ``vessel_overrides`` entry for ``vessel_name`` into ``algorithms``.
+
+    Every entry is checked, applied or not: only VESSEL_OVERRIDE_SECTIONS and
+    keys that exist in the shared section are allowed, so a misspelled
+    setting cannot silently do nothing. The merged values are validated with
+    the shared rules afterwards. Returns the applied vessel name, or None.
+    """
+    overrides = algorithms.pop('vessel_overrides', None) or {}
+    if not isinstance(overrides, dict):
+        raise ValueError('vessel_overrides must map vessel names to sections')
+    for name, sections in overrides.items():
+        _keys(sections, (), VESSEL_OVERRIDE_SECTIONS, where=f'vessel_overrides.{name}')
+        for section, values in sections.items():
+            _keys(values, (), algorithms[section].keys(), where=f'vessel_overrides.{name}.{section}')
+    if vessel_name not in overrides:
+        return None
+    for section, values in overrides[vessel_name].items():
+        algorithms[section].update(copy.deepcopy(values))
+    return vessel_name
+
+
+def _resolve_algorithms(algorithms, profile, vessel_name='wamv'):
+    """Validate algorithms.yaml, apply the vessel's overrides and select ``profile``'s speed ceiling."""
+    algorithms = copy.deepcopy(algorithms)
+    if algorithms.get('schema_version') in (1, 2, 3):
+        algorithms = convert_algorithm_schema(algorithms)
+    _version(algorithms, 4)
+    _keys(algorithms, {'schema_version', 'speed_profiles_mps', 'guidance', 'planner', 'mapping', 'navigation',
+                       'mission'}, {'vessel_overrides'}, where='algorithms')
+    for section in VESSEL_OVERRIDE_SECTIONS:
+        if not isinstance(algorithms[section], dict):
+            raise ValueError(f'{section} must be a mapping')
+    applied = _apply_vessel_overrides(algorithms, vessel_name)
     profiles = algorithms['speed_profiles_mps']
     if not isinstance(profiles, dict) or not profiles:
         raise ValueError('speed_profiles_mps must map profile names to speeds')
@@ -517,11 +664,24 @@ def _resolve_algorithms(algorithms, profile):
         raise ValueError(f'unknown PROFILE {profile!r}; algorithms.yaml defines {sorted(profiles)}')
     _keys(algorithms['guidance'], GUIDANCE_KEYS, where='guidance')
     _keys(algorithms['planner'], {'stale_after_s', 'publish_hz'}, where='planner')
-    _keys(algorithms['mapping'], {'safety_margin_m'}, where='mapping')
-    for group in ('guidance', 'planner', 'mapping'):
+    _keys(algorithms['mapping'], {'safety_margin_m', 'self_filter_margin_m', *MAP_GRID_KEYS}, where='mapping')
+    # The grid corner may be negative; every other algorithm value is a scalar >= 0.
+    _vector(algorithms['mapping']['grid_origin_m'], 2, 'grid_origin_m')
+    _keys(algorithms['navigation'], {'stale_after_s', 'processing_margin_s', 'clock_stall_after_s', 'sync_slop_s'}, where='navigation')
+    _keys(algorithms['mission'], MISSION_KEYS, where='mission')
+    retries = algorithms['mission']['max_gate_retries']
+    if type(retries) is not int:
+        raise ValueError('max_gate_retries must be an integer')
+    if algorithms['mission']['min_gate_width_m'] > algorithms['mission']['max_gate_width_m']:
+        raise ValueError('min_gate_width_m must not exceed max_gate_width_m')
+    if algorithms['mission']['search_goal_s'] * len(SEARCH_BEARINGS_DEG) > algorithms['mission']['search_timeout_s']:
+        raise ValueError('search_timeout_s must leave search_goal_s for every search bearing')
+    for group in ('guidance', 'planner', 'mapping', 'navigation', 'mission'):
         for key, value in algorithms[group].items():
-            _number(value, key, 0, positive=key not in NONNEGATIVE_ALGORITHM_KEYS)
+            if key != 'grid_origin_m':
+                _number(value, key, 0, positive=key not in NONNEGATIVE_ALGORITHM_KEYS)
     algorithms['profile'] = profile
+    algorithms['vessel_override'] = applied
     algorithms['guidance']['max_speed'] = profiles[profile]
     return algorithms
 
@@ -531,15 +691,18 @@ def _resolve_algorithms(algorithms, profile):
 # --------------------------------------------------------------------------
 
 def resolve_configuration(vessel_file, scenario_file, algorithms_file, seed=None,
-                          environment=None, profile=None):
+                          environment=None, profile=None, real_time_factor=1.0):
     """Resolve and cross-check the vessel, scenario and algorithm files.
 
     A vessel file without ``schema_version`` is a partial WAM-V override: its
     keys replace those in vessels/wamv.yaml. ``profile`` selects a speed profile
-    from algorithms.yaml (default 'fast'). Returns a JSON-serializable dict with
-    ``vessel``, ``scenario``, ``algorithms`` and SHA256 digests of every source
-    file under ``resources``.
+    from algorithms.yaml (default 'fast'). ``real_time_factor`` is Gazebo's
+    target of simulated seconds per wall second (a run option,
+    REAL_TIME_FACTOR). Returns a JSON-serializable dict with ``vessel``,
+    ``scenario``, ``algorithms``, ``run`` (the run options) and SHA256 digests
+    of every source file under ``resources``.
     """
+    _number(real_time_factor, 'real_time_factor', positive=True)
     vessel_data = _read(vessel_file)
     source_files = [vessel_file, scenario_file, algorithms_file]
     if 'schema_version' not in vessel_data:
@@ -552,8 +715,10 @@ def resolve_configuration(vessel_file, scenario_file, algorithms_file, seed=None
     scenario_data = _read(scenario_file)
     versioned_scenario = 'schema_version' in scenario_data
     scenario = resolve_scenario(scenario_data, seed, environment)
-    algorithms = _resolve_algorithms(_read(algorithms_file), profile or DEFAULT_PROFILE)
+    algorithms = _resolve_algorithms(_read(algorithms_file), profile or DEFAULT_PROFILE, vessel_key(vessel))
     env = scenario['environment']
+    settings = vessel['settings'] if vessel['profile'] == 'wamv_reference' else vessel['sensors']['settings']
+    sensor_periods = sensor_timing(settings, env['physics_step_s'])
 
     if vessel['profile'] == 'njord':
         # The Njord force model supports flat water with constant wind only.
@@ -585,12 +750,19 @@ def resolve_configuration(vessel_file, scenario_file, algorithms_file, seed=None
         limits = [vessel['settings']['max_thrust_n']]
     if algorithms['guidance']['max_thrust'] > min(limits):
         raise ValueError('algorithm max_thrust exceeds physical actuator capacity')
+    # A retry waypoint inside the inflated buoy would be an invalid planner
+    # endpoint; 1 m allows for the buoy's own radius.
+    hull = vessel['hull'] if vessel['profile'] == 'njord' else WAMV_HULL
+    if algorithms['mission']['retry_clearance_m'] < inflation_m(hull, algorithms) + 1.0:
+        raise ValueError('mission.retry_clearance_m must exceed the obstacle inflation by 1 m')
     validate_scenario(scenario)
 
     resources = {str(Path(p).resolve()): hashlib.sha256(Path(p).read_bytes()).hexdigest()
                  for p in source_files}
     resolved = {'schema_version': 1, 'vessel': vessel, 'scenario': scenario,
-                'algorithms': algorithms, 'resources': resources}
+                'algorithms': algorithms, 'run': {'real_time_factor': float(real_time_factor)},
+                'resources': resources,
+                'sensor_max_period_s': sensor_periods}
     json.dumps(resolved, allow_nan=False)  # reject NaN/Infinity anywhere
     return resolved
 
@@ -620,15 +792,34 @@ def autonomy_parameters(resolved):
     result['command_guard'] = {'thruster_topics': topics,
                                'forward_limits': forward, 'reverse_limits': reverse,
                                'max_thrust': result['guidance']['max_thrust'],
-                               'timeout_s': COMMAND_TIMEOUT_S}
+                               'timeout_s': COMMAND_TIMEOUT_S, 'liveness_s': PROCESS_LIVENESS_S}
     settings = sensor_settings(resolved)
     result['sensor_adapter'] = {'seed': resolved['scenario']['seed'],
                                 'orientation_noise_rad': settings['imu_orientation_noise_rad'],
+                                'angular_velocity_noise_rad_s': settings['imu_angular_velocity_noise_rad_s'],
+                                'linear_acceleration_noise_m_s2': settings['imu_linear_acceleration_noise_m_s2'],
+                                'stale_after_s': algorithms['navigation']['stale_after_s'],
+                                'clock_stall_after_s': algorithms['navigation']['clock_stall_after_s'],
                                 'gps_xy_std_m': settings['gps_horizontal_noise_m'],
                                 'gps_z_std_m': settings['gps_vertical_noise_m']}
-    # Inflate obstacles by the vessel's circumscribed radius plus the margin.
-    result['mapper'] = {'inflation_m': math.hypot(hull['length_m'], hull['beam_m']) / 2
-                        + algorithms['mapping']['safety_margin_m']}
+    mapping = algorithms['mapping']
+    result['mapper'] = {'inflation_m': inflation_m(hull, algorithms),
+                        # float(): a YAML integer would not match the declared ROS double.
+                        'resolution': float(mapping['grid_resolution_m']),
+                        'size_m': float(mapping['grid_size_m']),
+                        'origin_x': float(mapping['grid_origin_m'][0]),
+                        'origin_y': float(mapping['grid_origin_m'][1]),
+                        'max_range_m': settings['lidar_range'],
+                        'input_max_age_s': algorithms['navigation']['stale_after_s'],
+                        'self_filter_margin_m': mapping['self_filter_margin_m'],
+                        'lidar_noise_stddev_m': settings['lidar_noise_stddev']}
+    # float(): a YAML integer would not match the declared ROS double.
+    result['mission'] = {**{key: value if key == 'max_gate_retries' else float(value)
+                            for key, value in algorithms['mission'].items()},
+                         'camera_max_age_s': algorithms['navigation']['stale_after_s'],
+                         'odometry_max_age_s': algorithms['navigation']['stale_after_s']}
+    result['perception'] = {'sync_tolerance_s': algorithms['navigation']['sync_slop_s'],
+                            'input_max_age_s': algorithms['navigation']['stale_after_s']}
     return result
 
 
@@ -644,3 +835,45 @@ def sensor_settings(resolved):
     settings = copy.deepcopy(vessel['sensors']['settings'])
     settings['max_thrust_n'] = min(t[k] for t in vessel['thrusters'] for k in ('forward_limit_n', 'reverse_limit_n'))
     return settings
+
+
+def sensor_timing(settings, physics_step):
+    """Bound quantized sensor periods; rates above physics rate are invalid.
+
+    Nonintegral periods are allowed; the bound rounds up to the next physics
+    tick. Thus 100 Hz at 4 ms has a conservative 12 ms acquisition interval.
+    """
+    result = {}
+    for sensor in ('camera', 'lidar', 'gps', 'imu'):
+        rate = settings[sensor + '_rate']
+        if rate * physics_step > 1 + 1e-9:
+            raise ValueError(f'{sensor}_rate={rate} Hz cannot be represented with physics_step_s={physics_step}')
+        result[sensor] = math.ceil(1 / (rate * physics_step) - 1e-9) * physics_step
+    return result
+
+
+def validate_reference_timing(public, periods, navigation, components):
+    """Check effective ROS parameters only for reference components being used."""
+    margin = navigation['processing_margin_s']
+    def budget(node, key, sensor):
+        actual = public[node][key]
+        required = 2 * periods[sensor] + margin
+        if actual + 1e-12 < required:
+            raise ValueError(f'{node}.{key}={actual}s incompatible with {sensor} period<={periods[sensor]}s: requires {required}s (two periods + processing_margin_s={margin})')
+    for sensor in ('gps', 'imu'):
+        budget('sensor_adapter', 'stale_after_s', sensor)
+    if components.get('autonomy') != 'reference':
+        return
+    budget('mission', 'odometry_max_age_s', 'imu')
+    if components.get('perception') == 'reference':
+        budget('mission', 'camera_max_age_s', 'camera')
+        for sensor in ('camera', 'lidar'):
+            budget('perception', 'input_max_age_s', sensor)
+        tolerance = public['perception']['sync_tolerance_s']
+        if tolerance < max(periods['camera'], periods['lidar']):
+            raise ValueError(f'perception.sync_tolerance_s={tolerance} cannot cover camera/lidar periods {periods}')
+    if components.get('mapping') == 'reference':
+        budget('mapper', 'input_max_age_s', 'lidar')
+        budget('planner', 'stale_after_s', 'lidar')
+        if components.get('controller') == 'reference':
+            budget('guidance', 'stale_after_s', 'lidar')

@@ -76,9 +76,9 @@ class SensorAdapterTests(unittest.TestCase):
     @staticmethod
     def fix():
         msg = NavSatFix()
-        msg.header.frame_id = "wamv/gps_wamv_link"
-        msg.header.stamp.sec = 123
-        msg.header.stamp.nanosec = 456
+        msg.header.frame_id = "gps_link"
+        msg.header.stamp.sec = 10
+        msg.header.stamp.nanosec = 0
         msg.status.status = 0
         msg.latitude, msg.longitude, msg.altitude = 63., 10., 0.
         return msg
@@ -95,43 +95,49 @@ class SensorAdapterTests(unittest.TestCase):
                          ((1.-e2)*n+altitude)*np.sin(lat)])
 
     def test_gps_noise_is_metres_at_trondheim_latitude(self):
-        with local_node(SensorAdapter) as (node, _, pubs):
+        with local_node(SensorAdapter) as (node, clock, pubs):
             raw = self.fix()
             baseline = self.ecef(raw.latitude, raw.longitude, raw.altitude)
             lat, lon = np.radians([raw.latitude, raw.longitude])
             enu = np.array([[-np.sin(lon), np.cos(lon), 0.],
                             [-np.sin(lat)*np.cos(lon), -np.sin(lat)*np.sin(lon), np.cos(lat)],
                             [np.cos(lat)*np.cos(lon), np.cos(lat)*np.sin(lon), np.sin(lat)]])
-            for _ in range(4000):
+            for index in range(4000):
+                clock.seconds = 10. + index * .1
+                raw.header.stamp = clock.now().to_msg()
                 node.gps(raw)
-            messages = pubs['/wamv/sensors/gps/gps/fix'].messages
+            messages = pubs['/sensors/gps/fix'].messages
             errors = np.array([enu@(self.ecef(m.latitude, m.longitude, m.altitude)-baseline) for m in messages])
             np.testing.assert_allclose(np.std(errors, axis=0), [.3, .3, .5], rtol=.05)
             np.testing.assert_allclose(np.mean(errors, axis=0), [0., 0., 0.], atol=.025)
             self.assertEqual((raw.latitude, raw.longitude, raw.altitude), (63., 10., 0.))
-            self.assertTrue(all(m.header == raw.header for m in messages))
+            self.assertEqual(len(messages), 4000)
+            self.assertEqual(messages[-1].header, raw.header)
+            self.assertLess(messages[0].header.stamp.sec, messages[-1].header.stamp.sec)
             np.testing.assert_allclose(messages[-1].position_covariance, [.09,0,0,0,.09,0,0,0,.25])
 
     def test_imu_callback_rate_does_not_change_gps_noise_stream(self):
         raw = self.fix()
         sequences = []
         for imu_count in (0, 100):
-            with local_node(SensorAdapter) as (node, _, pubs):
+            with local_node(SensorAdapter) as (node, clock, pubs):
                 imu = Imu()
                 imu.orientation.w = 1.
                 for _ in range(imu_count):
                     node.imu(imu)
-                for _ in range(10):
+                for index in range(10):
+                    clock.seconds = 10. + index * .1
+                    raw.header.stamp = clock.now().to_msg()
                     node.gps(raw)
-                sequences.append([(m.latitude, m.longitude, m.altitude) for m in pubs['/wamv/sensors/gps/gps/fix'].messages])
+                sequences.append([(m.latitude, m.longitude, m.altitude) for m in pubs['/sensors/gps/fix'].messages])
         self.assertEqual(sequences[0], sequences[1])
 
     def test_invalid_fix_is_not_freshened_or_published(self):
-        with local_node(SensorAdapter) as (node, _, pubs):
+        with local_node(SensorAdapter) as (node, clock, pubs):
             raw = self.fix()
             raw.status.status = -1
             node.gps(raw)
-            self.assertEqual(pubs['/wamv/sensors/gps/gps/fix'].messages, [])
+            self.assertEqual(pubs['/sensors/gps/fix'].messages, [])
             self.assertNotIn('gps', node.received)
 
 
@@ -172,9 +178,9 @@ class MissionCrossingTests(unittest.TestCase):
                 self.update(node, clock, 17.+14.*index/300.)
                 status = pubs['/njord/mission_status'].messages[-1].status[0]
                 self.assertNotEqual(status.level, DiagnosticStatus.ERROR, status.message)
-            self.assertEqual(len(node.passed), 1)
+            self.assertEqual(len(node.core.passed), 1)
             self.assertEqual(pubs['/njord/mission_status'].messages[-1].status[0].message, 'complete')
-            self.assertEqual(node.gate_seen, 10.)  # Observations were never freshened.
+            self.assertEqual(node.core.gate_seen, 10.)  # Observations were never freshened.
 
     def test_memory_still_expires_with_live_camera(self):
         with local_node(Mission) as (node, clock, pubs):

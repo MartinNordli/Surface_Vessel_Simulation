@@ -47,11 +47,18 @@ x-common: &common
     ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-42}
     # Course file inside the image; `./scripts/njord demo <course>` sets it.
     SCENARIO: ${SCENARIO:-/opt/njord/scenarios/reference.yaml}
-    SEED: ${SEED:-1}
+    SEED: ${SEED:-}
     # Gazebo transport isolation, the Gazebo counterpart of ROS_DOMAIN_ID.
     GZ_PARTITION: ${GZ_PARTITION:-njord-sim}
     # Named environment in the scenario (wind, waves, current), e.g. calm.
     ENVIRONMENT: ${ENVIRONMENT:-calm}
+    # Target simulated seconds per wall second. Command freshness is measured
+    # in simulation time, so the achieved factor does not change how long a
+    # thrust command acts on the boat.
+    REAL_TIME_FACTOR: ${REAL_TIME_FACTOR:-1.0}
+    # race: the guard passes thrust only while the evaluator reports the race
+    # active. free: no evaluator (./scripts/njord lab sets it).
+    RUN_MODE: ${RUN_MODE:-race}
     # Speed profile of the reference autonomy: fast or conservative.
     PROFILE: ${PROFILE:-fast}
     # Free-form label stored in the evaluator's metrics.
@@ -75,7 +82,7 @@ x-common: &common
     # Other configuration files (localization.yaml, the partial-override
     # base, node fallback defaults) are read from here first, falling back to
     # the copies built into the image (njord_sim/configuration.py:config_path).
-    NJORD_CONFIG_DIR: /config
+    NJORD_CONFIG_DIR: /workspace-config
     # Optional extra ROS parameter file for the reference autonomy nodes.
     ROS_PARAMS_FILE: ${ROS_PARAMS_FILE:-}
     # Where services write run artifacts inside the container (mounted below).
@@ -90,6 +97,7 @@ x-common: &common
     - ${OUTPUT_HOST:-./outputs/demo}:/outputs
     # Host configuration, read-only: njord_sim/config/, or a team directory
     # via CONFIG_HOST (then point VESSEL_CONFIG/ALGORITHMS_CONFIG into it).
+    - ./njord_sim/config:/workspace-config:ro
     - ${CONFIG_HOST:-./njord_sim/config}:/config:ro
   # Time for a clean shutdown after SIGTERM before Docker kills the service.
   stop_grace_period: 10s

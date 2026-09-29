@@ -17,13 +17,16 @@ talks to Gazebo transport directly (no ROS), in the partition given by
 --partition / GZ_PARTITION, so it must run in the container on the same host
 network as a running simulator. It must be the only force publisher.
 
-Sequence (all times are steady wall time, as the watchdog uses):
-1. connect: wait (--discovery-s) until both thrust topics have produced data
-   and the watchdog has subscribed to our force publisher.
+Sequence (the watchdog expires a command after --timeout-s of simulation
+time, read here from Gazebo's /clock; other deadlines are steady wall time):
+1. connect: wait (--discovery-s) until both thrust topics and /clock have
+   produced data and the watchdog has subscribed to our force publisher.
 2. measure_timeout: publish the distinct finite forces (--left-force-n,
    --right-force-n, newtons) until both thrust topics repeat them, then stop
-   publishing. Both outputs must reach zero within --timeout-s + --slack-s
-   and stay zero for 0.15 s.
+   publishing. Both outputs must reach zero between --timeout-s - 0.08 and
+   --timeout-s + --slack-s of simulation time after the last publication, and
+   stay zero for 0.15 s. The wall-time deadline is --liveness-s + --slack-s,
+   so a simulator slower than real time still reaches the simulation limit.
 3. measure_nan: re-establish finite forces, then publish NaN on the left
    only. Both outputs must reach zero within min(0.25 s, timeout/2), i.e.
    faster than the normal timeout, showing a non-finite input is rejected
@@ -54,29 +57,42 @@ class CheckFailure(RuntimeError):
 class WatchdogProbe:
     """Publishes forces and records every thrust output with its arrival time.
 
-    ``samples[side]`` holds (monotonic receive time, thrust N) tuples; the
+    ``samples[side]`` holds (monotonic receive time, latest simulation time
+    from /clock, thrust N) tuples; the
     Gazebo callbacks run on transport threads, so access goes through
     ``condition``. ``result`` is the report dict, filled in place.
     """
     def __init__(self, args, result):
         # Import after partition selection, before initializing Gazebo transport.
         from gz.transport13 import Node
+        from gz.msgs10.clock_pb2 import Clock
         from gz.msgs10.double_pb2 import Double
         from gz.msgs10.float_v_pb2 import Float_V
         self.args, self.result, self.Float_V = args, result, Float_V
         self.condition = threading.Condition()
         self.samples = {side: deque(maxlen=20000) for side in THRUSTERS}
+        self.sim_time = None  # newest simulation time from /clock, s
         self.node = Node()
+        if not self.node.subscribe(Clock, '/clock', self.on_clock):
+            raise CheckFailure('Could not subscribe to /clock')
         for side, topic in THRUSTERS.items():
             if not self.node.subscribe(Double, topic, lambda msg, side=side: self.receive(side, msg.data)):
                 raise CheckFailure(f'Could not subscribe to {topic}')
         self.publisher = self.node.advertise(FORCES, Float_V)
         self.last_publish = None
 
+    def on_clock(self, msg):
+        with self.condition:
+            self.sim_time = msg.sim.sec + msg.sim.nsec * 1e-9
+
     def receive(self, side, value):
         with self.condition:
-            self.samples[side].append((time.monotonic(), value))
+            self.samples[side].append((time.monotonic(), self.sim_time, value))
             self.condition.notify_all()
+
+    def now_sim(self):
+        with self.condition:
+            return self.sim_time
 
     def publish(self, left, right):
         msg = self.Float_V()
@@ -91,8 +107,8 @@ class WatchdogProbe:
         """True if each side's newest sample arrived after ``since`` and equals its target."""
         with self.condition:
             return all(self.samples[side] and self.samples[side][-1][0] >= since
-                       and math.isfinite(self.samples[side][-1][1])
-                       and abs(self.samples[side][-1][1] - target) <= 1e-6 * max(1.0, abs(target))  # float32 transport
+                       and math.isfinite(self.samples[side][-1][2])
+                       and abs(self.samples[side][-1][2] - target) <= 1e-6 * max(1.0, abs(target))  # float32 transport
                        for side, target in expected.items())
 
     def wait(self, seconds):
@@ -104,7 +120,7 @@ class WatchdogProbe:
         deadline = time.monotonic() + self.args.discovery_s
         while time.monotonic() < deadline:
             with self.condition:
-                observed_both = all(self.samples[side] for side in THRUSTERS)
+                observed_both = all(self.samples[side] for side in THRUSTERS) and self.sim_time is not None
             if observed_both and self.publisher.has_connections():
                 return
             self.wait(0.025)
@@ -133,28 +149,38 @@ class WatchdogProbe:
         raise CheckFailure('Distinct finite forces were not forwarded on both original thrust topics; '
                            'check paused world, competing publishers or force limits')
 
-    def first_zero_times(self, since):
-        """Return, per side, the first arrival time of a zero thrust after ``since``."""
+    def first_zeros(self, since):
+        """Return, per side, (wall, simulation) time of the first zero thrust after ``since`` (wall)."""
         with self.condition:
-            return {side: next((stamp for stamp, value in self.samples[side]
+            return {side: next(((stamp, sim) for stamp, sim, value in self.samples[side]
                                 if stamp >= since and math.isfinite(value) and abs(value) <= 1e-6), None)
                     for side in THRUSTERS}
 
+    def first_zero_times(self, since):
+        """Return, per side, the first arrival wall time of a zero thrust after ``since``."""
+        return {side: (zero[0] if zero else None) for side, zero in self.first_zeros(since).items()}
+
     def measure_timeout(self):
-        """Check that publisher silence zeroes both thrusters within the limit."""
+        """Check that publisher silence zeroes both thrusters after the simulation-time timeout."""
         stopped = self.establish_finite()
-        allowed = self.args.timeout_s + self.args.slack_s
-        deadline = stopped + allowed
-        zero_times = self.first_zero_times(stopped)
-        while not all(value is not None for value in zero_times.values()) and time.monotonic() < deadline:
+        stopped_sim = self.now_sim()
+        allowed = self.args.timeout_s + self.args.slack_s  # simulation seconds
+        deadline = stopped + self.args.liveness_s + self.args.slack_s  # wall seconds
+        zeros = self.first_zeros(stopped)
+        while not all(value is not None for value in zeros.values()) and time.monotonic() < deadline:
             self.wait(min(0.01, deadline - time.monotonic()))
-            zero_times = self.first_zero_times(stopped)
-        delays = {side: (stamp - stopped if stamp is not None else None)
-                  for side, stamp in zero_times.items()}
-        self.result['timeout_observed_s'] = delays
+            zeros = self.first_zeros(stopped)
+        delays = {side: (zero[1] - stopped_sim if zero is not None else None) for side, zero in zeros.items()}
+        self.result['timeout_observed_sim_s'] = delays
+        self.result['timeout_observed_wall_s'] = {side: (zero[0] - stopped if zero is not None else None)
+                                                  for side, zero in zeros.items()}
         if any(delay is None or delay > allowed for delay in delays.values()):
-            raise CheckFailure(f'Both thrust outputs must become zero within {allowed:.3f} wall seconds '
+            raise CheckFailure(f'Both thrust outputs must become zero within {allowed:.3f} simulation seconds '
                                'after the final finite force publication')
+        # Expiring clearly before the timeout means another publisher or a
+        # different configured timeout; 80 ms allows for step and transport jitter.
+        if any(delay < self.args.timeout_s - 0.08 for delay in delays.values()):
+            raise CheckFailure('Premature expiry: competing command source or configured timeout mismatch')
         # Reject a transient zero followed by renewed force from another source.
         settle_deadline = time.monotonic() + 0.15
         while time.monotonic() < settle_deadline:
@@ -213,7 +239,8 @@ def main():
     parser.add_argument('--partition', default=os.environ.get('GZ_PARTITION'),
                         help='Simulator-only Gazebo partition (defaults to GZ_PARTITION)')
     parser.add_argument('--output', type=Path, required=True, help='Strict JSON result path')
-    parser.add_argument('--timeout-s', type=positive, default=0.5, help='Configured watchdog timeout, wall seconds')
+    parser.add_argument('--timeout-s', type=positive, default=0.5, help='Configured watchdog timeout, simulation seconds')
+    parser.add_argument('--liveness-s', type=positive, default=2.0, help='Configured steady-time liveness limit, wall seconds')
     parser.add_argument('--slack-s', type=positive, default=0.25, help='Allowed transport/update scheduling overhead')
     parser.add_argument('--discovery-s', type=positive, default=10.0)
     parser.add_argument('--left-force-n', type=positive, default=80.0)
@@ -222,7 +249,7 @@ def main():
     result = {'schema_version': 1, 'status': 'failed',
               'started_utc': datetime.now(timezone.utc).isoformat(),
               'partition': args.partition, 'watchdog_timeout_s': args.timeout_s,
-              'timeout_limit_s': args.timeout_s + args.slack_s,
+              'timeout_limit_sim_s': args.timeout_s + args.slack_s, 'liveness_s': args.liveness_s,
               'finite_forces_n': {'left': args.left_force_n, 'right': args.right_force_n},
               'topics': {'input': FORCES, **THRUSTERS}, 'checks': {}, 'failures': []}
     probe = None

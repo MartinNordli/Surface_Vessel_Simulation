@@ -93,7 +93,7 @@ def ignored(relative, patterns):
     return excluded
 
 
-def source_digest(root=ROOT):
+def source_digest(root=ROOT, *, executable=False):
     """Return the SHA-256 hex digest of every Docker build input under ``root``.
 
     Inputs are the Dockerfile, .dockerignore and everything (recursively) that
@@ -118,12 +118,16 @@ def source_digest(root=ROOT):
                 for directory, dirs, files in os.walk(candidate, followlinks=False):
                     selected.update((Path(directory) / name).relative_to(root) for name in dirs + files)
     # The version prefix changes the digest if this hashing scheme ever changes.
-    digest = hashlib.sha256(b'njord-docker-source-v2\0')
+    digest = hashlib.sha256(b'njord-executable-v1\0' if executable else b'njord-docker-source-v2\0')
     for relative in sorted(selected, key=lambda value: value.as_posix()):
         if relative.as_posix() not in ('Dockerfile', '.dockerignore') and ignored(relative, patterns):
             continue
         path = root / relative
         info = path.lstat()
+        if (executable and relative.parts[:2] == ('njord_sim', 'config')
+                and relative.suffix.lower() in ('.yaml', '.yml')
+                and stat.S_ISREG(info.st_mode)):
+            continue
         if stat.S_ISLNK(info.st_mode):
             kind, content = 'link', os.readlink(path).encode()
         elif stat.S_ISREG(info.st_mode):
@@ -141,6 +145,24 @@ def source_digest(root=ROOT):
     return digest.hexdigest()
 
 
+def executable_digest(root=ROOT):
+    """Fingerprint executable/model inputs; omit only editable regular config YAML."""
+    return source_digest(root, executable=True)
+
+
+def verify_executable(labels, root=ROOT):
+    """Reject unlabeled or stale executable/model resources, without a bypass."""
+    actual = labels.get('io.njord.executable.digest')
+    source = labels.get('io.njord.source.digest', '')
+    if not isinstance(source, str) or len(source) != 64 or any(c not in '0123456789abcdef' for c in source):
+        raise ValueError('Image full source digest is missing or malformed. Run ./scripts/njord build.')
+    expected = executable_digest(root)
+    if actual != expected:
+        raise ValueError(f'Image executable digest mismatch: image={actual or "missing"}, '
+                         f'checkout={expected}. Run ./scripts/njord build.')
+    return expected
+
+
 def build_metadata(root=ROOT):
     """Return {"source_commit": HEAD or "unknown", "source_digest": ...}.
 
@@ -151,12 +173,13 @@ def build_metadata(root=ROOT):
                                          stderr=subprocess.DEVNULL).strip()
     except (OSError, subprocess.CalledProcessError):
         commit = 'unknown'
-    return {'source_commit': commit, 'source_digest': source_digest(root)}
+    return {'source_commit': commit, 'source_digest': source_digest(root),
+            'executable_digest': executable_digest(root)}
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--field', choices=['source_commit', 'source_digest'])
+    parser.add_argument('--field', choices=['source_commit', 'source_digest', 'executable_digest'])
     args = parser.parse_args()
     metadata = build_metadata()
     print(metadata[args.field] if args.field else json.dumps(metadata, indent=2))

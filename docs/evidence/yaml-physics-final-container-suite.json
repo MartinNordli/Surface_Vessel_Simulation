@@ -1,0 +1,23 @@
+{
+  "created_utc": "2026-09-28T00:41:20+00:00",
+  "name": "yaml-physics-final-container-suite",
+  "note": "Container suite on the final physics image: 163 tests.",
+  "schema_version": 1,
+  "sources": [
+    {
+      "bytes": 2356,
+      "path": "outputs/yaml-physics-final-container-tests.log",
+      "sha256": "196692ccdec4662fd701cc88decb4d76e8f405e515e7fcdcbcaf856570cd2a16",
+      "tail": [
+        "\u001b[1;33mWarning [Utils.cc:132]\u001b[0m [/sdf/model[@name=\"wamv\"]/link[@name=\"wamv/base_link\"]/sensor[@name=\"lidar_wamv_sensor\"]/gz_frame_id:/tmp/njord-vessel-test-62ctlywb/wamv.sdf:L674]: XML Element[gz_frame_id], child of element[sensor], not defined in SDF. Copying[gz_frame_id] as children of [sensor].",
+        "\u001b[1;33mWarning [Utils.cc:132]\u001b[0m [/sdf/model[@name=\"wamv\"]/link[@name=\"wamv/gps_wamv_link\"]/sensor[@name=\"navsat\"]/gz_frame_id:/tmp/njord-vessel-test-62ctlywb/wamv.sdf:L741]: XML Element[gz_frame_id], child of element[sensor], not defined in SDF. Copying[gz_frame_id] as children of [sensor].",
+        "\u001b[1;33mWarning [Utils.cc:132]\u001b[0m [/sdf/model[@name=\"wamv\"]/link[@name=\"wamv/imu_wamv_link\"]/sensor[@name=\"imu_wamv_sensor\"]/gz_frame_id:/tmp/njord-vessel-test-62ctlywb/wamv.sdf:L888]: XML Element[gz_frame_id], child of element[sensor], not defined in SDF. Copying[gz_frame_id] as children of [sensor].",
+        "...........",
+        "----------------------------------------------------------------------",
+        "Ran 163 tests in 14.283s",
+        "",
+        "OK"
+      ]
+    }
+  ]
+}

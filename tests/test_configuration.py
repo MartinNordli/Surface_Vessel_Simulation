@@ -83,7 +83,7 @@ class ConfigurationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'unknown'):
                 resolve_configuration(p,ROOT/'scenarios/reference.yaml',CONFIG/'algorithms.yaml')
 
-    def test_config_dir_prefers_mounted_copy_and_falls_back(self):
+    def test_config_dir_requires_complete_explicit_mount(self):
         from unittest.mock import patch
         from njord_sim.configuration import config_path
         with tempfile.TemporaryDirectory() as d:
@@ -91,8 +91,9 @@ class ConfigurationTests(unittest.TestCase):
             (Path(d)/'vessels'/'wamv.yaml').write_text((VESSELS/'wamv.yaml').read_text())
             with patch.dict('os.environ',{'NJORD_CONFIG_DIR':d}):
                 self.assertEqual(config_path('vessels/wamv.yaml'),Path(d)/'vessels'/'wamv.yaml')
-                # A team directory without the file uses the packaged copy.
-                self.assertEqual(config_path('algorithms.yaml'),CONFIG/'algorithms.yaml')
+                # Explicit mounts cannot silently substitute packaged configuration.
+                with self.assertRaisesRegex(ValueError, 'mounted configuration'):
+                    config_path('algorithms.yaml')
 
     def test_speed_profile_selects_guidance_ceiling_for_every_vessel(self):
         speeds=yaml.safe_load((CONFIG/'algorithms.yaml').read_text())['speed_profiles_mps']
@@ -104,6 +105,13 @@ class ConfigurationTests(unittest.TestCase):
                     self.assertEqual(resolved['algorithms']['profile'],profile)
         self.assertEqual(self.resolve()['algorithms']['profile'],'fast')
         with self.assertRaisesRegex(ValueError,'PROFILE'):self.resolve(profile='typo')
+
+    def test_real_time_factor_is_a_validated_run_option(self):
+        self.assertEqual(self.resolve()['run'], {'real_time_factor': 1.0})
+        self.assertEqual(self.resolve(real_time_factor=3)['run'], {'real_time_factor': 3.0})
+        for bad in (0, -1, float('nan'), float('inf'), True):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                self.resolve(real_time_factor=bad)
 
     def test_enu_current_and_direction_conflict(self):
         scenario=yaml.safe_load((ROOT/'scenarios/reference.yaml').read_text())
@@ -285,15 +293,17 @@ class ThrusterLayoutTests(unittest.TestCase):
     def test_schema_1_axes_convert_to_yaw(self):
         import math
         legacy=self.vessel();legacy['schema_version']=1
+        for key in ('imu_angular_velocity_noise_rad_s','imu_linear_acceleration_noise_m_s2'):
+            legacy['sensors']['settings'].pop(key)
         for t,axis in zip(legacy['thrusters'],([1.,0.,0.],[math.sqrt(.5),-math.sqrt(.5),0.])):
             t['axis']=axis;del t['yaw_deg']
         converted=validate_vessel(copy.deepcopy(legacy))
-        self.assertEqual(converted['schema_version'],2)
+        self.assertEqual(converted['schema_version'],3)
         self.assertEqual([t['yaw_deg'] for t in converted['thrusters']],[0.,-45.])
         self.assertEqual(legacy['thrusters'][0]['axis'],[1.,0.,0.])  # input left untouched
         legacy['thrusters'][0]['axis']=[.6,0.,.8]
         with self.assertRaisesRegex(ValueError,'planar unit'):convert_legacy_vessel(legacy)
-        current=self.vessel();current['schema_version']=3
+        current=self.vessel();current['schema_version']=4
         with self.assertRaisesRegex(ValueError,'schema_version'):validate_vessel(current)
 
 

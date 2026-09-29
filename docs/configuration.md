@@ -16,12 +16,13 @@ run. Nothing needs rebuilding unless noted.
 | The four-thruster Munin placeholder (same schema; layout assumed until Naval decides) | `njord_sim/config/vessels/munin_v0.yaml` | `VESSEL_CONFIG=/config/vessels/munin_v0.yaml` |
 | Gates, obstacles, start pose, default seed, race time limit | `scenarios/<course>.yaml` | course name, e.g. `./scripts/njord demo slalom` |
 | Wind, waves, current, water, physics time step | `environments:` in `scenarios/<course>.yaml` | `ENVIRONMENT=calm\|moderate` |
-| Speed ceiling of each profile | `speed_profiles_mps` in `njord_sim/config/algorithms.yaml` | `PROFILE=fast\|conservative` |
-| Guidance gains, lookahead, operating thrust limit, stopping model, planner timing, map safety margin | `njord_sim/config/algorithms.yaml` | `ALGORITHMS_CONFIG` (default) |
-| Other reference-node parameters (perception thresholds, mission geometry, map size) | a ROS parameter file, e.g. `config/examples/team_params.yaml` | `ROS_PARAMS_FILE=/config/examples/…` |
+| Speed ceiling of each profile, and which profiles exist | `speed_profiles_mps` in `njord_sim/config/algorithms.yaml` | `PROFILE=<name>` (shipped: `fast`, `conservative`) |
+| Guidance gains, lookahead, operating thrust limit, stopping model, planner timing, map safety margin, occupancy grid size and position, mission gate geometry, search and retry | `njord_sim/config/algorithms.yaml` | `ALGORITHMS_CONFIG` (default) |
+| Other reference-node parameters (perception thresholds) | a ROS parameter file, e.g. `config/examples/team_params.yaml` | `ROS_PARAMS_FILE=/config/examples/…` |
 | EKF / GPS-transform settings | `njord_sim/config/localization.yaml` | always used |
 | World origin (GPS datum), command timeout, thruster command topic pattern, pinned WAM-V hull and thruster geometry | `njord_sim/njord_sim/constants.py` (then rebuild) | fixed platform constants |
 | Seed of a single run | — | `SEED=<n>` |
+| Simulated seconds per wall second | — | `REAL_TIME_FACTOR=<x>` (default `1.0`) |
 | Navigate on simulator ground truth instead of the GPS/IMU estimate | — | `STATE_SOURCE=truth` (default `estimate`) |
 
 Each vessel file is self-contained: the WAM-V and Njord files each hold their
@@ -31,8 +32,9 @@ once per project.
 `njord_sim/config/` on the host is mounted read-only at `/config` in every
 container, and the defaults point there, so edits apply to the next run without
 rebuilding. Code that needs a configuration file (the partial-override base,
-node fallback defaults, `localization.yaml`) looks in `$NJORD_CONFIG_DIR`
-(`/config`) first and falls back to the copy built into the image. Scenarios,
+node fallback defaults, `localization.yaml`) requires the mounted workspace
+defaults at `/workspace-config`; after startup it reads their frozen run copies.
+Missing mounted files fail explicitly. Scenarios,
 `constants.py` and `wamv_sensors.xacro` are part of the image: rebuild after
 changing them.
 
@@ -43,18 +45,45 @@ changing them.
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `SCENARIO` | `/opt/njord/scenarios/reference.yaml` | Course file; a course name on the command line overrides it |
-| `SEED` | `1` | Positive integer; gate jitter, wind and sensor noise |
+| `SEED` | scenario seed (otherwise `1`) | Positive integer; gate jitter, wind and sensor noise |
 | `ENVIRONMENT` | `calm` | Preset name from the scenario's `environments` |
 | `PROFILE` | `fast` | Speed profile name from `algorithms.yaml` |
+| `REAL_TIME_FACTOR` | `1.0` | Gazebo's target of simulated seconds per wall second; a target, not a guarantee. Recorded as `run.real_time_factor` in `resolved_configuration.json` and as `real_time_factor_target` next to the achieved `real_time_factor` in `run_metrics.json`. See [the note on computation time](#real-time-factor-and-computation-time) |
 | `VESSEL_CONFIG` | `/config/vessels/wamv.yaml` | Vessel file or partial WAM-V override |
 | `ALGORITHMS_CONFIG` | `/config/algorithms.yaml` | Reference autonomy tuning |
 | `ROS_PARAMS_FILE` | empty | Extra ROS parameters for reference nodes |
+| `RUN_MODE` | `race` | `race` passes thrust only while the evaluator reports the race active; `free` drives without an evaluator (`lab` sets it) |
 | `AUTONOMY`, `CONTROLLER`, `PERCEPTION`, `MAPPING` | `reference` | `external` leaves out reference nodes ([team integration](team-integration.md)) |
 | `CONFIG_HOST` | `./njord_sim/config` | Host directory mounted at `/config`; with your own directory, point `VESSEL_CONFIG` and `ALGORITHMS_CONFIG` at files in it |
 | `NJORD_CPU` | `0` | `1` selects software rendering |
 
 Paths in `VESSEL_CONFIG`, `ALGORITHMS_CONFIG` and `ROS_PARAMS_FILE` are paths
 inside the container: use `/config/...` for files under `njord_sim/config/`.
+
+### Real-time factor and computation time
+
+Command and heartbeat freshness is measured in simulation time, so the guard,
+the actuator plugins and the evaluator behave the same at any real-time factor.
+Computation is not simulated: an algorithm that needs 100 ms of CPU takes
+100 ms of wall time, which is 30 ms of simulated time at `REAL_TIME_FACTOR=0.3`
+and 300 ms at 3. Below 1, algorithms therefore get more computation per
+simulated second than on the boat (optimistic latency); above 1, less
+(pessimistic). Only runs that achieve a factor near 1 on hardware comparable to
+the boat's represent its computation latency. The evaluator's steady-time
+budget scales as `max(wall_timeout_s, 2 × timeout_s / factor)` so a slow run is
+not cut short, and `benchmark` gives each race that budget plus 300 s for
+startup unless `--wall-timeout` is set.
+
+Measured on the GPU (RTX 5090), 2026-09-28
+([`evidence/gpu-actuator-expiry.json`](evidence/gpu-actuator-expiry.json),
+[`evidence/gpu-rtf-races.json`](evidence/gpu-rtf-races.json)): both actuator
+plugins expired a command after 0.51–0.54 s of simulation time at factors 0.3,
+1 and 3 (1.7, 0.58 and 0.35 s of wall time). The WAM-V reference course
+completed 3/3 at 0.3 on seeds 1 and 2 (113 and 107 s) and at 1 (123 s). A
+target of 3 reached only about 1.3 with rendering. Two effects of a slow
+simulator had to be fixed for this: lidar clouds and images arriving before the
+estimator's TF (now queued, see below), and the estimator's start-up
+transient (the mission waits until the estimate is initialized).
 
 ### Parameter precedence
 
@@ -84,7 +113,7 @@ error, never a no-op.
 ### WAM-V (`vessels/wamv.yaml`)
 
 ```yaml
-schema_version: 1
+schema_version: 2
 profile: wamv_reference
 settings:
   camera_width: 640
@@ -150,7 +179,7 @@ Relative-water damping and the added-mass Coriolis correction rely on the
 verified Gazebo release pair that the Docker build pins.
 
 **Wind.** Ordered unique angles in [0, 360) with signed `cx`, `cy`, `cn`.
-Angles describe the relative airflow velocity toward the body; interpolation
+Angles describe the direction the relative air moves toward in body axes; interpolation
 wraps periodically. Loads use dynamic pressure, the two reference areas and
 the yaw reference length, with air density fixed at 1.225 kg/m³.
 
@@ -181,17 +210,18 @@ thrusters:                       # list order = thruster index everywhere
   with the minimum-norm solution and scales all thrusters uniformly at a
   limit. With a layout that cannot set sway, only surge and yaw are solved.
 - Invalid or expired commands target zero thrust after `COMMAND_TIMEOUT_S` of
-  steady wall time; the configured response then decays the force in
-  simulation time. Body inertia and drift remain.
+  simulation time (or `PROCESS_LIVENESS_S` of steady time while simulation
+  time stalls); the configured response then decays the force in simulation
+  time. Body inertia and drift remain.
 
-Njord vessel files are `schema_version: 2`. A schema 1 file, which gave each
+Njord vessel files are `schema_version: 3`. A schema 1 file, which gave each
 thruster an `axis` unit vector instead of `yaw_deg`, is converted when loaded;
 names and order are kept.
 
 **Limits of the Njord model.** Flat water and constant wind only: waves or
 wind variance in the selected environment are rejected. The reference autonomy
-is tuned for the WAM-V, and the mapper's self-filter (5 × 2.8 m) is still
-WAM-V sized.
+is tuned for the WAM-V; changing the vessel does not constitute controller
+tuning or physical calibration. Self filtering follows the actual visual surfaces.
 
 ## Scenario files (`scenarios/<course>.yaml`)
 
@@ -238,11 +268,49 @@ the observed-free corridor. `guidance.max_thrust` is an operating limit and
 must not exceed the vessel's physical limit. The braking model (0.25 m/s²,
 1 s reaction) is an assumption until verified by dynamics measurements.
 
+`mission` configures the reference gate mission (`mission_core.py`). Without
+a gate in view for `search_after_s` it drives to goals `search_radius_m` away
+at 0, ±40 and ±80 degrees from the course heading, each for at most
+`search_goal_s`, and reports an error after `search_timeout_s`. A gate the
+boat was seen passing outside its buoys is retried up to `max_gate_retries`
+times via a point `retry_clearance_m` beside the passed buoy; the loader
+requires that point to lie at least 1 m outside the obstacle inflation, so it
+is a valid planner goal. A position jump faster than 15 m/s (an initializing
+estimator) is not taken as a crossing. These change only the reference
+autonomy, which the real boat does not run; they do not change what the
+simulator measures.
+
+`vessel_overrides` replaces shared values for one vessel, keyed by `wamv` or
+the vessel file's `name` (e.g. `njord_analytic`, `munin_placeholder`):
+
+```yaml
+vessel_overrides:
+  njord_analytic:
+    guidance: {kp_yaw: 250.0, kd_yaw: 200.0}
+```
+
+Only `guidance`, `mapping` and `mission` can be overridden, and only with keys
+that exist in the shared section. Every entry is checked, also for vessels not
+in the run, and the merged values pass the same rules, including the vessel's
+thrust limit. The applied name is recorded as `algorithms.vessel_override` in
+`resolved_configuration.json`. The shipped file has no overrides.
+
+A new speed profile only needs a new `speed_profiles_mps` entry; the launch,
+the autonomy runner and `benchmark --profiles` read the names from this file.
+
+`mapping.grid_resolution_m`, `grid_size_m` and `grid_origin_m` fix the reference
+mapper's square occupancy grid in the `map` frame (default 0.5 m cells, 160 m,
+lower-left corner at (-40, -40) m, so it reaches x, y = 120 m). Nothing outside
+it is mapped, so a course must fit inside with room for approach and exit;
+`tests/test_algorithms_config.py` checks every race course in `scenarios/`
+with a 10 m margin. A larger grid costs mapping and planning time.
+
 ## Fixed constants (`njord_sim/njord_sim/constants.py`)
 
 Values that belong to the pinned platform rather than to an experiment: the
 world origin shared by Gazebo and the GPS transform (63.4305 N, 10.3951 E), the
-0.5 s command timeout used by the guard and both actuator plugins, the thruster
+0.5 s simulation-time command timeout and 2 s steady-time liveness limit used by
+the guard, both actuator plugins and the evaluator, the thruster
 command topic pattern `/{name}/command`, and the VRX WAM-V hull envelope
 (6 × 3.3 m) and thruster layout: `thruster_1` (port) and `thruster_2`
 (starboard) at x = -2.373776 m, y = ±1.027135 m, pushing forward.
@@ -252,7 +320,7 @@ command topic pattern `/{name}/command`, and the VRX WAM-V hull envelope
 Every run directory under `outputs/` holds the source YAML
 (`source_config/`), checksummed resource copies (`resources/`), the fully
 resolved values (`resolved_configuration.json`), the generated
-`wamv.sdf`/`wamv.urdf`/`bridges.yaml`/`njord_course.sdf`, the flat sensor
+`vessel.sdf`/`vessel.urdf`/`bridges.yaml`/`njord_course.sdf`, the flat sensor
 settings actually used (`vessel_config.yaml`), the autonomy's parameters
 (`public_parameters.json`) and `run_manifest.json` with SHA-256 digests of all
 of them. `run_ready.json` binds the manifest digest to the run ID; autonomy,
@@ -261,3 +329,72 @@ evaluator and recorder record the same digest.
 The run directory is not an access-control boundary: a team process with
 filesystem access can read evaluation files. Use separate mounts if that
 matters.
+
+
+## Parameter fidelity contracts
+
+WAM-V schema 2 and Njord schema 3 explicitly own IMU rate noise
+(`imu_angular_velocity_noise_rad_s`, assumed 0.009 rad/s) and acceleration
+noise (`imu_linear_acceleration_noise_m_s2`, assumed 0.021 m/s²).
+`convert_sensor_schema` upgrades WAM-V 1 or Njord 2 by adding these assumed
+values; Njord 1 first converts its thruster axes to yaw angles. Existing files
+are not overwritten. Neither conversion constitutes calibration. GPS,
+orientation, gyro and acceleration noise are applied only in the sensor
+adapter, with independent seeded streams and variance-derived covariance.
+Raw Gazebo IMU/GPS noise and bias are removed; camera and lidar noise remain
+in Gazebo. Acquisition timestamps and frames are retained.
+
+Algorithms schema 2 adds `mapping.self_filter_margin_m` (0.02 m) and
+`navigation`: `stale_after_s` (0.5 s), `processing_margin_s` (0.1 s),
+`clock_stall_after_s` (0.5 wall seconds) and `sync_slop_s` (0.12 s).
+`convert_algorithm_schema` adds these explicit defaults to schema 1.
+Algorithms schema 3 adds `mapping.grid_resolution_m` (0.5 m), `grid_size_m`
+(160 m) and `grid_origin_m` ([-40, -40] m), the values the mapper previously
+built in; older files are converted step by step with those values. Schema 4
+adds `mission`: the gate geometry the mission node previously built in, plus
+search (`search_after_s`, `search_radius_m`, `search_goal_s`,
+`search_timeout_s`) and retry (`max_gate_retries`, `retry_clearance_m`). A
+converted schema 3 file gets search and retries disabled, its old behaviour.
+Reference startup requires freshness budgets of two sensor periods plus the
+processing margin. Sensor periods round up to a physics tick, recorded in
+`resolved_configuration.json`; rates above the physics update rate fail.
+These reference constraints do not apply to a simulator-only run. Clock
+rollback clears freshness history; duplicate stamps never renew a measurement.
+Command expiry uses simulation time; steady time is only the liveness limit.
+
+The mapper uses the selected lidar range and message range limits. Its
+`self_geometry.json` contains actual generated visual surfaces, with each
+component's frame, scale and pose preserved. Meshes are loaded with Gazebo's
+mesh loader, retaining spaces between pontoons. A point within
+`self_filter_margin_m + 3 * lidar_noise_stddev` of a surface is discarded
+before ray clearing. This is a narrow blind band: an external object inside
+it cannot be distinguished from a self return. Missing geometry prevents
+mapper startup. An observation whose acquisition-time TF has not arrived yet
+waits for it, in stamp order, until it is older than `input_max_age_s`
+(`tf_wait.py`); the mapper and perception both do this. Dropping them instead
+lost about 10 % of lidar clouds at real-time factor 1 and 79 % at 0.3, where
+Gazebo steps in bursts and clouds arrive before the estimator's TF (measured
+on the GPU, WAM-V reference course).
+Collision geometry remains authoritative for contacts and navigation margin;
+changing visual geometry never changes mass, inertia or damping automatically.
+
+The WAM-V generator verifies both expected force-mode plugins and joints,
+and sets their Gazebo command bounds to ±`max_thrust_n` (default 500 N), as
+well as setting the watchdog limit. Njord retains individual forward/reverse
+limits, yaw and actuator response times. Wind direction specifies the
+direction the air **moves toward**, measured counterclockwise from ENU east
+(or body forward in the coefficient table).
+
+Managed runs mount workspace defaults at `/workspace-config` and selected
+configuration at `/config`, both read-only. A configured mount missing a file
+fails; no image YAML fallback is allowed. Before readiness, the simulator
+freezes default YAML under `frozen_config/` and selected inputs, localization
+and optional ROS overrides under `source_config/`. Nodes read the snapshots.
+The manifest hashes these inputs, generated visual geometry and mesh resources.
+
+Full image verification (`check-image`, `test`, CI) uses all build inputs.
+Runtime verification uses an additional digest excluding only regular YAML
+under `njord_sim/config`; code, Xacro, mesh and built-in scenario changes
+require a rebuild. Missing labels or mismatches fail with no validation bypass.
+The wrapper and direct benchmark/campaign entrypoints pin an immutable image
+ID before checking and starting the run.

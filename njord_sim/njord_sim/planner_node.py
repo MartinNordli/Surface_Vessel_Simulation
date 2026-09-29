@@ -69,6 +69,7 @@ class Planner(Node):
         self.core = IncrementalPlanner()
         self.geometry = self.data = self.position = self.goal = None
         self.map_stamp = self.odom_stamp = None
+        self.last_sim_time = None
         # dirty: inputs changed since the last plan, so the next step() replans.
         self.dirty = True
         self.points = []  # current path as map-frame (x, y) points; [] = invalid
@@ -131,6 +132,11 @@ class Planner(Node):
         Runs on the timer and after every new map or goal.
         """
         now = self.get_clock().now().nanoseconds * 1e-9  # /clock simulation time, s
+        if self.last_sim_time is not None and now < self.last_sim_time:
+            self.geometry = self.data = self.position = self.goal = None
+            self.map_stamp = self.odom_stamp = None
+            self.dirty = True
+        self.last_sim_time = now
         if not fresh(now, self.map_stamp, self.timeout) or not fresh(now, self.odom_stamp, self.timeout):
             # Force a full replan once fresh inputs return.
             self.dirty = True

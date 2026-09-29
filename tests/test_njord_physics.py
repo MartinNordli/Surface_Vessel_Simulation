@@ -18,7 +18,9 @@ from njord_sim.physics_core import (
     damping_wrench,
     thruster_wrench,
     wind_coefficients,
+    wind_load,
 )
+from njord_sim.constants import LIDAR_VISIBILITY_MASK
 from njord_sim.njord_model import generate
 
 
@@ -73,6 +75,43 @@ class PhysicsTests(unittest.TestCase):
             )
             subprocess.run([binary], check=True, capture_output=True)
 
+    def test_cpp_loads_match_physics_core_vectors(self):
+        if not shutil.which("c++"):
+            self.skipTest("C++ compiler unavailable")
+        with tempfile.TemporaryDirectory() as d:
+            binary = str(Path(d) / "loads")
+            subprocess.run(["c++", "-std=c++17", "-I", str(ROOT / "njord_gz_plugins/include"),
+                            str(ROOT / "njord_gz_plugins/test/loads_test.cc"), "-o", binary],
+                           check=True, capture_output=True)
+            subprocess.run([binary, str(ROOT / "njord_gz_plugins/test/load_vectors.csv")],
+                           check=True, capture_output=True)
+
+    def test_physics_core_still_reproduces_the_shared_vectors(self):
+        # Regenerating with scripts/make_load_vectors.py is a reviewed change,
+        # never something a test does.
+        table = []
+        rows = [line.split(",") for line in
+                (ROOT / "njord_gz_plugins/test/load_vectors.csv").read_text().splitlines()]
+        for kind, *values in rows:
+            v = [float(x) for x in values]
+            if kind == "table":
+                table.append(dict(angle_deg=v[0], cx=v[1], cy=v[2], cn=v[3]))
+            elif kind == "coeff":
+                got = wind_coefficients(v[0], table)
+                expected = v[1:4]
+            elif kind == "wind":
+                got = wind_load((v[0], v[1]), v[2], v[3], v[4], table)
+                expected = v[5:8]
+            elif kind == "thrust":
+                force, torque = thruster_wrench(v[0], v[1:4], v[4:7], v[7:10])
+                got, expected = (*force, *torque), v[10:16]
+            else:
+                self.fail(f"unknown row kind {kind}")
+            if kind != "table":
+                for g, e in zip(got, expected):
+                    self.assertAlmostEqual(g, e, delta=1e-12 * max(1.0, abs(e)))
+        self.assertGreater(len(rows), 20)
+
     def test_multiple_convex_buoyancy_volumes(self):
         from njord_sim.mesh_geometry import geometry_mesh
 
@@ -105,7 +144,7 @@ class PhysicsTests(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as directory:
             generate(directory, resolved)
-            root = ET.parse(Path(directory) / "wamv.sdf")
+            root = ET.parse(Path(directory) / "vessel.sdf")
             volumes = root.findall("model/plugin/buoyancy_volume")
             self.assertEqual(len(volumes), 2)
             for volume, y in zip(volumes, (-0.7, 0.7)):
@@ -131,7 +170,7 @@ class PhysicsTests(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as d:
             urdf, config = generate(d, resolved)
-            root = ET.parse(Path(d) / "wamv.sdf")
+            root = ET.parse(Path(d) / "vessel.sdf")
             model = root.find("model")
             link = model.find("link")
             self.assertEqual(float(link.findtext("inertial/mass")), 180)
@@ -142,7 +181,20 @@ class PhysicsTests(unittest.TestCase):
             self.assertEqual(hydro.findtext("xU"), "-40.0")
             self.assertIsNotNone(link.find("inertial/fluid_added_mass/xx"))
             self.assertEqual(len(link.findall("sensor")), 5)
-            self.assertIn("wamv/front_left_camera_link_optical", urdf)
+            self.assertIn("front_left_camera_link_optical", urdf)
+            self.assertEqual(model.get("name"), "vessel")
+            # The lidar must not see the rendered sea (visibility flag 8), like the VRX WAM-V lidar.
+            lidar = link.find("sensor[@type='gpu_lidar']")
+            self.assertEqual(lidar.findtext("lidar/visibility_mask"), str(LIDAR_VISIBILITY_MASK))
+            self.assertEqual(LIDAR_VISIBILITY_MASK & 8, 0)
+            self.assertEqual(link.get("name"), "base_link")
+            # Same ROS-facing names as the WAM-V (constants.py).
+            ros_topics = {b["ros_topic_name"] for b in yaml.safe_load((Path(d) / "bridges.yaml").read_text())}
+            self.assertLessEqual({"/sensors/lidar/points", "/sensors/lidar/scan", "/sim/sensors/imu/data_raw",
+                                  "/sim/sensors/gps/fix_raw", "/sim/ground_truth/odometry",
+                                  "/sensors/cameras/front_left/image_raw",
+                                  "/sensors/cameras/front_right/camera_info"}, ros_topics)
+            self.assertFalse([topic for topic in ros_topics if "wamv" in topic])
             thrusters = model.findall("plugin[@name='njord::Physics']/thruster")
             self.assertEqual([t.get("name") for t in thrusters], ["thruster_1", "thruster_2"])
             self.assertEqual(thrusters[1].findtext("position"), "-1.2 -0.6 -0.1")
@@ -150,13 +202,13 @@ class PhysicsTests(unittest.TestCase):
             self.assertNotIn("thruster_separation_m", config)
             if shutil.which("gz"):
                 result = subprocess.run(
-                    ["gz", "sdf", "-k", str(Path(d) / "wamv.sdf")],
+                    ["gz", "sdf", "-k", str(Path(d) / "vessel.sdf")],
                     capture_output=True,
                     text=True,
                 )
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 printed = subprocess.run(
-                    ["gz", "sdf", "-p", str(Path(d) / "wamv.sdf")],
+                    ["gz", "sdf", "-p", str(Path(d) / "vessel.sdf")],
                     capture_output=True,
                     text=True,
                     check=True,
@@ -183,7 +235,7 @@ class PhysicsTests(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as d:
             generate(d, resolved)
-            thrusters = ET.parse(Path(d) / "wamv.sdf").findall(
+            thrusters = ET.parse(Path(d) / "vessel.sdf").findall(
                 "model/plugin[@name='njord::Physics']/thruster")
             self.assertEqual(len(thrusters), 4)
             axis = [float(v) for v in thrusters[0].findtext("axis").split()]

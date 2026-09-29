@@ -54,6 +54,7 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from std_msgs.msg import Float64
 
+from njord_sim.constants import BASE_FRAME
 from njord_sim.defaults import node_defaults
 from njord_sim.control_core import allocate_thrusters, clearance, segment_is_free, speed_limit, tracking_corridor, wrap
 from njord_sim.geometry import stamp_seconds
@@ -68,7 +69,7 @@ class Guidance(Node):
         self.declare_parameters('', [
             ('path_topic', '/njord/path'), ('odom_topic', '/njord/odometry'),
             ('grid_topic', '/njord/occupancy'), ('status_topic', '/njord/planner_status'),
-            ('map_frame', 'map'), ('base_frame', 'wamv/base_link'),
+            ('map_frame', 'map'), ('base_frame', BASE_FRAME),
             # Tuning, speed ceiling and thruster layout: from algorithms.yaml
             # and the vessel file (see defaults.py); a run overrides them.
             *node_defaults('guidance'),
@@ -89,6 +90,7 @@ class Guidance(Node):
         # state: ((x, y) m, yaw rad, surge m/s, yaw rate rad/s) in map frame.
         self.state = self.geometry = self.data = None
         self.path_stamp = self.odom_stamp = self.grid_stamp = self.status_stamp = None
+        self.last_sim_time = None
         self.status_valid = False
         self.create_subscription(Path, self.p('path_topic'), self.on_path, 1)
         self.create_subscription(Odometry, self.p('odom_topic'), self.on_odom, qos_profile_sensor_data)
@@ -153,6 +155,12 @@ class Guidance(Node):
     def step(self):
         """One control cycle: validate inputs, pick a target, publish thrust."""
         now = self.get_clock().now().nanoseconds * 1e-9  # /clock simulation time, s
+        if self.last_sim_time is not None and now < self.last_sim_time:
+            self.path = []
+            self.state = self.geometry = self.data = None
+            self.path_stamp = self.odom_stamp = self.grid_stamp = self.status_stamp = None
+            self.status_valid = False
+        self.last_sim_time = now
         # Every input must be present and fresh by its own acquisition stamp.
         if (not self.path or self.state is None or self.geometry is None or not self.status_valid
                 or not all(fresh(now, stamp, self.p('stale_after_s')) for stamp in

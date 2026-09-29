@@ -5,8 +5,11 @@
 // thrust commands to the upstream VRX thruster plugins.
 //
 // SDF parameters:
-//   <timeout_s>    steady wall-clock seconds a command stays valid (default 0.5,
-//                  set from constants.COMMAND_TIMEOUT_S)
+//   <timeout_s>    simulation seconds a command stays valid (required, set
+//                  from constants.COMMAND_TIMEOUT_S)
+//   <liveness_timeout_s> steady wall-clock seconds without a command before
+//                  thrust is zeroed even if simulation time is stalled
+//                  (required, set from constants.PROCESS_LIVENESS_S)
 //   <max_force_n>  symmetric thrust limit in newtons (default 500, set from
 //                  the vessel's max_thrust_n)
 //
@@ -17,9 +20,9 @@
 //   publishes  /wamv/thrusters/right/thrust    gz.msgs.Double, newtons
 //
 // Failure behavior: a non-finite value or a command without exactly two values
-// zeroes both thrusters; a command older
-// than timeout_s (steady time), no command yet, or a paused simulation all
-// publish zero thrust. Zero thrust is a command to the VRX thruster model,
+// zeroes both thrusters; a command received more than timeout_s of simulation
+// time or liveness_timeout_s of steady time ago, no command yet, or a paused
+// simulation all publish zero thrust. Zero thrust is a command to the VRX thruster model,
 // not a stop: the hull keeps its momentum and is slowed only by hydrodynamics.
 #include <algorithm>
 #include <chrono>
@@ -37,8 +40,9 @@ namespace njord {
 // data[1] = right (thruster_2), in the order of constants.WAMV_THRUSTERS.
 class ActuatorWatchdog final : public gz::sim::System,
   public gz::sim::ISystemConfigure, public gz::sim::ISystemPreUpdate {
-  // Steady wall time: command freshness is an infrastructure watchdog and
-  // must not depend on /clock, which stops when the simulator stalls.
+  // Command freshness is measured in simulation time, so a command acts for
+  // the same simulated duration at any real-time factor. Steady wall time is
+  // only the liveness watchdog for a publisher that died while /clock stalls.
   using Clock = std::chrono::steady_clock;
   gz::transport::Node node;
   gz::transport::Node::Publisher leftPub, rightPub;
@@ -47,14 +51,20 @@ class ActuatorWatchdog final : public gz::sim::System,
   std::mutex mutex;
   // Epoch default: before the first command the age is huge, so thrust is 0.
   Clock::time_point received{};
-  double left{0}, right{0}, timeout{0.5}, maxForce{500};
+  // Simulation time of the first step after the last command arrived.
+  std::chrono::steady_clock::duration receivedSim{};
+  bool stampPending{}, commanded{};
+  double left{0}, right{0}, timeout{0}, liveness{0}, maxForce{500};
  public:
   void Configure(const gz::sim::Entity &, const std::shared_ptr<const sdf::Element> &sdf,
                  gz::sim::EntityComponentManager &, gz::sim::EventManager &) override {
-    timeout = sdf->Get<double>("timeout_s", 0.5).first;
+    timeout = sdf->Get<double>("timeout_s", 0.0).first;
+    liveness = sdf->Get<double>("liveness_timeout_s", 0.0).first;
     maxForce = sdf->Get<double>("max_force_n", 500).first;
-    if (!std::isfinite(timeout) || !std::isfinite(maxForce) || timeout <= 0 || maxForce <= 0)
-      throw std::invalid_argument("watchdog timeout_s and max_force_n must be positive finite values");
+    if (!std::isfinite(timeout) || !std::isfinite(liveness) || !std::isfinite(maxForce) ||
+        timeout <= 0 || liveness <= 0 || maxForce <= 0)
+      throw std::invalid_argument(
+          "watchdog timeout_s, liveness_timeout_s and max_force_n must be positive finite values");
     leftPub = node.Advertise<gz::msgs::Double>("/wamv/thrusters/left/thrust");
     rightPub = node.Advertise<gz::msgs::Double>("/wamv/thrusters/right/thrust");
     node.Subscribe("/njord/actuator_forces", &ActuatorWatchdog::Command, this);
@@ -67,12 +77,20 @@ class ActuatorWatchdog final : public gz::sim::System,
     left = ok ? std::clamp<double>(msg.data(0), -maxForce, maxForce) : 0;
     right = ok ? std::clamp<double>(msg.data(1), -maxForce, maxForce) : 0;
     received = Clock::now();
+    stampPending = commanded = true;
   }
   // Every simulation step: republish the stored forces, or zero when the
   // command is stale or the simulation is paused.
   void PreUpdate(const gz::sim::UpdateInfo &info, gz::sim::EntityComponentManager &) override {
     std::lock_guard<std::mutex> lock(mutex);
-    const bool valid = !info.paused && std::chrono::duration<double>(Clock::now()-received).count() <= timeout;
+    if (stampPending) {
+      receivedSim = info.simTime;
+      stampPending = false;
+    }
+    // A simulation reset moves simTime before receivedSim: treat as stale.
+    const double simAge = std::chrono::duration<double>(info.simTime - receivedSim).count();
+    const bool valid = !info.paused && commanded && simAge >= 0 && simAge <= timeout &&
+                       std::chrono::duration<double>(Clock::now()-received).count() <= liveness;
     gz::msgs::Double l, r;
     l.set_data(valid ? left : 0); r.set_data(valid ? right : 0);
     leftPub.Publish(l); rightPub.Publish(r);

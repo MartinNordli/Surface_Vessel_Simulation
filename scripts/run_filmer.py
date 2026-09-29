@@ -31,8 +31,6 @@ import threading
 import time
 
 WORLD = 'njord_course'   # world name in scenario.world_xml
-VESSEL = 'wamv'          # model name in the generated vessel SDF
-TRUTH_TOPIC = '/wamv/ground_truth/odometry'  # vessel OdometryPublisher, world frame
 CAMERA = 'film_camera'
 IMAGE_TOPIC = '/njord/film/image'
 WIDTH, HEIGHT = 960, 540  # pixels
@@ -111,6 +109,7 @@ def main():
     from gz.msgs10.odometry_pb2 import Odometry
     from gz.msgs10.pose_pb2 import Pose
     from gz.transport13 import Node
+    from njord_sim.constants import GROUND_TRUTH_TOPIC, GZ_MODEL_NAME
     from njord_sim.run_manifest import wait_ready
 
     output = Path(os.environ.get('OUTPUT_DIR', '/outputs'))
@@ -158,11 +157,11 @@ def main():
                 log.flush()
 
     threading.Thread(target=writer, daemon=True).start()
-    node.subscribe(Odometry, TRUTH_TOPIC, on_odometry)
+    node.subscribe(Odometry, GROUND_TRUTH_TOPIC, on_odometry)
     deadline = time.monotonic() + 60.0
     while state['vessel'] is None:
         if time.monotonic() > deadline:
-            raise TimeoutError(f'No vessel pose on {TRUTH_TOPIC}')
+            raise TimeoutError(f'No vessel pose on {GROUND_TRUTH_TOPIC}')
         time.sleep(0.1)
 
     follow = Follow(SMOOTHING_S)
@@ -178,7 +177,7 @@ def main():
     if not (ok and reply.data):
         raise RuntimeError(f'Could not spawn {CAMERA} into /world/{WORLD}')
     node.subscribe(Image, IMAGE_TOPIC, on_image)
-    print(f'Filming {VESSEL} into {film}', flush=True)
+    print(f'Filming {GZ_MODEL_NAME} into {film}', flush=True)
 
     # Move the camera in steady wall time; the filter itself runs on sim time.
     while True:

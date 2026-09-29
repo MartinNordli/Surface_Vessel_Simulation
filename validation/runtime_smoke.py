@@ -16,6 +16,8 @@ to 1, so a smoke run does not see or disturb a live simulator on domain 42.
 ROS logs go to a temporary directory. Exit code: unittest's (0 = all passed).
 """
 import math
+import json
+from unittest.mock import patch
 import os
 from pathlib import Path
 import sys
@@ -46,6 +48,7 @@ from sensor_msgs_py import point_cloud2
 from std_msgs.msg import Bool, Float64, Header
 from tf2_ros import StaticTransformBroadcaster
 
+from njord_sim.constants import BASE_FRAME, COMMAND_TIMEOUT_S, LIDAR_POINTS_TOPIC, PROCESS_LIVENESS_S
 from njord_sim.command_guard_node import CommandGuard
 from njord_sim.guidance_node import Guidance
 from njord_sim.mapper_node import Mapper
@@ -114,7 +117,7 @@ class RosCase(unittest.TestCase):
                             'map_stamp': self.planner.map_stamp, 'odom_stamp': self.planner.odom_stamp,
                             'clock': self.planner.get_clock().now().nanoseconds * 1e-9,
                             'guidance_stamps': [self.guidance.path_stamp, self.guidance.odom_stamp, self.guidance.grid_stamp, self.guidance.status_stamp],
-                            'guard_values': self.guard.values,
+                            'guard_inputs': self.guard.core.inputs,
                             'paths': [len(p.poses) for p in getattr(self, 'paths', [])[-5:]],
                             'statuses': [(m.status[0].level,m.status[0].message) for m in getattr(self, 'statuses', [])[-5:]]})
         self.assertTrue(predicate(), 'ROS condition was not met before timeout: ' + details)
@@ -207,7 +210,7 @@ class PlannerGuidanceTransportTests(RosCase):
             grid.data[10 * 40 + 25] = 100
         self.grid_pub.publish(grid)
         odom = Odometry()
-        odom.header.frame_id, odom.child_frame_id = 'map', 'wamv/base_link'
+        odom.header.frame_id, odom.child_frame_id = 'map', BASE_FRAME
         odom.header.stamp = self.driver.get_clock().now().to_msg()
         odom.header.stamp.sec -= int(self.odom_age)
         odom.pose.pose.position.x, odom.pose.pose.position.y = 10.5, 10.5
@@ -220,8 +223,7 @@ class PlannerGuidanceTransportTests(RosCase):
         return bool(self.outputs) and self.outputs[-1][0] > 1 and self.outputs[-1][1] > 1
 
     def test_blocked_goal_publishes_empty_path_zeroes_actuators_and_recovers(self):
-        self.until(self.moving, self.inputs)
-        self.assertTrue(self.paths[-1].poses)
+        self.until(lambda: self.moving() and self.paths and self.paths[-1].poses, self.inputs)
         self.blocked = True
         # Path and diagnostic messages arrive on separate DDS subscriptions;
         # observing one does not establish delivery of the other under load.
@@ -233,8 +235,9 @@ class PlannerGuidanceTransportTests(RosCase):
         self.assertEqual(self.statuses[-1].status[0].level, DiagnosticStatus.ERROR)
         self.assert_zero()
         self.blocked = False
-        self.until(self.moving, self.inputs)
-        self.assertTrue(self.paths[-1].poses)
+        # The guard forwards thrust as soon as guidance commands it, which can
+        # reach this driver before the path that guidance already acted on.
+        self.until(lambda: self.moving() and self.paths[-1].poses, self.inputs)
 
     def test_republished_old_odometry_cannot_freshen_commands(self):
         self.until(self.moving, self.inputs)
@@ -301,7 +304,7 @@ class ExternalFourThrusterControllerTests(RosCase):
 
 
 class GuardSteadyClockTests(RosCase):
-    """The guard's watchdog must use steady time, not the (frozen) ROS clock."""
+    """With /clock frozen, the guard's steady-time liveness limit still zeroes thrust."""
     def test_source_timeout_with_frozen_ros_clock(self):
         guard = self.add(CommandGuard())
         result = guard.set_parameters([Parameter('use_sim_time', value=True)])
@@ -325,27 +328,90 @@ class GuardSteadyClockTests(RosCase):
 
         self.until(lambda: guard.get_clock().now().nanoseconds == 123000000000, feed_clock)
         self.until(lambda: self.outputs and self.outputs[-1] == (80.0, 100.0), feed)
-        self.pump(0.85, feed_clock)
+        # Simulation time stands still, so only the steady liveness limit can expire.
+        self.pump(PROCESS_LIVENESS_S + 0.4, feed_clock)
         self.assertEqual(guard.get_clock().now().nanoseconds, 123000000000)
         self.assert_zero()
+
+
+class GuardRealTimeFactorTests(RosCase):
+    """Thrust passes at slow and fast real-time factors over real DDS and expires
+    COMMAND_TIMEOUT_S of simulation time after the controller stops."""
+
+    def drive_at(self, rtf):
+        guard = self.add(CommandGuard())
+        for node in (self.driver, guard):
+            self.assertTrue(node.set_parameters([Parameter('use_sim_time', value=True)])[0].successful)
+        clock_pub = self.driver.create_publisher(Clock, '/clock', 1)
+        commands = [self.driver.create_publisher(Float64, f'/thruster_{i}/command', 1) for i in (1, 2)]
+        planner = self.driver.create_publisher(DiagnosticArray, '/njord/planner_status', 1)
+        received = []  # (simulation time at receipt, forces)
+        self.driver.create_subscription(Float32Array, '/njord/actuator_forces', lambda m: received.append(
+            (self.driver.get_clock().now().nanoseconds * 1e-9, tuple(m.data))), 10)
+        origin = time.monotonic()
+        state = {'controller': True, 'command': 0.0, 'status': 0.0, 'last_command': None}
+
+        def tick():
+            # Simulation time advances rtf seconds per steady second.
+            now = 1000.0 + rtf * (time.monotonic() - origin)
+            clock = Clock()
+            clock.clock.sec, clock.clock.nanosec = int(now), int((now % 1) * 1e9)
+            clock_pub.publish(clock)
+            if state['controller'] and now >= state['command']:
+                for publisher, force in zip(commands, (80.0, 100.0)):
+                    publisher.publish(Float64(data=force))
+                state['command'], state['last_command'] = now + 0.05, now
+            if now >= state['status']:
+                self.status(planner, 'njord/planner', clock.clock)
+                self.authority(clock.clock)
+                state['status'] = now + 0.1
+
+        self.until(lambda: received and received[-1][1] == (80.0, 100.0), tick, timeout=6.0)
+        start = len(received)
+        self.pump(1.0, tick)
+        self.assertTrue(all(forces == (80.0, 100.0) for _, forces in received[start:]), received[start:][:5])
+        state['controller'] = False
+        stopped = len(received)
+        self.pump(COMMAND_TIMEOUT_S / rtf + 0.6, tick)
+        zeros = [sim for sim, forces in received[stopped:] if forces == (0.0, 0.0)]
+        self.assertTrue(zeros, received[stopped:][-3:])
+        # Expiry in simulation time; one 20 Hz steady tick of slack scaled by rtf.
+        delay = zeros[0] - state['last_command']
+        self.assertGreaterEqual(delay, COMMAND_TIMEOUT_S - 0.02, delay)
+        self.assertLessEqual(delay, COMMAND_TIMEOUT_S + 0.1 * max(rtf, 1.0) + 0.05, delay)
+        self.assertEqual(received[-1][1], (0.0, 0.0))
+
+    def test_slow_real_time_factor(self):
+        self.drive_at(0.3)
+
+    def test_fast_real_time_factor(self):
+        self.drive_at(3.0)
 
 
 class MapperTransportTests(RosCase):
     """Mapper turns a timestamped lidar cloud into occupied, free and unknown cells."""
     def test_timestamped_tf_cloud_obstacle_and_map_heartbeat(self):
-        mapper = self.add(Mapper())
+        geometry = Path(_ros_logs.name) / 'synthetic_self_geometry.json'
+        geometry.write_text(json.dumps({'version': 1, 'frame': BASE_FRAME, 'surfaces': [
+            {'vertices': [[-1.,-1.,-1.],[1.,-1.,-1.],[0.,1.,-1.]], 'faces': [[0,1,2]]}]}))
+        original = Mapper.declare_parameters
+        def declare(node, namespace, values, *args, **kwargs):
+            values = [(value[0], str(geometry), *value[2:]) if value[0] == 'self_geometry_path' else value for value in values]
+            return original(node, namespace, values, *args, **kwargs)
+        with patch.object(Mapper, 'declare_parameters', declare):
+            mapper = self.add(Mapper())
         publisher = self.driver.create_publisher(PointCloud2,
-                    '/wamv/sensors/lidars/lidar_wamv_sensor/points', 1)
+                    LIDAR_POINTS_TOPIC, 1)
         grids = []
         self.driver.create_subscription(OccupancyGrid, '/njord/occupancy', grids.append, 10)
         broadcaster = StaticTransformBroadcaster(self.driver)
         boat = TransformStamped()
-        boat.header.frame_id, boat.child_frame_id = 'map', 'wamv/base_link'
+        boat.header.frame_id, boat.child_frame_id = 'map', BASE_FRAME
         boat.header.stamp = self.driver.get_clock().now().to_msg()
         boat.transform.translation.x = boat.transform.translation.y = 10.5
         boat.transform.rotation.w = 1.0
         lidar = TransformStamped()
-        lidar.header.frame_id, lidar.child_frame_id = 'wamv/base_link', 'smoke_lidar'
+        lidar.header.frame_id, lidar.child_frame_id = BASE_FRAME, 'smoke_lidar'
         lidar.header.stamp = boat.header.stamp
         lidar.transform.translation.z, lidar.transform.rotation.w = 2.0, 1.0
         broadcaster.sendTransform([boat, lidar])

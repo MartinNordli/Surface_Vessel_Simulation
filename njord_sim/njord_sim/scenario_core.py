@@ -262,7 +262,8 @@ class RaceScorer:
             self.status = "geometric_overlap"
         elif self.status == "running":
             if self.next_gate == len(self.scenario["gates"]):
-                self.status = "completed"
+                self.status = ("completed" if self.gate_events[-1]["time_s"] < self.scenario["timeout_s"]
+                               else "simulation_timeout")
                 # Race time ends at the interpolated final gate crossing.
                 self.elapsed = self.gate_events[-1]["time_s"]
             elif self.elapsed >= self.scenario["timeout_s"]:
@@ -297,3 +298,12 @@ class RaceScorer:
             "gates_total": len(self.scenario["gates"]),
             "gate_events": self.gate_events,
         }
+
+
+def wall_budget_s(minimum_s, timeout_s, real_time_factor):
+    """Steady-time budget (s) for a run: never below ``minimum_s``, and room for
+    the scenario's ``timeout_s`` of simulation time at half the target
+    ``real_time_factor``, since a loaded host reaches less than the target.
+    It is an infrastructure watchdog; the race limit is the simulation timeout.
+    Used by the evaluator and, plus startup time, by the benchmark."""
+    return max(minimum_s, 2.0 * timeout_s / real_time_factor)

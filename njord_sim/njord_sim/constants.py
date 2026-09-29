@@ -16,14 +16,66 @@ the autonomy launch from silently disagreeing.
 # otherwise GPS positions and the ENU map frame drift apart.
 WORLD_ORIGIN_WGS84 = (63.4305, 10.3951, 0.0)
 
-# Steady wall-clock time after which a missing thrust command is treated as
-# stale. Used by the ROS command guard and both Gazebo actuator plugins.
+# Actuation uses two clocks (docs/interfaces.md). A thrust command or health
+# heartbeat is stale once it is older than COMMAND_TIMEOUT_S of simulation
+# time: that decides how long it acts on the boat, at any real-time factor.
+# PROCESS_LIVENESS_S of steady wall time is only a watchdog for a stopped
+# /clock or a dead process; while simulation time stands still the boat does
+# not move either, so it can be generous. Heartbeats at 10 Hz of simulation
+# time stay live down to a real-time factor of about 0.05. Used by the ROS
+# command guard, both Gazebo actuator plugins and the evaluator.
 COMMAND_TIMEOUT_S = 0.5
+PROCESS_LIVENESS_S = 2.0
+
+# Health heartbeats of the processes the simulator starts itself, as
+# key -> (topic, DiagnosticStatus name). configuration.guard_requirements
+# decides which of them the guard and the evaluator require.
+HEARTBEATS = {'navigation': ('/njord/navigation_status', 'navigation'),
+              'planner': ('/njord/planner_status', 'njord/planner'),
+              'mission': ('/njord/mission_status', 'mission')}
 
 # ROS topic on which the command guard receives one thruster's force in
 # newtons (std_msgs/Float64), formatted with the thruster name from the vessel
 # file. '/thruster_1/command' matches Control & Autonomy's allocation node.
 THRUSTER_COMMAND_TOPIC = '/{name}/command'
+
+# ROS-facing sensor topics and frames, identical for every vessel profile so a
+# team's code does not depend on which boat is simulated (docs/interfaces.md).
+# Frames follow REP-105 without a vessel prefix. The Gazebo link names equal
+# the frame names, so TF, sensor headers and Gazebo agree. Topics under /sim
+# exist only in simulation: ground truth and raw GPS/IMU before the sensor
+# adapter adds noise. Autonomy must not subscribe to them.
+GZ_MODEL_NAME = 'vessel'  # Gazebo model name; contact names start with 'vessel::'
+BASE_FRAME = 'base_link'
+CAMERAS = ('front_left', 'front_right')
+LIDAR_FRAME = 'lidar_link'
+IMU_FRAME = 'imu_link'
+GPS_FRAME = 'gps_link'
+LIDAR_POINTS_TOPIC = '/sensors/lidar/points'
+LIDAR_SCAN_TOPIC = '/sensors/lidar/scan'
+IMU_TOPIC = '/sensors/imu/data'
+GPS_TOPIC = '/sensors/gps/fix'
+IMU_RAW_TOPIC = '/sim/sensors/imu/data_raw'
+GPS_RAW_TOPIC = '/sim/sensors/gps/fix_raw'
+GROUND_TRUTH_TOPIC = '/sim/ground_truth/odometry'
+
+# Gazebo visibility mask of every lidar. The VRX sea surface (coast_waves) is
+# a visual with visibility flag 8, drawn with shader waves the flat-water
+# physics does not have; the pinned VRX WAM-V lidar uses mask 7 so it does not
+# see it, and a real lidar returns very little from water. Without the mask the
+# Njord lidar saw that surface up to about 0.6 m above the physical water level
+# 3-10 m around the boat and the mapper marked it as obstacles.
+LIDAR_VISIBILITY_MASK = 7
+
+
+def camera_frame(camera, optical=False):
+    """Body-aligned camera link of ``camera`` in CAMERAS, or its ROS optical frame."""
+    return f'{camera}_camera_link' + ('_optical' if optical else '')
+
+
+def camera_topic(camera, name):
+    """Camera topic; ``name`` is 'image_raw' or 'camera_info'."""
+    return f'/sensors/cameras/{camera}/{name}'
 
 # The WAM-V hull, hydrodynamics and thruster placement come from the pinned
 # VRX model. Only its sensors and thrust limit are configurable in YAML.

@@ -109,10 +109,13 @@ COPY docker/dependencies.lock.json /opt/njord/dependencies.lock.json
 # variables, which run manifests and metrics record.
 ARG NJORD_IMAGE_SOURCE_COMMIT=unknown
 ARG NJORD_IMAGE_SOURCE_DIGEST=unknown
+ARG NJORD_IMAGE_EXECUTABLE_DIGEST=unknown
 LABEL org.opencontainers.image.revision="${NJORD_IMAGE_SOURCE_COMMIT}" \
-      io.njord.source.digest="${NJORD_IMAGE_SOURCE_DIGEST}"
+      io.njord.source.digest="${NJORD_IMAGE_SOURCE_DIGEST}" \
+      io.njord.executable.digest="${NJORD_IMAGE_EXECUTABLE_DIGEST}"
 ENV NJORD_IMAGE_SOURCE_COMMIT=${NJORD_IMAGE_SOURCE_COMMIT} \
-    NJORD_IMAGE_SOURCE_DIGEST=${NJORD_IMAGE_SOURCE_DIGEST}
+    NJORD_IMAGE_SOURCE_DIGEST=${NJORD_IMAGE_SOURCE_DIGEST} \
+    NJORD_IMAGE_EXECUTABLE_DIGEST=${NJORD_IMAGE_EXECUTABLE_DIGEST}
 # Unbuffered Python output for live logs; expose NVIDIA graphics and compute
 # to the container; default ROS domain 42 (compose.yaml can override it).
 ENV PYTHONUNBUFFERED=1 NVIDIA_DRIVER_CAPABILITIES=graphics,utility,compute,display ROS_DOMAIN_ID=42

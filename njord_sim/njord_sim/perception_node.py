@@ -7,7 +7,7 @@ the resulting buoy positions are tracked per camera (see ``perception_core``).
 Subscribes (best-effort sensor QoS):
     ``image_topics`` (sensor_msgs/Image): undistorted RGB images, one per
         camera, in the camera optical frame (x right, y down, z forward).
-        Default: front left and right WAM-V cameras, ``.../image_raw``.
+        Default: the front left and right cameras, ``/sensors/cameras/<camera>/image_raw``.
     ``camera_info_topics`` (sensor_msgs/CameraInfo): intrinsics per camera,
         in the same order as ``image_topics``.
     ``points_topic`` (sensor_msgs/PointCloud2): 3D lidar in the lidar frame.
@@ -55,8 +55,11 @@ from sensor_msgs_py import point_cloud2
 from tf2_ros import Buffer, TransformException, TransformListener
 from vision_msgs.msg import Detection3D, Detection3DArray, ObjectHypothesisWithPose
 
+from njord_sim.constants import CAMERAS, LIDAR_POINTS_TOPIC, camera_topic
 from njord_sim.geometry import stamp_seconds, transform_from_ros
+from njord_sim.defaults import node_defaults
 from njord_sim.perception_core import associate_lidar, BuoyTracker, detect_blobs
+from njord_sim.tf_wait import TfWaitQueue
 
 
 class Perception(Node):
@@ -64,14 +67,12 @@ class Perception(Node):
 
     def __init__(self):
         super().__init__("perception")
-        roots = ["/wamv/sensors/cameras/front_left_camera_sensor",
-                 "/wamv/sensors/cameras/front_right_camera_sensor"]
         self.declare_parameters("", [
-            ("image_topics", [root+"/image_raw" for root in roots]),
-            ("camera_info_topics", [root+"/camera_info" for root in roots]),
-            ("points_topic", "/wamv/sensors/lidars/lidar_wamv_sensor/points"),
+            ("image_topics", [camera_topic(camera, "image_raw") for camera in CAMERAS]),
+            ("camera_info_topics", [camera_topic(camera, "camera_info") for camera in CAMERAS]),
+            ("points_topic", LIDAR_POINTS_TOPIC),
             ("buoys_topic", "/njord/buoys"), ("map_frame", "map"),
-            ("sync_tolerance_s", 0.12), ("input_max_age_s", 0.5),
+            *node_defaults("perception"),
             ("min_blob_area", 20), ("min_observations", 3), ("track_ttl_s", 2.0),
         ])
         self.p = lambda name: self.get_parameter(name).value
@@ -87,9 +88,16 @@ class Perception(Node):
                          for i in range(len(images))}
         # Stamp [s] of the last processed image per camera, to drop duplicates.
         self.last_images = {}
+        self.last_cloud = None
+        self.last_clock = None
         self.bridge = CvBridge()
         self.tf = Buffer()
         self.listener = TransformListener(self.tf, self)
+        # Clouds and images wait here for TF at their acquisition stamp (see
+        # tf_wait), clouds first because images are fused with them.
+        self.waiting_clouds = TfWaitQueue(self.p("input_max_age_s"))
+        self.waiting_images = {i: TfWaitQueue(self.p("input_max_age_s")) for i in range(len(images))}
+        self.create_timer(0.02, self.release)  # simulation time
         self.pub = self.create_publisher(Detection3DArray, self.p("buoys_topic"), 5)
         self.create_subscription(PointCloud2, self.p("points_topic"), self.on_cloud,
                                  qos_profile_sensor_data)
@@ -101,6 +109,21 @@ class Perception(Node):
             self.create_subscription(Image, image, lambda msg, i=index: self.on_image(msg, i),
                                      qos_profile_sensor_data)
 
+    def observe_clock(self):
+        now = self.get_clock().now().nanoseconds*1e-9
+        if self.last_clock is not None and now < self.last_clock:
+            for queue in (getattr(self, "waiting_clouds", None), *getattr(self, "waiting_images", {}).values()):
+                if queue is not None:
+                    queue.clear()
+            self.clouds.clear()
+            self.last_images.clear()
+            self.last_cloud = None
+            self.trackers = {i: BuoyTracker(ttl=self.p("track_ttl_s"),
+                                            minimum_observations=self.p("min_observations"))
+                             for i in self.trackers}
+        self.last_clock = now
+        return now
+
     def on_cloud(self, msg):
         """Store a fresh lidar cloud, transformed into the map frame.
 
@@ -108,24 +131,41 @@ class Perception(Node):
         in ``map``. Because the world frame does not move with the boat, it
         can later be re-projected into a camera using the camera pose at the
         image stamp, which compensates vessel motion between the two stamps.
-        Clouds without a frame, older than ``input_max_age_s``, stamped in the
-        future, or without TF at their stamp are dropped.
+        Clouds without a frame, older than ``input_max_age_s`` or stamped in the
+        future are dropped; a cloud without TF at its stamp waits for it
+        until it is older than ``input_max_age_s``.
         """
         if not msg.header.frame_id:
             return
         stamp = stamp_seconds(msg.header.stamp)
-        now = self.get_clock().now().nanoseconds*1e-9
-        if not 0 <= now-stamp <= self.p("input_max_age_s"):
+        now = self.observe_clock()
+        if (not 0 <= now-stamp <= self.p("input_max_age_s")
+                or (self.last_cloud is not None and stamp <= self.last_cloud)):
             return
+        self.waiting_clouds.push(stamp, msg)
+        self.release()
+
+    def release(self):
+        """Process every queued cloud, then image, whose transform has arrived."""
+        now = self.observe_clock()
+        self.waiting_clouds.release(now, self.integrate_cloud)
+        for index, queue in self.waiting_images.items():
+            queue.release(now, lambda msg, i=index: self.detect(msg, i))
+
+    def integrate_cloud(self, msg):
+        """Store a queued cloud in the map frame; False while TF at its stamp is missing."""
+        stamp = stamp_seconds(msg.header.stamp)
         try:
             transform = self.tf.lookup_transform(self.p("map_frame"), msg.header.frame_id,
                                                  Time.from_msg(msg.header.stamp))
         except TransformException:
-            return
+            return False
         raw = point_cloud2.read_points_numpy(msg, field_names=("x", "y", "z"), skip_nans=True)
         raw = np.asarray(raw).reshape(-1, 3)
         raw = raw[np.isfinite(raw).all(axis=1)]
         self.clouds.append((stamp, transform_from_ros(raw, transform)))
+        self.last_cloud = stamp
+        return True
 
     def on_image(self, msg, index):
         """Detect, fuse and track buoys in one image of camera ``index``.
@@ -134,48 +174,57 @@ class Perception(Node):
         future, when no CameraInfo or cloud has arrived yet, when it is not
         newer than the previous image of this camera, when no cloud lies
         within ``sync_tolerance_s``, when the calibration is invalid or has
-        distortion, or when TF at the image stamp or image decoding fails.
+        distortion, or when image decoding fails. Until TF at the image stamp,
+        or a cloud that is still waiting for its own TF, is available the
+        image waits, up to ``input_max_age_s``.
         """
         stamp = stamp_seconds(msg.header.stamp)
-        now = self.get_clock().now().nanoseconds*1e-9
-        if (not 0 <= now-stamp <= self.p("input_max_age_s") or index not in self.info
-                or not self.clouds):
+        now = self.observe_clock()
+        if not 0 <= now-stamp <= self.p("input_max_age_s") or index not in self.info:
             return
         previous = self.last_images.get(index)
         if previous is not None and stamp <= previous:
-            # A jump back of more than 1 s means the simulation was reset:
-            # start this camera's tracks from scratch and process the image.
-            # Otherwise it is a duplicate or out-of-order image: drop it.
-            if stamp < previous-1.0:  # simulation reset
-                self.trackers[index] = BuoyTracker(ttl=self.p("track_ttl_s"),
-                                                   minimum_observations=self.p("min_observations"))
-            else:
-                return
-        self.last_images[index] = stamp
+            return
+        self.waiting_images[index].push(stamp, msg)
+        self.release()
+
+    def detect(self, msg, index):
+        """Detect and track buoys in a queued image; False to keep waiting for TF or a cloud."""
+        stamp = stamp_seconds(msg.header.stamp)
+        now = self.observe_clock()
         # Use the cloud closest in time; lidar and camera are not triggered
         # together, so a small offset is tolerated.
-        cloud_stamp, world = min(self.clouds, key=lambda item: abs(item[0]-stamp))
-        if abs(cloud_stamp-stamp) > self.p("sync_tolerance_s"):
-            return
+        near = [item for item in self.clouds if abs(item[0]-stamp) <= self.p("sync_tolerance_s")]
+        if not near:
+            # Clouds are stored in stamp order: once one is newer than the
+            # tolerance window, no matching cloud can still come.
+            return bool(self.clouds) and self.clouds[-1][0] > stamp+self.p("sync_tolerance_s")
+        cloud_stamp, world = min(near, key=lambda item: abs(item[0]-stamp))
+        if not 0 <= now-cloud_stamp <= self.p("input_max_age_s"):
+            return True
         info = self.info[index]
         # The image and its calibration must refer to the same optical frame,
         # and the focal lengths fx = k[0], fy = k[4] must be positive.
         if (not info.header.frame_id or msg.header.frame_id != info.header.frame_id
                 or info.k[0] <= 0 or info.k[4] <= 0):
-            return
+            return True
         # This baseline expects the undistorted Gazebo camera model.
         if any(abs(value) > 1e-9 for value in info.d):
             self.get_logger().warn("Camera distortion requires rectified images",
                                    throttle_duration_sec=5.0)
-            return
+            return True
         try:
             # map -> camera optical frame at the image acquisition time.
             transform = self.tf.lookup_transform(info.header.frame_id, self.p("map_frame"),
                                                  Time.from_msg(msg.header.stamp))
+        except TransformException:
+            return False
+        self.last_images[index] = stamp
+        try:
             optical = transform_from_ros(world, transform)
             bgr = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
-        except (TransformException, CvBridgeError, ValueError, RuntimeError):
-            return
+        except (CvBridgeError, ValueError, RuntimeError):
+            return True
         observations = associate_lidar(detect_blobs(bgr, self.p("min_blob_area")),
                                        optical, world, info.k)
         tracks = self.trackers[index].update(observations, stamp)
@@ -199,6 +248,7 @@ class Perception(Node):
             detection.results.append(hypothesis)
             output.detections.append(detection)
         self.pub.publish(output)
+        return True
 
 
 def main():

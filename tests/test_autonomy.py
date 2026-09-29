@@ -166,7 +166,8 @@ class NodeCallbackTests(unittest.TestCase):
 
     def setUp(self):
         self.node = self.Guidance.__new__(self.Guidance)
-        self.node.p = lambda name: {'map_frame': 'map', 'base_frame': 'wamv/base_link',
+        self.node.last_sim_time = None
+        self.node.p = lambda name: {'map_frame': 'map', 'base_frame': 'base_link',
                                    'stale_after_s': 1.0}[name]
         self.commands = []
         self.node.thrusters = [NS(publish=lambda msg: self.commands.append(msg.data))] * 2
@@ -181,7 +182,7 @@ class NodeCallbackTests(unittest.TestCase):
         pose = NS(position=NS(x=1, y=2), orientation=NS(x=0, y=0, z=0, w=1))
         twist = NS(linear=NS(x=1), angular=NS(z=0))
         self.node.on_odom(NS(header=NS(frame_id='map', stamp=NS(sec=1, nanosec=500000000)),
-                            child_frame_id='wamv/base_link', pose=NS(pose=pose), twist=NS(twist=twist)))
+                            child_frame_id='base_link', pose=NS(pose=pose), twist=NS(twist=twist)))
         self.assertEqual(self.node.odom_stamp, 1.5)
         self.node.path = [(1, 1), (5, 5)]
         self.node.geometry = Geometry(10, 10, 1, 0, 0)
@@ -190,6 +191,19 @@ class NodeCallbackTests(unittest.TestCase):
         self.node.get_clock = lambda: NS(now=lambda: NS(nanoseconds=10000000000))
         self.node.step()
         self.assertEqual(self.commands, [0.0, 0.0])
+
+    def test_clock_rollback_clears_inputs_and_zeroes_commands(self):
+        self.node.last_sim_time = 20.
+        self.node.path = [(1, 1), (5, 5)]
+        self.node.pose = (1, 1, 0)
+        self.node.geometry = Geometry(10, 10, 1, 0, 0)
+        self.node.status_valid = True
+        self.node.path_stamp = self.node.grid_stamp = self.node.status_stamp = self.node.odom_stamp = 20.
+        self.node.get_clock = lambda: NS(now=lambda: NS(nanoseconds=10000000000))
+        self.node.step()
+        self.assertEqual(self.commands, [0., 0.])
+        self.assertEqual(self.node.path, [])
+        self.assertFalse(self.node.status_valid)
 
     def test_failed_planner_status_zeroes_commands(self):
         self.node.on_status(NS(header=NS(frame_id='map', stamp=NS(sec=10, nanosec=0)),

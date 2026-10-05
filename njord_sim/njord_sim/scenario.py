@@ -20,7 +20,7 @@ import json
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
-from .constants import BASE_FRAME, GZ_MODEL_NAME, WORLD_ORIGIN_WGS84
+from .constants import BASE_FRAME, GRAVITY_MPS2, GZ_MODEL_NAME, WORLD_ORIGIN_WGS84
 from .scenario_core import load_scenario, obstacles, scenario_digest
 from .run_manifest import atomic_text
 
@@ -43,9 +43,9 @@ def world_xml(scenario, vessel_profile='wamv_reference', real_time_factor=1.0):
     sdf = ET.Element("sdf", version="1.9")
     world = element(sdf, "world", name="njord_course")
     if vessel_profile == 'njord':
-        # Match the hydrostatics adapter's gravity constant. SDF otherwise
-        # defaults to 9.8, producing a systematic displacement error.
-        element(world, 'gravity', '0 0 -9.81')
+        # Explicit world gravity; the NjordPhysics buoyancy plugin reads this
+        # value, so weight and buoyancy share one g (SDF otherwise uses 9.8).
+        element(world, 'gravity', f'0 0 {-GRAVITY_MPS2}')
     # Fixed physics step in seconds; real_time_factor is a target, not a
     # guarantee (slow hosts run slower, simulation time stays exact).
     step = scenario['environment'].get('physics_step_s', 0.004)

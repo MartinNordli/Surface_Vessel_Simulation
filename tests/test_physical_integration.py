@@ -10,6 +10,7 @@ from njord_sim.control_core import allocate_thrusters, allocation_matrix
 from njord_sim.run_manifest import write_manifest, publish_ready, wait_ready, verify_public_handoff, freeze_resources, sha256
 from njord_sim.configuration import resolve_configuration
 from njord_sim.scenario import world_xml
+from njord_sim.constants import GRAVITY_MPS2
 import xml.etree.ElementTree as ET
 
 class AllocationTests(unittest.TestCase):
@@ -78,7 +79,7 @@ class ManifestTests(unittest.TestCase):
         scenario = resolved['scenario']
         scenario['environment']['water_level_m'] = 2.0
         world = ET.fromstring(world_xml(scenario, 'njord')).find('world')
-        self.assertEqual(world.findtext('gravity'), '0 0 -9.81')
+        self.assertEqual(world.findtext('gravity'), f'0 0 {-GRAVITY_MPS2}')
         self.assertEqual(float(world.findtext('include/pose').split()[2]), 2.0)
         self.assertEqual(float(world.findtext('model/pose').split()[2]), 2.5)
         self.assertIsNone(world.find("plugin[@name='vrx::USVWind']"))

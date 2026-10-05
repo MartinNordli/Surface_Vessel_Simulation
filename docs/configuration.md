@@ -20,7 +20,7 @@ run. Nothing needs rebuilding unless noted.
 | Guidance gains, lookahead, operating thrust limit, stopping model, planner timing, map safety margin, occupancy grid size and position, mission gate geometry, search and retry | `njord_sim/config/algorithms.yaml` | `ALGORITHMS_CONFIG` (default) |
 | Other reference-node parameters (perception thresholds) | a ROS parameter file, e.g. `config/examples/team_params.yaml` | `ROS_PARAMS_FILE=/config/examples/…` |
 | EKF / GPS-transform settings | `njord_sim/config/localization.yaml` | always used |
-| World origin (GPS datum), command timeout, thruster command topic pattern, pinned WAM-V hull and thruster geometry | `njord_sim/njord_sim/constants.py` (then rebuild) | fixed platform constants |
+| World origin (GPS datum), command timeout, Njord world gravity, thruster command topic pattern, pinned WAM-V hull and thruster geometry | `njord_sim/njord_sim/constants.py` (then rebuild) | fixed platform constants |
 | Seed of a single run | — | `SEED=<n>` |
 | Simulated seconds per wall second | — | `REAL_TIME_FACTOR=<x>` (default `1.0`) |
 | Navigate on simulator ground truth instead of the GPS/IMU estimate | — | `STATE_SOURCE=truth` (default `estimate`) |
@@ -310,8 +310,9 @@ with a 10 m margin. A larger grid costs mapping and planning time.
 Values that belong to the pinned platform rather than to an experiment: the
 world origin shared by Gazebo and the GPS transform (63.4305 N, 10.3951 E), the
 0.5 s simulation-time command timeout and 2 s steady-time liveness limit used by
-the guard, both actuator plugins and the evaluator, the thruster
-command topic pattern `/{name}/command`, and the VRX WAM-V hull envelope
+the guard, both actuator plugins and the evaluator, the Njord world gravity
+(9.81 m/s², written as the world `<gravity>` and read from there by the
+buoyancy plugin), the thruster command topic pattern `/{name}/command`, and the VRX WAM-V hull envelope
 (6 × 3.3 m) and thruster layout: `thruster_1` (port) and `thruster_2`
 (starboard) at x = -2.373776 m, y = ±1.027135 m, pushing forward.
 

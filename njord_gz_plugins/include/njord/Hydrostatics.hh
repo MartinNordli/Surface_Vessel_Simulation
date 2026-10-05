@@ -6,8 +6,8 @@
 //   Box        convenience closed box mesh centred on the origin
 //   Submerged  volume and centroid of a world-frame mesh below z = level
 //   Response   exact first-order actuator lag for one time step
-// Units are SI (m, m^3, s); z is up. Python mirrors: mesh_geometry.py and
-// physics_core.actuator_response.
+// Units are SI (m, m^3, s); z is up. Python mirror of the mesh checks:
+// mesh_geometry.py.
 #pragma once
 #include <algorithm>
 #include <array>
@@ -41,9 +41,10 @@ struct Displacement {
   double volume{};
   Vec centroid{};
 };
-// Deliberately restricted to one closed, outward-oriented convex component.
-// Nonconvex / multiple / overlapping CAD volumes need a separate robust
-// importer.
+// Checks one mesh: a closed, outward-oriented convex component. Several
+// disjoint convex volumes (e.g. catamaran hulls) are supported as separate
+// meshes; the plugin rejects overlapping bounds. Nonconvex CAD needs a
+// separate robust importer.
 inline void Validate(const Mesh &m) {
   if (m.vertices.size() < 4 || m.faces.size() < 4)
     throw std::invalid_argument("empty buoyancy mesh");

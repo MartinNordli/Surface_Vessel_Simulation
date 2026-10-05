@@ -27,6 +27,13 @@ WORLD_ORIGIN_WGS84 = (63.4305, 10.3951, 0.0)
 COMMAND_TIMEOUT_S = 0.5
 PROCESS_LIVENESS_S = 2.0
 
+# Gravitational acceleration (m/s^2) of the Njord world. scenario.py writes it
+# as the world <gravity>; the NjordPhysics plugin reads that world value for
+# buoyancy, so weight and buoyancy always use the same g. Draft does not depend
+# on g (m g = rho g V), so the local Trondheim value (about 9.8215) would not
+# change flotation.
+GRAVITY_MPS2 = 9.81
+
 # Health heartbeats of the processes the simulator starts itself, as
 # key -> (topic, DiagnosticStatus name). configuration.guard_requirements
 # decides which of them the guard and the evaluator require.

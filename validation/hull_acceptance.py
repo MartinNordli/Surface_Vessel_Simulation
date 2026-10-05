@@ -7,7 +7,12 @@ COM. Measured telemetry is required. No real-boat fidelity is implied.
 """
 import bisect
 import math
+from pathlib import Path
+import sys
 from physical_acceptance import acceptance
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'njord_sim'))
+from njord_sim.constants import GRAVITY_MPS2
 
 
 def failed(reason):
@@ -141,10 +146,10 @@ def oscillator_parameters(vessel, environment, axis):
     index = {'heave':2,'roll':3,'pitch':4}[axis]
     rigid = mass if axis == 'heave' else vessel['inertia_kg_m2']['ixx' if axis == 'roll' else 'iyy']
     if axis == 'heave':
-        stiffness = density*9.81*length*beam
+        stiffness = density*GRAVITY_MPS2*length*beam
     else:
         waterplane_moment = length*beam**3/12 if axis == 'roll' else beam*length**3/12
-        stiffness = density*9.81*waterplane_moment + mass*9.81*buoyancy_z
+        stiffness = density*GRAVITY_MPS2*waterplane_moment + mass*GRAVITY_MPS2*buoyancy_z
     if stiffness <= 0:
         raise ValueError('unstable equilibrium has no damped restoring acceptance')
     amplitude = min(.005, min(draft,height-draft)/10)

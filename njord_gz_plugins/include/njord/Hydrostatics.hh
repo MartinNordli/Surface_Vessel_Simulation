@@ -6,8 +6,8 @@
 //   Box        convenience closed box mesh centred on the origin
 //   Submerged  volume and centroid of a world-frame mesh below z = level
 //   Response   exact first-order actuator lag for one time step
-// Units are SI (m, m^3, s); z is up. Python mirrors: mesh_geometry.py and
-// physics_core.actuator_response.
+// Units are SI (m, m^3, s); z is up. Python mirror of the mesh checks:
+// mesh_geometry.py.
 #pragma once
 #include <algorithm>
 #include <array>

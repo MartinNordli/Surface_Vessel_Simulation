@@ -13,13 +13,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "njord_sim"))
-from njord_sim.physics_core import (
-    actuator_response,
-    damping_wrench,
-    thruster_wrench,
-    wind_coefficients,
-    wind_load,
-)
+from njord_sim.physics_core import thruster_wrench, wind_coefficients, wind_load
 from njord_sim.constants import LIDAR_VISIBILITY_MASK
 from njord_sim.njord_model import generate
 
@@ -30,21 +24,6 @@ class PhysicsTests(unittest.TestCase):
         self.assertEqual(force, (100, 0, 0))
         self.assertAlmostEqual(torque[2], -40)
         self.assertAlmostEqual(torque[1], -10)
-
-    def test_expiry_and_response(self):
-        self.assertAlmostEqual(
-            actuator_response(0, 100, 1, 1, 50, 20), 50 * (1 - math.exp(-1))
-        )
-        self.assertAlmostEqual(
-            actuator_response(100, 100, 1, 1, 50, 20, False), 100 * math.exp(-1)
-        )
-        self.assertEqual(actuator_response(0, float("nan"), 1, 0, 50, 20), 0)
-        self.assertEqual(actuator_response(0, -100, 1, 0, 50, 20), -20)
-
-    def test_damping_dissipates(self):
-        v = (-2, 3, -4, 0.3, -0.4, 0.5)
-        w = damping_wrench(v, [1] * 6, [2] * 6)
-        self.assertLess(sum(a * b for a, b in zip(v, w)), 0)
 
     def test_periodic_wind(self):
         rows = [

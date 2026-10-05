@@ -41,9 +41,10 @@ struct Displacement {
   double volume{};
   Vec centroid{};
 };
-// Deliberately restricted to one closed, outward-oriented convex component.
-// Nonconvex / multiple / overlapping CAD volumes need a separate robust
-// importer.
+// Checks one mesh: a closed, outward-oriented convex component. Several
+// disjoint convex volumes (e.g. catamaran hulls) are supported as separate
+// meshes; the plugin rejects overlapping bounds. Nonconvex CAD needs a
+// separate robust importer.
 inline void Validate(const Mesh &m) {
   if (m.vertices.size() < 4 || m.faces.size() < 4)
     throw std::invalid_argument("empty buoyancy mesh");

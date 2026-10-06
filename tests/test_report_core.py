@@ -1,6 +1,5 @@
 """Run report: self-contained HTML with well-formed inline SVG, without ROS."""
 import json
-import math
 from pathlib import Path
 import re
 import subprocess

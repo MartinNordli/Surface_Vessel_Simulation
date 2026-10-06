@@ -65,7 +65,7 @@ Målpunktkursene som følger med:
 |---|---|
 | `goto_square` | Fire hjørner av et kvadrat på 20 m, hvert med en heading som skal holdes i 5 s |
 | `goto_retarget` | Nye målpunkt kommer før det forrige er nådd (`advance_after_s`), så et siste punkt som må nås |
-| `station_keeping` | Kjør til ett punkt og hold posisjon og heading i 60 s (DP). Bruk `ENVIRONMENT=windy` (alle båter) eller `ENVIRONMENT=current` (bare Njord-profiler som `munin_v0`) |
+| `station_keeping` | Kjør til ett punkt og hold posisjon og heading i 60 s (DP). Bruk `ENVIRONMENT=windy` (alle båter) eller `ENVIRONMENT=current` (bare Njord-profiler som `munin_v0`). WAM-V med to thrustere klarte ikke å holde headingen mot sidevind ([validation.md](validation.md#setpoint-courses-2026-10-06)); `munin_v0` klarte det. |
 
 ## 3. Koble til deres egne noder
 
@@ -86,6 +86,11 @@ Målpunktkursene som følger med:
 
    Pakken kan også bygges og kjøres i simulator-imaget med team-containeren
    (`compose.team.yaml`); se [team-integration.md](team-integration.md#3-connect-your-own-ros-2-workspace).
+   Gi den da et eget Compose-prosjektnavn, for eksempel
+   `docker compose -p njord-ca -f compose.yaml -f compose.team.yaml run --rm team bash`.
+   Ellers tilhører containeren samme prosjekt som løpet. Da kan
+   `./scripts/njord demo` bli hengende etter at løpet er ferdig, til containeren
+   deres avslutter (sett i én av to testkjøringer).
 3. **Start en kjøring der simulatorens kontroller er slått av:**
 
    ```bash

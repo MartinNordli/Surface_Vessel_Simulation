@@ -25,6 +25,7 @@ linked guides, not here.
 │   ├── configuration.md      Where every setting lives; vessel/scenario/algorithm schema
 │   ├── team-integration.md   Step-by-step guide for external team nodes
 │   ├── control-autonomy-setpoints.md  C&A go-to-position interface and report (Norwegian)
+│   ├── testing-setpoints-thrust.md    How simulation tests setpoints and thrust (Norwegian)
 │   ├── run-concepts.md       One-page map of a run for newcomers
 │   ├── architecture.md       Data flow, run lifecycle, code map, limits
 │   ├── validation.md         Test coverage, benchmarks and dynamics measurements
@@ -127,6 +128,7 @@ carries irrelevant detail. A small or single-area task is cheaper to do directly
 | Running the simulator, rendering, recording, CI/CD | [docs/running.md](docs/running.md) |
 | Team workflows, sensor and parameter overrides, replay | [docs/team-integration.md](docs/team-integration.md) |
 | Control & Autonomy target poses (setpoints), thrust interface, run report | [docs/control-autonomy-setpoints.md](docs/control-autonomy-setpoints.md) |
+| Testing setpoints and per-thruster thrust, with or without GUI, per vessel (Norwegian) | [docs/testing-setpoints-thrust.md](docs/testing-setpoints-thrust.md) |
 | How a run fits together (start here) | [docs/run-concepts.md](docs/run-concepts.md) |
 | Data flow, configuration, safety, limits, reproducibility | [docs/architecture.md](docs/architecture.md) |
 | Test coverage, benchmarks, dynamics measurements | [docs/validation.md](docs/validation.md) |

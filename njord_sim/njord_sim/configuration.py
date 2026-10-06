@@ -32,7 +32,7 @@ from .constants import COMMAND_TIMEOUT_S, PROCESS_LIVENESS_S, THRUSTER_COMMAND_T
 from .control_core import allocation_matrix, independent_rows
 from .mission_core import SEARCH_BEARINGS_DEG
 from .mesh_geometry import geometry_vertices, geometry_volume, load_obj, validate_disjoint_volumes
-from .scenario_core import validate_scenario
+from .scenario_core import COURSE_KINDS, validate_scenario
 
 # Sensor settings shared by every vessel profile.
 SENSOR_KEYS = {
@@ -55,10 +55,15 @@ MISSION_KEYS = {
     'detection_max_age_s', 'crossing_memory_s', 'crossing_entry_m', 'search_after_s',
     'search_radius_m', 'search_goal_s', 'search_timeout_s', 'max_gate_retries', 'retry_clearance_m',
 }
+# Reference setpoint controller (algorithms.yaml ``setpoint_control``).
+SETPOINT_CONTROL_KEYS = {
+    'control_hz', 'stale_after_s', 'approach_radius_m', 'kp_surge', 'kp_yaw', 'kd_yaw',
+    'kp_position', 'kd_position', 'braking_deceleration_mps2', 'reaction_time_s',
+}
 # Algorithm values that may legitimately be zero; everything else must be > 0.
 NONNEGATIVE_ALGORITHM_KEYS = {
     'kp_yaw', 'kd_yaw', 'kp_surge', 'reaction_time_s', 'stopping_margin_m', 'safety_margin_m',
-    'self_filter_margin_m', 'search_after_s', 'max_gate_retries',
+    'self_filter_margin_m', 'search_after_s', 'max_gate_retries', 'kp_position', 'kd_position',
 }
 ENVIRONMENT_KEYS = {
     'wind_speed_mps', 'wind_direction_to_deg_enu', 'wind_variance_gain', 'wave_gain',
@@ -467,6 +472,54 @@ def convert_legacy_scenario(data):
     return result
 
 
+# Acceptance and timing of one target pose; each may be set per setpoint or
+# in ``setpoints.defaults`` (there is no built-in fallback).
+SETPOINT_SETTING_KEYS = ('tolerance_m', 'heading_tolerance_deg', 'hold_s', 'timeout_s')
+
+
+def _resolve_setpoints(setpoints):
+    """Validate ``setpoints`` and return the explicit, fully populated sequence.
+
+    Each target gets ``name``, ``position`` [x, y] (m, map ENU),
+    ``heading_deg_enu`` (counter-clockwise from east, or None when the heading
+    is free), the SETPOINT_SETTING_KEYS from the entry or ``defaults``, and
+    ``advance_after_s`` (None, or the time after which the next target is
+    issued whether or not this one was reached; such a target is not required
+    for completion).
+    """
+    _keys(setpoints, {'sequence'}, {'defaults'}, where='setpoints')
+    defaults = setpoints.get('defaults', {})
+    _keys(defaults, (), SETPOINT_SETTING_KEYS, where='setpoints.defaults')
+    if not isinstance(setpoints['sequence'], list) or not setpoints['sequence']:
+        raise ValueError('setpoints.sequence must be a nonempty list')
+    result, names = [], set()
+    for entry in setpoints['sequence']:
+        _keys(entry, {'name', 'position'}, {'heading_deg_enu', 'advance_after_s', *SETPOINT_SETTING_KEYS},
+              where='setpoint')
+        if not isinstance(entry['name'], str) or not entry['name'] or entry['name'] in names:
+            raise ValueError('setpoint names must be unique nonempty strings')
+        names.add(entry['name'])
+        _vector(entry['position'], 2, f"{entry['name']}.position")
+        item = {'name': entry['name'], 'position': list(entry['position']),
+                'heading_deg_enu': entry.get('heading_deg_enu'),
+                'advance_after_s': entry.get('advance_after_s')}
+        if item['heading_deg_enu'] is not None:
+            _number(item['heading_deg_enu'], f"{entry['name']}.heading_deg_enu")
+        if item['advance_after_s'] is not None:
+            _number(item['advance_after_s'], f"{entry['name']}.advance_after_s", positive=True)
+        for key in SETPOINT_SETTING_KEYS:
+            if key not in entry and key not in defaults:
+                raise ValueError(f"setpoint {entry['name']}: {key} missing (set it or setpoints.defaults)")
+            item[key] = _number(entry.get(key, defaults.get(key)), f"{entry['name']}.{key}",
+                                0, positive=key != 'hold_s')
+        if item['heading_tolerance_deg'] > 180:
+            raise ValueError('heading_tolerance_deg must not exceed 180')
+        result.append(item)
+    if result[-1]['advance_after_s'] is not None:
+        raise ValueError('the last setpoint must be reached; it cannot use advance_after_s')
+    return result
+
+
 def resolve_scenario(data, seed=None, environment=None):
     """Validate a scenario mapping and resolve seed, environment and gate jitter.
 
@@ -478,8 +531,16 @@ def resolve_scenario(data, seed=None, environment=None):
     if 'schema_version' not in data:
         data = convert_legacy_scenario(data)
     _version(data)
-    _keys(data, {'schema_version', 'name', 'start', 'timeout_s', 'gates', 'environments'},
-          {'seed', 'hull', 'gate_y_jitter_m', 'obstacles'}, where='scenario')
+    _keys(data, {'schema_version', 'name', 'start', 'timeout_s', 'environments'},
+          {'seed', 'hull', 'gate_y_jitter_m', 'obstacles', 'gates', 'setpoints'}, where='scenario')
+    if ('gates' in data) == ('setpoints' in data):
+        raise ValueError('scenario needs exactly one of gates (a race) or setpoints (target poses)')
+    data['kind'] = 'gates' if 'gates' in data else 'setpoints'
+    if data['kind'] == 'setpoints':
+        if data.get('gate_y_jitter_m', 0):
+            raise ValueError('gate_y_jitter_m applies to gates only')
+        data['setpoints'] = _resolve_setpoints(data['setpoints'])
+        data['gates'] = []
     _vector(data['start'], 6, 'start')
     _number(data['timeout_s'], 'timeout_s', positive=True)
     _number(data.get('gate_y_jitter_m', 0), 'gate_y_jitter_m', 0)
@@ -499,8 +560,8 @@ def resolve_scenario(data, seed=None, environment=None):
             env[f'{kind}_velocity_enu'] = [speed * math.cos(angle), speed * math.sin(angle), 0.]
         # The VRX wind plugin in the world generator still reads this name.
         env['wind_direction_deg'] = env['wind_direction_to_deg_enu']
-    if not isinstance(data['gates'], list):
-        raise ValueError('gates must be a list')
+    if not isinstance(data['gates'], list) or data['kind'] == 'gates' and not data['gates']:
+        raise ValueError('gates must be a nonempty list')
     for gate in data['gates']:
         _keys(gate, {'name', 'red', 'green', 'radius_m'}, where='gate')
         for key in ('red', 'green'):
@@ -539,14 +600,15 @@ def resolve_scenario(data, seed=None, environment=None):
 # --------------------------------------------------------------------------
 
 def convert_algorithm_schema(algorithms):
-    """Upgrade an older algorithms file to schema 4, one version at a time.
+    """Upgrade an older algorithms file to schema 5, one version at a time.
 
     1->2 introduces the assumed timing and filter tolerances. 2->3 makes the
     occupancy grid explicit with the values the mapper used to build in:
     0.5 m cells, a 160 m square, lower-left corner at (-40, -40) m. 3->4 adds
     ``mission`` with the geometry the mission node used to build in and
     search and retry disabled (no search, no retries), which is the previous
-    behaviour.
+    behaviour. 4->5 adds ``setpoint_control`` with the shipped starting gains;
+    gate courses do not use it.
     """
     result = copy.deepcopy(algorithms)
     if result.get('schema_version') == 1:
@@ -571,7 +633,15 @@ def convert_algorithm_schema(algorithms):
                                  crossing_entry_m=15., search_after_s=1e9, search_radius_m=8.,
                                  search_goal_s=10., search_timeout_s=60., max_gate_retries=0,
                                  retry_clearance_m=6.)
-    _version(result, 4)
+    if result.get('schema_version') == 4:
+        if 'setpoint_control' in result:
+            raise ValueError('setpoint controller settings require algorithms schema 5')
+        result['schema_version'] = 5
+        result['setpoint_control'] = dict(control_hz=20., stale_after_s=.5, approach_radius_m=5.,
+                                          kp_surge=200., kp_yaw=400., kd_yaw=300., kp_position=100.,
+                                          kd_position=200., braking_deceleration_mps2=.25,
+                                          reaction_time_s=1.)
+    _version(result, 5)
     return result
 
 
@@ -583,19 +653,30 @@ RUN_MODES = ('race', 'free')
 def guard_requirements(components, run_mode):
     """What the command guard (and, in a race, the evaluator) requires before thrust.
 
-    ``components`` maps 'autonomy' to 'reference' or 'external'. Navigation
-    always runs, so its heartbeat is always required. Planner and mission
-    heartbeats are required only when the simulator starts those reference
-    nodes; an external stack only has to send fresh thruster commands and zero
-    them itself on bad input. The evaluator's run-active signal is required
-    only in a race. Returns {'required_status': [...], 'require_race_active': bool}.
+    ``components`` maps 'autonomy' and 'controller' to 'reference' or
+    'external', and 'course' to a scenario kind (COURSE_KINDS, default
+    'gates'). Navigation always runs, so its heartbeat is always required.
+    The other heartbeats are required only when the simulator starts the
+    reference node that publishes them: planner and mission on a gate course,
+    the setpoint controller on a setpoint course. An external stack only has
+    to send fresh thruster commands and zero them itself on bad input. The
+    evaluator's run-active signal is required only in a race. Returns
+    {'required_status': [...], 'require_race_active': bool}.
     """
     if run_mode not in RUN_MODES:
         raise ValueError(f'RUN_MODE must be one of {RUN_MODES}')
     autonomy = components.get('autonomy', 'reference')
-    if autonomy not in ('reference', 'external'):
-        raise ValueError('autonomy must be reference or external')
-    status = ['navigation'] + (['planner', 'mission'] if autonomy == 'reference' else [])
+    controller = components.get('controller', 'reference')
+    course = components.get('course', 'gates')
+    if autonomy not in ('reference', 'external') or controller not in ('reference', 'external'):
+        raise ValueError('autonomy and controller must be reference or external')
+    if course not in COURSE_KINDS:
+        raise ValueError(f'course must be one of {COURSE_KINDS}')
+    status = ['navigation']
+    if autonomy == 'reference' and course == 'gates':
+        status += ['planner', 'mission']
+    elif autonomy == 'reference' and controller == 'reference':
+        status += ['controller']
     return {'required_status': status, 'require_race_active': run_mode == 'race'}
 
 
@@ -613,7 +694,7 @@ def speed_profile_names(algorithms_file):
 
 
 # Sections of algorithms.yaml a vessel may override (``vessel_overrides``).
-VESSEL_OVERRIDE_SECTIONS = ('guidance', 'mapping', 'mission')
+VESSEL_OVERRIDE_SECTIONS = ('guidance', 'mapping', 'mission', 'setpoint_control')
 
 
 def vessel_key(vessel):
@@ -646,11 +727,11 @@ def _apply_vessel_overrides(algorithms, vessel_name):
 def _resolve_algorithms(algorithms, profile, vessel_name='wamv'):
     """Validate algorithms.yaml, apply the vessel's overrides and select ``profile``'s speed ceiling."""
     algorithms = copy.deepcopy(algorithms)
-    if algorithms.get('schema_version') in (1, 2, 3):
+    if algorithms.get('schema_version') in (1, 2, 3, 4):
         algorithms = convert_algorithm_schema(algorithms)
-    _version(algorithms, 4)
+    _version(algorithms, 5)
     _keys(algorithms, {'schema_version', 'speed_profiles_mps', 'guidance', 'planner', 'mapping', 'navigation',
-                       'mission'}, {'vessel_overrides'}, where='algorithms')
+                       'mission', 'setpoint_control'}, {'vessel_overrides'}, where='algorithms')
     for section in VESSEL_OVERRIDE_SECTIONS:
         if not isinstance(algorithms[section], dict):
             raise ValueError(f'{section} must be a mapping')
@@ -669,6 +750,7 @@ def _resolve_algorithms(algorithms, profile, vessel_name='wamv'):
     _vector(algorithms['mapping']['grid_origin_m'], 2, 'grid_origin_m')
     _keys(algorithms['navigation'], {'stale_after_s', 'processing_margin_s', 'clock_stall_after_s', 'sync_slop_s'}, where='navigation')
     _keys(algorithms['mission'], MISSION_KEYS, where='mission')
+    _keys(algorithms['setpoint_control'], SETPOINT_CONTROL_KEYS, where='setpoint_control')
     retries = algorithms['mission']['max_gate_retries']
     if type(retries) is not int:
         raise ValueError('max_gate_retries must be an integer')
@@ -676,7 +758,7 @@ def _resolve_algorithms(algorithms, profile, vessel_name='wamv'):
         raise ValueError('min_gate_width_m must not exceed max_gate_width_m')
     if algorithms['mission']['search_goal_s'] * len(SEARCH_BEARINGS_DEG) > algorithms['mission']['search_timeout_s']:
         raise ValueError('search_timeout_s must leave search_goal_s for every search bearing')
-    for group in ('guidance', 'planner', 'mapping', 'navigation', 'mission'):
+    for group in ('guidance', 'planner', 'mapping', 'navigation', 'mission', 'setpoint_control'):
         for key, value in algorithms[group].items():
             if key != 'grid_origin_m':
                 _number(value, key, 0, positive=key not in NONNEGATIVE_ALGORITHM_KEYS)
@@ -820,6 +902,14 @@ def autonomy_parameters(resolved):
                          'odometry_max_age_s': algorithms['navigation']['stale_after_s']}
     result['perception'] = {'sync_tolerance_s': algorithms['navigation']['sync_slop_s'],
                             'input_max_age_s': algorithms['navigation']['stale_after_s']}
+    # The setpoint controller shares the speed ceiling, the thrust cap the
+    # guard enforces and the thruster layout with guidance.
+    result['setpoint_controller'] = {
+        **{key: float(value) for key, value in algorithms['setpoint_control'].items()},
+        'max_speed': float(result['guidance']['max_speed']),
+        'max_thrust': float(result['guidance']['max_thrust']),
+        **{key: result['guidance'][key] for key in ('thruster_topics', 'thruster_positions', 'thruster_axes',
+                                                    'thruster_forward_limits', 'thruster_reverse_limits')}}
     return result
 
 
@@ -863,6 +953,11 @@ def validate_reference_timing(public, periods, navigation, components):
     for sensor in ('gps', 'imu'):
         budget('sensor_adapter', 'stale_after_s', sensor)
     if components.get('autonomy') != 'reference':
+        return
+    if components.get('course', 'gates') == 'setpoints':
+        # Only the setpoint controller runs; it consumes odometry alone.
+        if components.get('controller') == 'reference':
+            budget('setpoint_controller', 'stale_after_s', 'imu')
         return
     budget('mission', 'odometry_max_age_s', 'imu')
     if components.get('perception') == 'reference':

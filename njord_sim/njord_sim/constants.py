@@ -39,12 +39,38 @@ GRAVITY_MPS2 = 9.81
 # decides which of them the guard and the evaluator require.
 HEARTBEATS = {'navigation': ('/njord/navigation_status', 'navigation'),
               'planner': ('/njord/planner_status', 'njord/planner'),
-              'mission': ('/njord/mission_status', 'mission')}
+              'mission': ('/njord/mission_status', 'mission'),
+              'controller': ('/njord/controller_status', 'controller')}
 
 # ROS topic on which the command guard receives one thruster's force in
 # newtons (std_msgs/Float64), formatted with the thruster name from the vessel
 # file. '/thruster_1/command' matches Control & Autonomy's allocation node.
 THRUSTER_COMMAND_TOPIC = '/{name}/command'
+
+# Setpoint courses ("go to this position"; docs/control-autonomy-setpoints.md).
+# PROVISIONAL names until Control & Autonomy confirms them: rename a topic here
+# and every node, launch file and test follows. The message types are fixed in
+# the code that uses them (evaluator_node.py, setpoint_controller_node.py,
+# scripts/send_setpoint.py).
+#   SETPOINT_TOPIC           geometry_msgs/PoseStamped in map: the active target
+#                            position and heading. Reliable, transient local,
+#                            depth 1; a new message replaces the active target.
+#   SETPOINT_SEQUENCE_TOPIC  nav_msgs/Path in map: the active target followed by
+#                            the remaining scripted ones (optional lookahead).
+# Under /sim, derived from ground truth for display only; autonomy must not
+# subscribe to them:
+#   SETPOINT_STATUS_TOPIC    diagnostic_msgs/DiagnosticArray, live score
+#   SETPOINT_MARKERS_TOPIC   visualization_msgs/MarkerArray for RViz
+#   TRAJECTORY_TOPIC         nav_msgs/Path, the travelled ground-truth track
+SETPOINT_TOPIC = '/njord/setpoint'
+SETPOINT_SEQUENCE_TOPIC = '/njord/setpoint_sequence'
+SETPOINT_STATUS_TOPIC = '/sim/setpoint_status'
+SETPOINT_MARKERS_TOPIC = '/sim/setpoint_markers'
+TRAJECTORY_TOPIC = '/sim/trajectory'
+# Thrust forces passed by the command guard (ros_gz_interfaces/Float32Array, N,
+# vessel-file thruster order); the evaluator records them for the run report.
+ACTUATOR_FORCES_TOPIC = '/njord/actuator_forces'
+MAP_FRAME = 'map'
 
 # ROS-facing sensor topics and frames, identical for every vessel profile so a
 # team's code does not depend on which boat is simulated (docs/interfaces.md).

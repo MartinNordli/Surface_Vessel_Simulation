@@ -1,0 +1,67 @@
+# Setpoint course: dynamic positioning. Drive to one pose and hold it for a minute.
+#   ENVIRONMENT=windy ./scripts/njord demo station_keeping
+#   ENVIRONMENT=current VESSEL_CONFIG=/config/vessels/munin_v0.yaml ./scripts/njord demo station_keeping
+#
+# The report gives the RMS and maximum position and heading error during the
+# hold. Holding position against a side force needs a fully actuated vessel
+# (munin_v0); the two-thruster WAM-V can only hold along its heading. Format as
+# in goto_square.yaml.
+schema_version: 1
+name: station_keeping
+seed: 1
+start: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+timeout_s: 300.0
+
+setpoints:
+  sequence:
+  - {name: station, position: [10.0, 0.0], heading_deg_enu: 0.0, tolerance_m: 1.0,
+     heading_tolerance_deg: 10.0, hold_s: 60.0, timeout_s: 200.0}
+
+# One distant buoy: the contact monitor needs at least one watched model to
+# report collisions. No setpoint route passes near it.
+obstacles:
+- {name: reference_buoy, position: [-25.0, -25.0], radius_m: 0.5}
+
+environments:
+  calm:
+    wind_speed_mps: 0.0
+    wind_direction_to_deg_enu: 45.0
+    wind_variance_gain: 0.0
+    wave_gain: 0.0
+    wave_period_s: 5.0
+    wave_direction_rad: 0.0
+    wave_steepness: 0.0
+    current_speed_mps: 0.0
+    current_direction_to_deg_enu: 0.0
+    water_density_kg_m3: 1000.0
+    water_level_m: 0.0
+    physics_step_s: 0.004
+  # Constant wind without gusts or waves, accepted by every vessel profile.
+  windy:
+    wind_speed_mps: 4.0
+    wind_direction_to_deg_enu: 135.0
+    wind_variance_gain: 0.0
+    wave_gain: 0.0
+    wave_period_s: 5.0
+    wave_direction_rad: 0.0
+    wave_steepness: 0.0
+    current_speed_mps: 0.0
+    current_direction_to_deg_enu: 0.0
+    water_density_kg_m3: 1000.0
+    water_level_m: 0.0
+    physics_step_s: 0.004
+  # Wind plus a steady current; the WAM-V reference model has no current input,
+  # so this one needs a Njord-profile vessel (e.g. munin_v0.yaml).
+  current:
+    wind_speed_mps: 4.0
+    wind_direction_to_deg_enu: 135.0
+    wind_variance_gain: 0.0
+    wave_gain: 0.0
+    wave_period_s: 5.0
+    wave_direction_rad: 0.0
+    wave_steepness: 0.0
+    current_speed_mps: 0.3
+    current_direction_to_deg_enu: 270.0
+    water_density_kg_m3: 1000.0
+    water_level_m: 0.0
+    physics_step_s: 0.004

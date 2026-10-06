@@ -35,14 +35,16 @@ def atomic_text(path, text):
 def publish_ready(output, run_id, scenario, manifest_sha256=None):
     """Write ``run_ready.json``, the signal that the run directory is complete.
 
-    Contains the run id, the number of gates and, when given, the SHA-256 of
-    run_manifest.json. Must be called after ``write_manifest``.
+    Contains the run id, the course kind ('gates' or 'setpoints'), the number
+    of gates and, when given, the SHA-256 of run_manifest.json. Must be called
+    after ``write_manifest``.
     """
     if not run_id:
         raise ValueError('RUN_ID is required; use scripts/njord or set a unique run identifier')
-    # Do not expose hidden gate positions to the mission process.
-    metadata = {'run_id': run_id, 'expected_gates': len(scenario['gates']),
-                'seed': scenario.get('seed', 1)}
+    # Do not expose hidden gate positions to the mission process, nor setpoint
+    # positions: the evaluator issues those on the setpoint topic in order.
+    metadata = {'run_id': run_id, 'course': scenario.get('kind', 'gates'),
+                'expected_gates': len(scenario['gates']), 'seed': scenario.get('seed', 1)}
     if manifest_sha256 is not None:
         metadata['manifest_sha256'] = manifest_sha256
     atomic_text(Path(output) / 'run_ready.json', json.dumps(metadata) + '\n')
@@ -179,9 +181,11 @@ def wait_ready(output, run_id, timeout=120.0):
     while True:
         try:
             metadata = json.loads((Path(output) / 'run_ready.json').read_text())
+            course = metadata.get('course', 'gates')
             if (metadata.get('run_id') == run_id
+                    and course in ('gates', 'setpoints')
                     and type(metadata.get('expected_gates')) is int
-                    and metadata['expected_gates'] > 0):
+                    and metadata['expected_gates'] >= (1 if course == 'gates' else 0)):
                 verify_public_handoff(output, metadata)
                 return metadata
         except (OSError, ValueError):

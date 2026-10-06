@@ -7,7 +7,7 @@ same topics.
 
 Subscribes:
     ``setpoint_topic`` (default constants.SETPOINT_TOPIC, ``/njord/setpoint``,
-        ``geometry_msgs/PoseStamped``, reliable, transient local): target
+        ``geometry_msgs/PoseStamped``, reliable, volatile): target
         position and heading in ``map_frame``. The latest valid message is
         the target until another replaces it; it does not expire.
     ``odom_topic`` (default ``/njord/odometry``, ``nav_msgs/Odometry``):
@@ -51,10 +51,11 @@ from njord_sim.geometry import stamp_seconds, yaw_from_quaternion
 from njord_sim.planner_core import fresh
 from njord_sim.setpoint_control_core import SetpointController
 
-# Matches the publishers of the setpoint topic: a late subscriber still gets
-# the active target.
+# Reliable and volatile: compatible with every reliable publisher, both the
+# transient-local evaluator and send_setpoint.py and RViz's volatile 2D Goal
+# Pose tool. The controller runs before the first target is issued.
 SETPOINT_QOS = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
-                          durability=DurabilityPolicy.TRANSIENT_LOCAL)
+                          durability=DurabilityPolicy.VOLATILE)
 
 
 def unit_quaternion(q):

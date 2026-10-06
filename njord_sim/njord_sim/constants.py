@@ -53,8 +53,10 @@ THRUSTER_COMMAND_TOPIC = '/{name}/command'
 # the code that uses them (evaluator_node.py, setpoint_controller_node.py,
 # scripts/send_setpoint.py).
 #   SETPOINT_TOPIC           geometry_msgs/PoseStamped in map: the active target
-#                            position and heading. Reliable, transient local,
-#                            depth 1; a new message replaces the active target.
+#                            position and heading; a new message replaces it.
+#                            Published reliable + transient local (depth 1);
+#                            subscribe reliable (transient local to get the
+#                            active target when joining late).
 #   SETPOINT_SEQUENCE_TOPIC  nav_msgs/Path in map: the active target followed by
 #                            the remaining scripted ones (optional lookahead).
 # Under /sim, derived from ground truth for display only; autonomy must not
@@ -71,6 +73,10 @@ TRAJECTORY_TOPIC = '/sim/trajectory'
 # vessel-file thruster order); the evaluator records them for the run report.
 ACTUATOR_FORCES_TOPIC = '/njord/actuator_forces'
 MAP_FRAME = 'map'
+# Acceptance of targets sent by hand in a lab run (njord goto, RViz, a team's
+# mission node), where no scenario entry describes them. The evaluator's
+# observer mode scores every such target with these values.
+OBSERVED_SETPOINT_ACCEPTANCE = {'tolerance_m': 1.5, 'heading_tolerance_deg': 15.0, 'hold_s': 5.0}
 
 # ROS-facing sensor topics and frames, identical for every vessel profile so a
 # team's code does not depend on which boat is simulated (docs/interfaces.md).

@@ -62,8 +62,49 @@ Visualization Manager:
         Durability Policy: Volatile
         History Policy: Keep Last
         Depth: 1
+    - Class: rviz_default_plugins/Path
+      Name: Travelled track (ground truth)
+      Enabled: true
+      Color: 240; 240; 240
+      Alpha: 0.9
+      Buffer Length: 1
+      Line Style: Lines
+      Line Width: 0.05
+      Pose Style: None
+      Topic:
+        Value: /sim/trajectory
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 1
+    - Class: rviz_default_plugins/MarkerArray
+      Name: Setpoints (tolerance, heading, state)
+      Enabled: true
+      Namespaces:
+        setpoints: true
+      Topic:
+        Value: /sim/setpoint_markers
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 1
+    - Class: rviz_default_plugins/Pose
+      Name: Active setpoint
+      Enabled: true
+      Color: 255; 230; 0
+      Shape: Arrow
+      Shaft Length: 2.5
+      Shaft Radius: 0.2
+      Head Length: 0.8
+      Head Radius: 0.45
+      Topic:
+        Value: /njord/setpoint
+        Reliability Policy: Reliable
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Depth: 1
     - Class: rviz_default_plugins/RobotModel
-      Name: WAM-V
+      Name: Vessel
       Enabled: true
       Alpha: 1
       Description Source: Topic
@@ -143,6 +184,14 @@ Visualization Manager:
     - Class: rviz_default_plugins/Select
     - Class: rviz_default_plugins/FocusCamera
     - Class: rviz_default_plugins/Measure
+    # "2D Goal Pose" (G): click and drag in a lab run to send a target pose.
+    - Class: rviz_default_plugins/SetGoal
+      Topic:
+        Value: /njord/setpoint
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 1
   Transformation:
     Current:
       Class: rviz_default_plugins/TF

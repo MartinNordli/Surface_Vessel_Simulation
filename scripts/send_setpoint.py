@@ -15,8 +15,11 @@ target.
 Publishes one geometry_msgs/PoseStamped on constants.SETPOINT_TOPIC
 (reliable, transient local, depth 1), stamped with the current simulation
 time, after waiting up to --wait seconds for /clock and for at least one
-subscriber (the controller or the lab evaluator). It stays alive one more
-second so the message is delivered. A new target replaces the active one.
+subscriber, and then until the number of matched subscribers (controller and
+lab evaluator) has been stable for --settle seconds: a volatile subscriber
+that matches only after the message was sent never receives it. It stays
+alive two more seconds so the message is delivered. A new target replaces the
+active one.
 
 Exit: 0 when published, 1 when /clock or the needed odometry never arrived.
 """
@@ -46,6 +49,8 @@ def main():
     parser.add_argument('heading_deg', type=float, nargs='?',
                         help='target heading in degrees counter-clockwise from east (default: along the leg)')
     parser.add_argument('--wait', type=float, default=10.0, help='seconds to wait for /clock and a subscriber')
+    parser.add_argument('--settle', type=float, default=2.0,
+                        help='seconds the subscriber count must stay unchanged before publishing')
     args = parser.parse_args()
     values = [args.x, args.y] + ([args.heading_deg] if args.heading_deg is not None else [])
     if not all(math.isfinite(v) for v in values):
@@ -76,17 +81,23 @@ def main():
             heading = math.atan2(args.y - position[1], args.x - position[0])
         else:
             heading = math.radians(args.heading_deg)
-        if publisher.get_subscription_count() == 0:
+        # Let discovery settle: every subscriber must be matched before the send.
+        count, since = publisher.get_subscription_count(), time.monotonic()
+        while time.monotonic() - since < args.settle and time.monotonic() < deadline + args.settle:
+            rclpy.spin_once(node, timeout_sec=0.1)
+            if publisher.get_subscription_count() != count:
+                count, since = publisher.get_subscription_count(), time.monotonic()
+        if count == 0:
             print(f'Warning: nobody subscribes to {SETPOINT_TOPIC} yet; publishing anyway.', file=sys.stderr)
         message = PoseStamped()
         message.header.frame_id, message.header.stamp = MAP_FRAME, node.get_clock().now().to_msg()
         message.pose.position.x, message.pose.position.y = args.x, args.y
         message.pose.orientation.z, message.pose.orientation.w = math.sin(heading / 2), math.cos(heading / 2)
         publisher.publish(message)
-        end = time.monotonic() + 1.0
+        end = time.monotonic() + 2.0
         while time.monotonic() < end:
             rclpy.spin_once(node, timeout_sec=0.1)
-        print(f'Sent {SETPOINT_TOPIC}: x={args.x:.2f} m, y={args.y:.2f} m, '
+        print(f'Sent {SETPOINT_TOPIC} to {count} subscriber(s): x={args.x:.2f} m, y={args.y:.2f} m, '
               f'heading={math.degrees(heading):.1f} deg (ENU, from east)')
         return 0
     finally:

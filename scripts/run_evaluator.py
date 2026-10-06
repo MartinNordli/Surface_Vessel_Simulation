@@ -24,6 +24,7 @@ it as the race result.
 """
 import os
 from pathlib import Path
+from ament_index_python.packages import get_package_prefix
 from njord_sim.configuration import guard_requirements
 from njord_sim.run_manifest import wait_ready
 
@@ -33,7 +34,10 @@ metadata = wait_ready(path, os.environ.get('RUN_ID', ''))
 components = {'autonomy': os.environ.get('AUTONOMY', 'reference'),
               'controller': os.environ.get('CONTROLLER', 'reference'),
               'course': metadata.get('course', 'gates')}
-args = ['ros2', 'run', 'njord_sim', 'evaluator', '--ros-args', '-p', 'use_sim_time:=true',
+# The executable itself, not `ros2 run`: SIGTERM from `docker compose stop`
+# must reach the evaluator so it writes the result of an interrupted run.
+executable = str(Path(get_package_prefix('njord_sim')) / 'lib' / 'njord_sim' / 'evaluator')
+args = [executable, '--ros-args', '-p', 'use_sim_time:=true',
         '-p', f'scenario_file:={path}/resolved_scenario.json', '-p', f'output:={path}/run_metrics.json',
         '-p', 'run_label:='+os.environ.get('RUN_LABEL', 'demo'),
         '-p', 'profile:='+os.environ.get('PROFILE', 'fast'),

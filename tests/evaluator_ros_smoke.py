@@ -337,6 +337,7 @@ class SetpointEvaluatorTests(unittest.TestCase):
         goal.header.frame_id = "map"
         goal.pose.position.x, goal.pose.orientation.w = 3.0, 1.0
         node.on_setpoint(goal)
+        node.on_setpoint(goal)  # a duplicate of the same message
         wrong = PoseStamped()
         wrong.header.frame_id = "base_link"
         node.on_setpoint(wrong)

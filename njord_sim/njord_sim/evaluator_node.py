@@ -167,6 +167,7 @@ class Evaluator(Node):
         self.ticks = 0
         self.publisher_check_done = False
         self.issued_messages = None      # (PoseStamped, Path) of the active target
+        self.last_setpoint_key = None    # observe mode: (stamp, x, y, z, w) of the last target
         self.waiting_logged = False
         if self.mode == "race":
             # Transient-local so a late-joining command guard still gets the state.
@@ -316,6 +317,12 @@ class Evaluator(Node):
                 or not all(math.isfinite(v) for v in (p.x, p.y, q.x, q.y, q.z, q.w))):
             self.get_logger().info(f"Ignored setpoint: needs finite values in the {MAP_FRAME} frame")
             return
+        # The same message received twice (e.g. from a repeating publisher)
+        # is one target.
+        key = (message.header.stamp.sec, message.header.stamp.nanosec, p.x, p.y, q.z, q.w)
+        if key == self.last_setpoint_key:
+            return
+        self.last_setpoint_key = key
         # Scored from receipt in simulation time: an RViz click is stamped
         # with RViz's own clock.
         self.handle_events(self.scorer.issue(self.sim_now(), p.x, p.y, yaw_from_quaternion(q)))

@@ -15,12 +15,13 @@ run. Nothing needs rebuilding unless noted.
 | Anything about the Njord boat: geometry, mass, damping, wind, thrusters, sensors and their poses | `njord_sim/config/vessels/njord_v1.yaml` | `VESSEL_CONFIG=/config/vessels/njord_v1.yaml` |
 | The four-thruster Munin placeholder (same schema; layout assumed until Naval decides) | `njord_sim/config/vessels/munin_v0.yaml` | `VESSEL_CONFIG=/config/vessels/munin_v0.yaml` |
 | Gates, obstacles, start pose, default seed, race time limit | `scenarios/<course>.yaml` | course name, e.g. `./scripts/njord demo slalom` |
-| Wind, waves, current, water, physics time step | `environments:` in `scenarios/<course>.yaml` | `ENVIRONMENT=calm\|moderate` |
+| Target poses of a setpoint course ("go to this position", station keeping): positions, headings, tolerances, hold and timeouts | `setpoints:` in `scenarios/<course>.yaml` | course name, e.g. `./scripts/njord demo goto_square` |
+| Wind, waves, current, water, physics time step | `environments:` in `scenarios/<course>.yaml` | `ENVIRONMENT=<preset>` (gate courses: `calm\|moderate`; setpoint courses: `calm\|windy\|current`) |
 | Speed ceiling of each profile, and which profiles exist | `speed_profiles_mps` in `njord_sim/config/algorithms.yaml` | `PROFILE=<name>` (shipped: `fast`, `conservative`) |
-| Guidance gains, lookahead, operating thrust limit, stopping model, planner timing, map safety margin, occupancy grid size and position, mission gate geometry, search and retry | `njord_sim/config/algorithms.yaml` | `ALGORITHMS_CONFIG` (default) |
+| Guidance gains, lookahead, operating thrust limit, stopping model, planner timing, map safety margin, occupancy grid size and position, mission gate geometry, search and retry, setpoint controller gains | `njord_sim/config/algorithms.yaml` | `ALGORITHMS_CONFIG` (default) |
 | Other reference-node parameters (perception thresholds) | a ROS parameter file, e.g. `config/examples/team_params.yaml` | `ROS_PARAMS_FILE=/config/examples/…` |
 | EKF / GPS-transform settings | `njord_sim/config/localization.yaml` | always used |
-| World origin (GPS datum), command timeout, Njord world gravity, thruster command topic pattern, pinned WAM-V hull and thruster geometry | `njord_sim/njord_sim/constants.py` (then rebuild) | fixed platform constants |
+| World origin (GPS datum), command timeout, Njord world gravity, thruster command topic pattern, setpoint topic names, lab setpoint acceptance, pinned WAM-V hull and thruster geometry | `njord_sim/njord_sim/constants.py` (then rebuild) | fixed platform constants |
 | Seed of a single run | — | `SEED=<n>` |
 | Simulated seconds per wall second | — | `REAL_TIME_FACTOR=<x>` (default `1.0`) |
 | Navigate on simulator ground truth instead of the GPS/IMU estimate | — | `STATE_SOURCE=truth` (default `estimate`) |
@@ -52,7 +53,9 @@ changing them.
 | `VESSEL_CONFIG` | `/config/vessels/wamv.yaml` | Vessel file or partial WAM-V override |
 | `ALGORITHMS_CONFIG` | `/config/algorithms.yaml` | Reference autonomy tuning |
 | `ROS_PARAMS_FILE` | empty | Extra ROS parameters for reference nodes |
-| `RUN_MODE` | `race` | `race` passes thrust only while the evaluator reports the race active; `free` drives without an evaluator (`lab` sets it) |
+| `RUN_MODE` | `race` | `race` passes thrust only while the evaluator reports the race active; `free` needs no race-active signal (`lab` sets it) |
+| `EVALUATOR_MODE` | `race` | `race` scores the scenario and ends the run; `observe` scores the targets sent during a free run and never ends it (`lab` sets it) |
+| `GUI` | `0` | `1` adds the Gazebo window and RViz to `demo` or `lab` (`gui` is `GUI=1 demo`) |
 | `AUTONOMY`, `CONTROLLER`, `PERCEPTION`, `MAPPING` | `reference` | `external` leaves out reference nodes ([team integration](team-integration.md)) |
 | `CONFIG_HOST` | `./njord_sim/config` | Host directory mounted at `/config`; with your own directory, point `VESSEL_CONFIG` and `ALGORITHMS_CONFIG` at files in it |
 | `NJORD_CPU` | `0` | `1` selects software rendering |
@@ -255,13 +258,49 @@ The scoring hull is not part of a course: it comes from the vessel. Gate and
 obstacle coordinates are world-generation and scoring truth only; the
 autonomy is told how many gates there are, never where.
 
+### Setpoint courses
+
+Instead of `gates`, a course can list target poses under `setpoints` (exactly
+one of the two). The evaluator then issues the targets one at a time on
+`/njord/setpoint` and scores each one; see
+[control-autonomy-setpoints.md](control-autonomy-setpoints.md) for the
+interface and the metrics.
+
+```yaml
+setpoints:
+  defaults: {tolerance_m: 1.5, heading_tolerance_deg: 15.0, hold_s: 5.0, timeout_s: 100.0}
+  sequence:
+  - {name: east, position: [20.0, 0.0], heading_deg_enu: 0.0}
+  - {name: free_heading, position: [20.0, 20.0]}
+  - {name: change_of_mind, position: [10.0, 5.0], advance_after_s: 8.0}
+  - {name: home, position: [0.0, 0.0], heading_deg_enu: -90.0, hold_s: 10.0}
+```
+
+`position` is map ENU in metres and `heading_deg_enu` degrees counter-clockwise
+from east (omitted: free heading, not scored). `tolerance_m`,
+`heading_tolerance_deg`, `hold_s` and `timeout_s` must be given per target or
+under `defaults`; there is no built-in fallback. A target is reached after
+`hold_s` uninterrupted seconds within both tolerances, and fails after
+`timeout_s`. `advance_after_s` issues the next target after that time whether
+or not this one was reached; such a target is optional, and the last target
+cannot use it. A setpoint course needs at least one entry under `obstacles`,
+because the contact monitor only reports collisions for watched models, and
+`gate_y_jitter_m` is rejected. The shipped `goto_square`, `goto_retarget` and
+`station_keeping` courses have `calm`, `windy` (constant wind, any vessel) and
+`current` (wind plus current, Njord profiles only) presets.
+
+Autonomy receives only the course kind through `run_ready.json`; target
+positions reach it one at a time on the setpoint topic, never as a file.
+
 Older scenario files without `schema_version` (JSON syntax with
 `wind_direction_deg`) are still accepted and converted with still water,
 1000 kg/m³, water level 0 and a 4 ms step.
 
 ## Algorithms file (`config/algorithms.yaml`)
 
-Tuning for the reference guidance, planner and mapper, shared by all vessels.
+Tuning for the reference guidance, planner, mapper and setpoint controller,
+shared by all vessels (schema 5; files of schema 1–4 are converted, and 4 → 5
+adds the shipped `setpoint_control` values).
 `speed_profiles_mps` maps each `PROFILE` name to a speed ceiling; guidance then
 reduces speed further for heading error, clearance and the braking distance in
 the observed-free corridor. `guidance.max_thrust` is an operating limit and
@@ -280,6 +319,15 @@ estimator) is not taken as a crossing. These change only the reference
 autonomy, which the real boat does not run; they do not change what the
 simulator measures.
 
+`setpoint_control` tunes the reference controller of setpoint courses
+(`setpoint_control_core.py`): far from the target it turns towards it and
+limits surge speed with `braking_deceleration_mps2` and `reaction_time_s`;
+inside `approach_radius_m` it holds position and heading with PD gains
+`kp_position`/`kd_position` and `kp_yaw`/`kd_yaw`. A two-thruster vessel keeps
+pointing at the target until it is within `align_radius_m`. It shares the speed
+profile, `guidance.max_thrust` and the vessel's thruster layout with guidance.
+The gains are starting values, not tuned against the real boat.
+
 `vessel_overrides` replaces shared values for one vessel, keyed by `wamv` or
 the vessel file's `name` (e.g. `njord_analytic`, `munin_placeholder`):
 
@@ -289,7 +337,7 @@ vessel_overrides:
     guidance: {kp_yaw: 250.0, kd_yaw: 200.0}
 ```
 
-Only `guidance`, `mapping` and `mission` can be overridden, and only with keys
+Only `guidance`, `mapping`, `mission` and `setpoint_control` can be overridden, and only with keys
 that exist in the shared section. Every entry is checked, also for vessels not
 in the run, and the merged values pass the same rules, including the vessel's
 thrust limit. The applied name is recorded as `algorithms.vessel_override` in
@@ -312,7 +360,9 @@ world origin shared by Gazebo and the GPS transform (63.4305 N, 10.3951 E), the
 0.5 s simulation-time command timeout and 2 s steady-time liveness limit used by
 the guard, both actuator plugins and the evaluator, the Njord world gravity
 (9.81 m/s², written as the world `<gravity>` and read from there by the
-buoyancy plugin), the thruster command topic pattern `/{name}/command`, and the VRX WAM-V hull envelope
+buoyancy plugin), the thruster command topic pattern `/{name}/command`, the
+provisional setpoint topic names (`SETPOINT_TOPIC` and the rest of that block)
+with the lab acceptance `OBSERVED_SETPOINT_ACCEPTANCE` (1.5 m, 15°, 5 s), and the VRX WAM-V hull envelope
 (6 × 3.3 m) and thruster layout: `thruster_1` (port) and `thruster_2`
 (starboard) at x = -2.373776 m, y = ±1.027135 m, pushing forward.
 
@@ -325,7 +375,11 @@ resolved values (`resolved_configuration.json`), the generated
 settings actually used (`vessel_config.yaml`), the autonomy's parameters
 (`public_parameters.json`) and `run_manifest.json` with SHA-256 digests of all
 of them. `run_ready.json` binds the manifest digest to the run ID; autonomy,
-evaluator and recorder record the same digest.
+evaluator and recorder record the same digest. The evaluator adds
+`run_metrics.json` (result and provenance), `timeseries.csv` (10 Hz ground-truth
+pose, body velocity, active target error and guard thrust) and `report.html`
+(a self-contained page with the top view, per-target table and time plots;
+`./scripts/njord report <dir>` rebuilds it).
 
 The run directory is not an access-control boundary: a team process with
 filesystem access can read evaluation files. Use separate mounts if that

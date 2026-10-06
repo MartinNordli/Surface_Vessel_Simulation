@@ -10,7 +10,10 @@ their status heartbeats. The decision itself is ``guard_core.GuardCore``.
 Subscribes:
     ``thruster_topics`` (one ``std_msgs/Float64`` per thruster, in vessel-file
         order, e.g. ``/thruster_1/command``): thrust command in N along the
-        thruster's axis; non-finite values count as invalid.
+        thruster's axis; non-finite values count as invalid. Subscribed best
+        effort (depth 1), which matches both reliable and best-effort
+        publishers: a missed sample only delays the next complete set, and
+        freshness decides validity.
     ``/njord/{navigation,planner,mission}_status``
         (``diagnostic_msgs/DiagnosticArray``): health heartbeats for the keys in
         ``required_status``. Each must hold exactly one status with the
@@ -39,8 +42,9 @@ Parameters:
     limits in N, reverse as magnitudes), from the vessel file, algorithms.yaml
     and constants.py through ``node_defaults``; ``required_status`` and
     ``require_race_active`` from ``configuration.guard_requirements``, set by
-    the autonomy launch from AUTONOMY and RUN_MODE (standalone default: all
-    three heartbeats and an active race).
+    the autonomy launch from AUTONOMY, CONTROLLER, the course kind and RUN_MODE
+    (standalone default: a reference gate race, i.e. navigation, planner and
+    mission heartbeats and an active race).
 
 Validity rules and failure behaviour:
     * An input is stale when it was received more than ``timeout_s`` ago in
@@ -55,14 +59,19 @@ import time
 import rclpy
 from rclpy.clock import Clock, ClockType
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, DurabilityPolicy
+from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus
 from ros_gz_interfaces.msg import Float32Array
 from std_msgs.msg import Float64, Bool
 
-from njord_sim.constants import HEARTBEATS
+from njord_sim.configuration import guard_requirements
+from njord_sim.constants import ACTUATOR_FORCES_TOPIC, HEARTBEATS
 from njord_sim.defaults import node_defaults
 from njord_sim.guard_core import GuardCore
+
+# Best effort accepts reliable and best-effort thrust publishers alike, so a
+# controller's QoS choice cannot silently disconnect it from the guard.
+THRUST_QOS = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
 
 
 class CommandGuard(Node):
@@ -74,7 +83,7 @@ class CommandGuard(Node):
         # thruster_topics, timeouts, max_thrust and per-thruster limits come
         # from the vessel, algorithms.yaml and constants.py (see defaults.py).
         self.declare_parameters('', [*node_defaults('command_guard'),
-                                     ('required_status', list(HEARTBEATS)),
+                                     ('required_status', guard_requirements({}, 'race')['required_status']),
                                      ('require_race_active', True)])
         p = lambda name: self.get_parameter(name).value
         self.topics = list(p('thruster_topics'))
@@ -87,10 +96,10 @@ class CommandGuard(Node):
         self.driving = False  # the last published forces were a valid command
         self.create_subscription(Bool, '/njord/race_active', self.on_race,
                                  QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
-        self.pub = self.create_publisher(Float32Array, '/njord/actuator_forces', 1)
+        self.pub = self.create_publisher(Float32Array, ACTUATOR_FORCES_TOPIC, 1)
         self.status_pub = self.create_publisher(DiagnosticArray, '/njord/guard_status', 1)
         for index, topic in enumerate(self.topics):
-            self.create_subscription(Float64, topic, lambda m, i=index: self.command(i, m), 1)
+            self.create_subscription(Float64, topic, lambda m, i=index: self.command(i, m), THRUST_QOS)
         for key in required:
             topic, name = HEARTBEATS[key]
             self.create_subscription(DiagnosticArray, topic, lambda m, k=key, n=name: self.status(k, n, m), 1)

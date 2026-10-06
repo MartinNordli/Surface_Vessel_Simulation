@@ -47,9 +47,13 @@ Image
 
 Run (course defaults to SCENARIO, else reference)
   demo [course]       Headless race: simulator + autonomy + evaluator; exits with the result
-  gui [course]        Same race with the Gazebo window and RViz
-  lab [course]        Free driving: simulator + autonomy, no evaluator (RUN_MODE=free)
+  gui [course]        Same race with the Gazebo window and RViz (also: GUI=1 demo|lab)
+  lab [course]        Free driving (RUN_MODE=free): no race; the evaluator scores the
+                      targets you send with goto or RViz until Ctrl-C
   simulator [course]  Simulator service only
+  goto X Y [HEADING_DEG]  Send a target pose (map ENU m, degrees from east) to a
+                      running lab; it replaces the active one
+  report [run-dir]    Rebuild report.html of a run (default: the newest outputs/run-*)
   benchmark [course]  Seed x environment x profile race matrix (see --help)
   film [course] [gif options]  Race filmed by a chase camera, then an animated GIF
                       (options: python3 scripts/make_film_gif.py --help)
@@ -61,6 +65,8 @@ Test
   smoke           Check live sensors against an already running stack
 
 Courses: $(courses)
+Setpoint courses (goto_*, station_keeping) issue target poses instead of gates;
+see docs/control-autonomy-setpoints.md.
 Common settings: SEED, ENVIRONMENT, PROFILE, VESSEL_CONFIG, ALGORITHMS_CONFIG,
 CONTROLLER/PERCEPTION/MAPPING/AUTONOMY=external, STATE_SOURCE=truth (navigate on
 ground truth instead of the GPS/IMU estimate). NJORD_CPU=1 uses software
@@ -183,21 +189,41 @@ case "$action" in
     fi
     ;;
   demo|gui|lab|simulator)
-    if [ "$action" = gui ]; then export COMPOSE_FILE="$COMPOSE_FILE:compose.gui.yaml"; fi
+    gui=0
+    if [ "$action" = gui ] || [ "${GUI:-0}" = 1 ]; then
+      export COMPOSE_FILE="$COMPOSE_FILE:compose.gui.yaml"
+      gui=1
+    fi
     prepare_run run
     trap 'docker compose down --timeout 10' EXIT INT TERM
+    # RViz runs detached, so closing its window never ends the run.
+    if [ "$gui" = 1 ]; then docker compose up --detach rviz; fi
+    result=0
     if [ "$action" = simulator ]; then
-      docker compose up simulator "$@"
+      docker compose up simulator "$@" || result=$?
     elif [ "$action" = lab ]; then
-      # Free driving: the guard needs no race-active signal from an evaluator.
-      export RUN_MODE=free
+      # Free driving: the guard needs no race-active signal, and the evaluator
+      # only observes (scores targets sent with goto/RViz, never ends the run).
+      export RUN_MODE=free EVALUATOR_MODE=observe
       # Interactive inspection uses short-lived compose run containers. Their
       # exit must not tear down the ongoing sensor session.
-      docker compose up simulator autonomy "$@"
+      docker compose up simulator autonomy evaluator "$@" || result=$?
     else
       # The evaluator's exit code (0 = course completed) becomes ours.
-      docker compose up --abort-on-container-exit --exit-code-from evaluator simulator autonomy evaluator "$@"
+      docker compose up --abort-on-container-exit --exit-code-from evaluator simulator autonomy evaluator "$@" || result=$?
     fi
+    if [ -f "$OUTPUT_HOST/report.html" ]; then echo "Report: $OUTPUT_HOST/report.html"; fi
+    exit "$result"
+    ;;
+  goto)
+    if [ $# -lt 2 ]; then usage >&2; exit 2; fi
+    # Runs inside the lab's autonomy container: same ROS domain and /clock.
+    docker compose exec autonomy /entrypoint.sh python3 /opt/njord/scripts/send_setpoint.py "$@"
+    ;;
+  report)
+    run_dir="${1:-$(ls -dt outputs/run-* 2>/dev/null | head -n 1)}"
+    if [ -z "$run_dir" ]; then echo 'No run directory given or found in outputs/' >&2; exit 2; fi
+    python3 scripts/make_report.py "$run_dir"
     ;;
   film)
     # Same headless race plus the filmer; the GIF is built on the host only

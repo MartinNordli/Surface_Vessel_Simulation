@@ -52,8 +52,10 @@ services.
 | `test` | Full test suite (CPU + ROS transport/model tests) in the container |
 | `selftest` | Starts simulator and autonomy, checks live cameras, lidar and navigation, then stops |
 | `demo [course]` | Headless race with simulator, autonomy and evaluator |
-| `gui [course]` | Same race with the Gazebo window and RViz |
-| `lab [course]` | Free driving (`RUN_MODE=free`): simulator, estimation and selected reference nodes, no evaluator; the boat drives without a race |
+| `gui [course]` | Same race with the Gazebo window and RViz (`GUI=1` does the same for `demo` and `lab`) |
+| `lab [course]` | Free driving (`RUN_MODE=free`): simulator, estimation and selected reference nodes, no race. The evaluator only observes: it scores the targets sent with `goto` or RViz and writes the report on Ctrl-C |
+| `goto X Y [HEADING_DEG]` | Send a target pose (map ENU metres, degrees from east) to a running `lab`; it replaces the active one |
+| `report [run-dir]` | Rebuild `report.html` of a run on the host (default: newest `outputs/run-*`) |
 | `benchmark [course]` | Seed × environment × profile matrix, e.g. `--jobs 2` or `--dry-run` |
 | `film [course]` | Headless race filmed by a chase camera, then a sped-up GIF (see [Filming](#filming)) |
 | `simulator` | Simulator service only |
@@ -65,7 +67,10 @@ services.
 perception, planning, navigation and contact monitoring, then starts race timing.
 It stops all services on completion or failure, and exits nonzero for a failed
 race. Generated SDF, URDF, bridge configuration, the resolved scenario and
-metrics are kept in the output directory.
+metrics are kept in the output directory, together with `timeseries.csv` and
+`report.html`, a page that opens offline in a browser with the result, a top
+view of the track and course, per-target results and time plots. The command
+prints its path at the end.
 
 ```bash
 ./scripts/njord demo                                   # reference course (default)
@@ -82,8 +87,14 @@ Courses are the files in `scenarios/`:
   and sensor configurations. The reference autonomy is a baseline and is not
   required to complete every run.
 - **`dynamics`**: open water for dynamics measurements, not a race.
+- **`goto_square`, `goto_retarget`, `station_keeping`**: setpoint courses. The
+  evaluator issues target poses on `/njord/setpoint` one at a time and scores
+  how the boat reaches and holds each one; the reference `setpoint_controller`
+  drives unless `CONTROLLER=external`. See
+  [control-autonomy-setpoints.md](control-autonomy-setpoints.md). Their
+  environments are `calm`, `windy` and `current` (Njord profiles only).
 
-All support `SEED`, `ENVIRONMENT` (`calm`, `moderate`) and `PROFILE` (a
+Gate courses support `SEED`, `ENVIRONMENT` (`calm`, `moderate`) and `PROFILE` (a
 `speed_profiles_mps` name in `algorithms.yaml`: `conservative` or `fast` as
 shipped). An explicit course name overrides `SCENARIO` for that
 invocation; without one, `SCENARIO` (a path inside the container) still works.
@@ -116,9 +127,26 @@ NJORD_CPU=1 ./scripts/njord selftest
 `~/.gz/rendering/ogre2.log` and run the live smoke test.
 
 The GUI overlay uses the existing X display and Xauthority; it never runs
-`xhost +`. A separate RViz service is available with
+`xhost +`. `gui` and `GUI=1` also start the RViz service detached, so closing its
+window does not end the run; it shows the map, lidar, cameras, the travelled
+track, setpoint markers and the active setpoint, and its "2D Goal Pose" tool
+publishes on `/njord/setpoint` (use it in `lab`). RViz alone is available with
 `docker compose --profile gui up rviz`, using the same Compose files, ROS domain
 and Gazebo partition as the simulator.
+
+### Free driving with targets (`lab`)
+
+```bash
+./scripts/njord lab goto_square            # terminal 1; GUI=1 adds Gazebo and RViz
+./scripts/njord goto 15 5 90               # terminal 2: go to x=15, y=5, face north
+./scripts/njord goto 0 0                   # face along the leg from the current position
+# Ctrl-C in terminal 1 writes run_metrics.json and report.html for every target sent.
+```
+
+On a setpoint course the reference `setpoint_controller` drives to each target
+(`CONTROLLER=external` leaves it to your node); on a gate course the reference
+autonomy drives the gates and targets are only scored. Lab targets are scored
+with `OBSERVED_SETPOINT_ACCEPTANCE` in `constants.py` (1.5 m, 15°, 5 s hold).
 
 ## Manual Compose sessions
 

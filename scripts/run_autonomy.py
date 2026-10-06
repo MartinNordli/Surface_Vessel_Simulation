@@ -18,7 +18,7 @@ overrides the environment.
 
 Reads from OUTPUT_DIR: run_ready.json, vessel_config.yaml and (if present)
 public_parameters.json. Autonomy never receives scenario geometry; only the
-number of gates and the manifest digest.
+course kind, the number of gates and the manifest digest.
 
 Writes to OUTPUT_DIR: autonomy_config.json (settings, digests and the exact
 launch command) and ros_params.yaml (a snapshot of ROS_PARAMS_FILE, if set).
@@ -107,6 +107,7 @@ def prepare(output, run_id, environment=None, args=()):
                *[argument for argument in extra_args if argument.partition(':=')[0] not in settings],
                *(['localization_config:=' + str(localization)] if localization.is_file() else []),
                'expected_gates:=' + str(metadata['expected_gates']),
+               'course:=' + metadata.get('course', 'gates'),
                *(['public_parameters:=' + str(public_file)] if public_file.is_file() else []),
                *(['params_file:=' + settings['params_file']] if settings['params_file'] else []),
                'vessel_config:=' + str(vessel)]
@@ -115,6 +116,7 @@ def prepare(output, run_id, environment=None, args=()):
         **settings, 'seed': seed, 'run_id': metadata['run_id'],
         'manifest_sha256': metadata.get('manifest_sha256'),
         'expected_gates': metadata['expected_gates'],
+        'course': metadata.get('course', 'gates'),
         'environment': environment.get('ENVIRONMENT', 'calm'),
         'image_identity': environment.get('IMAGE_ID', 'unknown'),
         'image_source_commit': environment.get('NJORD_IMAGE_SOURCE_COMMIT', 'unknown'),

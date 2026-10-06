@@ -1,0 +1,72 @@
+# Setpoint course: four corners of a 20 m square, each with a heading to hold.
+#   ./scripts/njord demo goto_square
+#   CONTROLLER=external VESSEL_CONFIG=/config/vessels/munin_v0.yaml ./scripts/njord demo goto_square
+#
+# Instead of gates, the evaluator issues the targets below one at a time on
+# /njord/setpoint (docs/control-autonomy-setpoints.md). A target counts as
+# reached once the boat stays within tolerance_m and heading_tolerance_deg for
+# hold_s; then the next one is issued. Positions are map ENU metres; headings
+# are degrees counter-clockwise from east. Every value can be set per target
+# or under defaults.
+schema_version: 1
+name: goto_square
+seed: 1
+start: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+timeout_s: 480.0
+
+setpoints:
+  defaults: {tolerance_m: 1.5, heading_tolerance_deg: 15.0, hold_s: 5.0, timeout_s: 100.0}
+  sequence:
+  - {name: east, position: [20.0, 0.0], heading_deg_enu: 0.0}
+  - {name: north_east, position: [20.0, 20.0], heading_deg_enu: 90.0}
+  - {name: north_west, position: [0.0, 20.0], heading_deg_enu: 180.0}
+  - {name: home, position: [0.0, 0.0], heading_deg_enu: -90.0}
+
+# One distant buoy: the contact monitor needs at least one watched model to
+# report collisions. No setpoint route passes near it.
+obstacles:
+- {name: reference_buoy, position: [-25.0, -25.0], radius_m: 0.5}
+
+environments:
+  calm:
+    wind_speed_mps: 0.0
+    wind_direction_to_deg_enu: 45.0
+    wind_variance_gain: 0.0
+    wave_gain: 0.0
+    wave_period_s: 5.0
+    wave_direction_rad: 0.0
+    wave_steepness: 0.0
+    current_speed_mps: 0.0
+    current_direction_to_deg_enu: 0.0
+    water_density_kg_m3: 1000.0
+    water_level_m: 0.0
+    physics_step_s: 0.004
+  # Constant wind without gusts or waves, accepted by every vessel profile.
+  windy:
+    wind_speed_mps: 4.0
+    wind_direction_to_deg_enu: 135.0
+    wind_variance_gain: 0.0
+    wave_gain: 0.0
+    wave_period_s: 5.0
+    wave_direction_rad: 0.0
+    wave_steepness: 0.0
+    current_speed_mps: 0.0
+    current_direction_to_deg_enu: 0.0
+    water_density_kg_m3: 1000.0
+    water_level_m: 0.0
+    physics_step_s: 0.004
+  # Wind plus a steady current; the WAM-V reference model has no current input,
+  # so this one needs a Njord-profile vessel (e.g. munin_v0.yaml).
+  current:
+    wind_speed_mps: 4.0
+    wind_direction_to_deg_enu: 135.0
+    wind_variance_gain: 0.0
+    wave_gain: 0.0
+    wave_period_s: 5.0
+    wave_direction_rad: 0.0
+    wave_steepness: 0.0
+    current_speed_mps: 0.3
+    current_direction_to_deg_enu: 270.0
+    water_density_kg_m3: 1000.0
+    water_level_m: 0.0
+    physics_step_s: 0.004

@@ -56,8 +56,9 @@ class AlgorithmsConfigTests(unittest.TestCase):
         for key in ('grid_resolution_m', 'grid_size_m', 'grid_origin_m'):
             del old['mapping'][key]
         del old['mission']
+        del old['setpoint_control']
         converted = convert_algorithm_schema(old)
-        self.assertEqual(converted['schema_version'], 4)
+        self.assertEqual(converted['schema_version'], 5)
         self.assertEqual(converted['mapping'], self.shipped()['mapping'])
         self.assertNotIn('grid_size_m', old['mapping'])
         resolved = self.resolve(old)['algorithms']
@@ -71,6 +72,7 @@ class AlgorithmsConfigTests(unittest.TestCase):
         old = self.shipped()
         old['schema_version'] = 3
         del old['mission']
+        del old['setpoint_control']
         mission = convert_algorithm_schema(old)['mission']
         # The geometry the mission node used to build in; no search, no retry.
         shipped = self.shipped()['mission']
@@ -176,7 +178,8 @@ class AlgorithmsConfigTests(unittest.TestCase):
         for path in scenarios:
             course = yaml.safe_load(path.read_text())
             points = [course['start'][:2]]
-            points += [gate[color] for gate in course['gates'] for color in ('red', 'green')]
+            points += [gate[color] for gate in course.get('gates', []) for color in ('red', 'green')]
+            points += [setpoint['position'] for setpoint in course.get('setpoints', {}).get('sequence', [])]
             points += [obstacle['position'] for obstacle in course.get('obstacles') or []]
             for point in points:
                 with self.subTest(course=path.stem, point=point):

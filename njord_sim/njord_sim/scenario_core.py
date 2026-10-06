@@ -21,6 +21,10 @@ from pathlib import Path
 
 from .constants import WAMV_HULL
 
+# Scenario kinds: an ordered gate race, or a sequence of target poses
+# (``setpoints``) that the evaluator hands to the controller one at a time.
+COURSE_KINDS = ("gates", "setpoints")
+
 
 def load_scenario(path, seed=None, environment=None):
     """Load a course file or an already resolved scenario (JSON or YAML).
@@ -39,6 +43,9 @@ def load_scenario(path, seed=None, environment=None):
         data = yaml.safe_load(text)
     data = copy.deepcopy(data)
     if data.get("resolved"):
+        # Resolved files written before setpoint courses existed are gate races.
+        if "kind" not in data and data.get("gates") and "setpoints" not in data:
+            data["kind"] = "gates"
         if seed is not None and seed != data["seed"]:
             raise ValueError("cannot reseed a resolved scenario")
         if environment is not None and environment != data["environment_name"]:
@@ -56,8 +63,16 @@ def validate_scenario(data):
     """Raise ValueError unless ``data`` is a structurally valid resolved scenario."""
     # This also refuses NaN/Infinity anywhere in configuration and provenance.
     json.dumps(data, allow_nan=False)
-    if not data.get("gates") or len(data["start"]) != 6:
-        raise ValueError("scenario requires gates and a six-value start pose")
+    if data.get("kind") not in COURSE_KINDS or len(data["start"]) != 6:
+        raise ValueError(f"scenario requires a kind in {COURSE_KINDS} and a six-value start pose")
+    if data["kind"] == "gates" and not data.get("gates"):
+        raise ValueError("a gate course requires gates")
+    if data["kind"] == "setpoints" and (data.get("gates") or not data.get("setpoints")):
+        raise ValueError("a setpoint course requires setpoints and no gates")
+    if not obstacles(data):
+        # The contact monitor only reports (and proves collision evidence)
+        # once it watches at least one model.
+        raise ValueError("scenario requires at least one gate marker or obstacle")
     if data["timeout_s"] <= 0 or min(data["hull"].values()) <= 0:
         raise ValueError("timeout and hull dimensions must be positive")
     names = set()
@@ -159,6 +174,26 @@ def hull_clearance(pose, obstacle, length, beam):
     return signed_distance - obstacle["radius_m"]
 
 
+def swept_clearance(previous, pose, obstacle_list, hull):
+    """Smallest hull clearance (m) to any obstacle while moving from ``previous`` to ``pose``.
+
+    Both are (x, y, yaw); ``previous`` may be None for the first sample. Hull
+    positions are interpolated at <=0.1 m / 2 degrees, so swept envelope
+    overlap between odometry messages (including rotation) is not missed.
+    Returns infinity without obstacles.
+    """
+    poses = [pose]
+    if previous is not None:
+        delta_yaw = math.atan2(math.sin(pose[2] - previous[2]), math.cos(pose[2] - previous[2]))
+        travel = math.dist(previous[:2], pose[:2])
+        steps = max(1, math.ceil(travel / 0.1), math.ceil(abs(delta_yaw) / math.radians(2)))
+        poses += [(previous[0] + i / steps * (pose[0] - previous[0]),
+                   previous[1] + i / steps * (pose[1] - previous[1]),
+                   previous[2] + i / steps * delta_yaw) for i in range(steps)]
+    return min((hull_clearance(p, obstacle, hull["length_m"], hull["beam_m"])
+                for p in poses for obstacle in obstacle_list), default=math.inf)
+
+
 class RaceScorer:
     """Score one ordered gate race from ground-truth poses in simulation time.
 
@@ -224,18 +259,10 @@ class RaceScorer:
             self.start_time = stamp
         self.elapsed = stamp - self.start_time
         pose = (x, y, yaw)
+        self.min_clearance = min(self.min_clearance, swept_clearance(
+            self.previous, pose, self.obstacles, self.scenario["hull"]))
         if self.previous is not None:
-            travel = math.dist(self.previous[:2], pose[:2])
-            self.distance += travel
-            # Interpolate hull positions at <=0.1 m / 2 degrees to catch swept
-            # envelope overlap between odometry messages, including rotation.
-            delta_yaw = math.atan2(math.sin(yaw - self.previous[2]), math.cos(yaw - self.previous[2]))
-            steps = max(1, math.ceil(travel / 0.1), math.ceil(abs(delta_yaw) / math.radians(2)))
-            for i in range(steps):
-                f = i / steps
-                self._clearance((self.previous[0] + f * (x - self.previous[0]),
-                                 self.previous[1] + f * (y - self.previous[1]),
-                                 self.previous[2] + f * delta_yaw))
+            self.distance += math.dist(self.previous[:2], pose[:2])
             # Test every gate against this segment and handle the crossings in
             # the order they happened, so several gates passed between two
             # samples are still checked for order and direction.
@@ -254,7 +281,6 @@ class RaceScorer:
                     self.status = "invalid_gate_order"
                     break
                 self.next_gate += 1
-        self._clearance(pose)
         self.previous, self.previous_time = pose, stamp
         # Envelope overlap takes precedence over an order violation found in
         # the same sample.
@@ -268,13 +294,6 @@ class RaceScorer:
                 self.elapsed = self.gate_events[-1]["time_s"]
             elif self.elapsed >= self.scenario["timeout_s"]:
                 self.status = "simulation_timeout"
-
-    def _clearance(self, pose):
-        """Lower ``min_clearance`` with the hull envelope at ``pose``."""
-        hull = self.scenario["hull"]
-        for obstacle in self.obstacles:
-            self.min_clearance = min(self.min_clearance, hull_clearance(
-                pose, obstacle, hull["length_m"], hull["beam_m"]))
 
     def metrics(self):
         """Return the JSON-serializable race result.

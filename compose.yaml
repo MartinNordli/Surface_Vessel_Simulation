@@ -57,10 +57,13 @@ x-common: &common
     # thrust command acts on the boat.
     REAL_TIME_FACTOR: ${REAL_TIME_FACTOR:-1.0}
     # race: the guard passes thrust only while the evaluator reports the race
-    # active. free: no evaluator (./scripts/njord lab sets it).
+    # active. free: no race-active signal needed (./scripts/njord lab sets it).
     RUN_MODE: ${RUN_MODE:-race}
     # Speed profile of the reference autonomy: fast or conservative.
     PROFILE: ${PROFILE:-fast}
+    # race: the evaluator scores the scenario and ends the run. observe: it
+    # scores targets sent during a free lab run (./scripts/njord lab sets it).
+    EVALUATOR_MODE: ${EVALUATOR_MODE:-race}
     # Free-form label stored in the evaluator's metrics.
     RUN_LABEL: ${RUN_LABEL:-demo}
     # Unique run identifier; required by autonomy, evaluator and recorder to
@@ -120,8 +123,9 @@ services:
   autonomy:
     <<: *common
     command: [python3, /opt/njord/scripts/run_autonomy.py]
-  # Ground-truth race scorer; its exit code is the race result
-  # (scripts/run_evaluator.py).
+  # Ground-truth scorer of races and setpoint courses; its exit code is the
+  # race result (scripts/run_evaluator.py). Writes run_metrics.json,
+  # timeseries.csv and report.html.
   evaluator:
     <<: *common
     command: [python3, /opt/njord/scripts/run_evaluator.py]
@@ -131,8 +135,8 @@ services:
     <<: *common
     profiles: [test]
     command: [bash, -c, "python3 tests/test_dstar_lite.py && python3 -m unittest discover -s tests -p 'test_*.py'"]
-  # RViz on the host X display; only started on request
-  # (docker compose --profile gui up rviz).
+  # RViz on the host X display; started by ./scripts/njord gui and GUI=1, or
+  # on request (docker compose --profile gui up rviz).
   rviz:
     <<: *common
     profiles: [gui]

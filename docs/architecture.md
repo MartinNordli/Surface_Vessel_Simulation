@@ -47,7 +47,10 @@ controller only advances into an observed-free corridor.
 4. **evaluator** (`scripts/run_evaluator.py` → `evaluator_node.py`) waits for
    the same handoff, starts the race once the required heartbeats and contact
    monitoring are healthy, scores it against ground truth and writes
-   `run_metrics.json`. Its exit code (0 = completed) ends the run.
+   `run_metrics.json`, `timeseries.csv` and `report.html`. On a setpoint course
+   it also issues the target poses on `/njord/setpoint`. Its exit code
+   (0 = completed) ends the run. In `lab` it runs in observe mode: it scores
+   targets sent from outside and never ends the run.
 
 ## Code map
 
@@ -58,13 +61,15 @@ them to topics, parameters and timers.
 | Area | Module | Role |
 | --- | --- | --- |
 | Configuration | `configuration.py` | Loads and validates the three YAML files into one resolved configuration |
-| | `constants.py` | Fixed platform constants (world origin, command timeout, WAM-V geometry) |
+| | `constants.py` | Fixed platform constants (world origin, command timeout, topic names, WAM-V geometry) |
 | | `defaults.py` | Fallback node parameters, read from the configuration files |
 | Model and world | `vessel.py` | WAM-V model from the VRX xacro, sensor settings and bridges |
 | | `njord_model.py`, `mesh_geometry.py`, `physics_core.py` | Njord model generation, convex mesh import, test-only Python mirror of the plugin load math (`njord/Loads.hh`) |
 | | `scenario.py` | World SDF: buoys, obstacles, water, wind and waves |
 | | `run_manifest.py` | Atomic, checksummed handoff between the services |
 | Scoring | `scenario_core.py`, `evaluator_node.py` | Gate crossing, clearance and race status from ground truth |
+| | `setpoint_core.py` | Setpoint courses: issue targets in order (race) or observe them (lab); per-target reach, hold and path metrics |
+| | `report_core.py` | Self-contained `report.html` from the metrics and time series (standard library only) |
 | Estimation | `sensor_adapter_node.py` | GPS/IMU noise and the navigation health heartbeat |
 | | `truth_relay_node.py` | Explicit truth mode: ground truth as `/njord/odometry` and TF |
 | Perception | `perception_core.py`, `perception_node.py` | Colour blobs + lidar depth → buoy tracks |
@@ -72,6 +77,7 @@ them to topics, parameters and timers.
 | Planning | `dstar_lite.py`, `planner_core.py`, `planner_node.py` | Incremental D* Lite on the occupancy grid |
 | Mission | `mission_core.py`, `mission_node.py` | Ordered red-left/green-right gate sequence → goals, with search and retry |
 | Control | `control_core.py`, `guidance_node.py` | Line-of-sight tracking, speed limits, thrust allocation |
+| | `setpoint_control_core.py`, `setpoint_controller_node.py` | Reference go-to-pose controller of setpoint courses: braking-limited transit, PD station keeping |
 | Safety | `command_guard_node.py` | Single actuator authority; zero thrust on stale inputs |
 | Shared | `geometry.py` | Rigid transforms and timestamp helpers |
 

@@ -116,6 +116,43 @@ above the flat physical water, which the mapper kept as obstacles. It now uses
 the VRX lidar mask (`constants.LIDAR_VISIBILITY_MASK`). These are reference
 autonomy races on uncalibrated models, not evidence about the real boat.
 
+## Setpoint courses (2026-10-06)
+
+Target poses ("go to this position", [control-autonomy-setpoints.md](control-autonomy-setpoints.md))
+are covered without ROS by `tests/test_setpoint_core.py` (schema, issuing
+order, hold, timeouts, `advance_after_s`, heading wrap, overshoot, path and
+impulse metrics, observer replacement), `tests/test_setpoint_control.py`
+(allocation signs, braking, hysteresis, limits, node freshness, and a closed
+loop on a planar rigid-body model with linear damping for the munin_v0 and
+WAM-V layouts; that model is not Gazebo and not the boat) and
+`tests/test_report_core.py` (well-formed SVG, no external resources), and with
+ROS messages by the referee/observer cases in `tests/evaluator_ros_smoke.py`
+and the course selection in `tests/test_team_launch.py`.
+
+GPU runs on the RTX 5090, seed 1, calm unless stated, `fast` profile, at
+commit 23f502c (races with the reference `setpoint_controller`) and 99c8e28
+(external controller and lab). The container suite passed 300 tests (2 skipped).
+
+| Run | Result | Per target: final error, hold RMS |
+| --- | --- | --- |
+| WAM-V `goto_square` | completed, 4/4 in 126 s, no contact | 0.10–0.34 m; hold RMS 0.23–0.85 m and up to 8.6° |
+| munin_v0 `goto_square` | completed, 4/4 in 81 s | 0.26–0.44 m; hold RMS 0.86–0.92 m, ≤ 0.6° |
+| munin_v0 `goto_retarget` | completed in 45 s; two targets replaced after 12 s and 15 s as scripted, final target 0.09 m | — |
+| munin_v0 `station_keeping`, `current` (4 m/s wind, 0.3 m/s current) | completed; reached after 10.1 s, held 60 s | 0.34 m; hold RMS 0.41 m / 0.9° |
+| WAM-V `station_keeping`, `windy` (4 m/s side wind) | **setpoints_failed**: position within 0.84 m but heading 14.9° off (10° required) at the 200 s timeout | — |
+| munin_v0 `goto_square`, `CONTROLLER=external`, controller started 20 s late in its own container | completed, 4/4 in 85 s; the race waited for the subscriber | 0.26–0.39 m |
+| munin_v0 `lab`, two `njord goto` targets, then `docker compose stop` | both reached (0.28 m, 0.35 m), status `stopped` with metrics and report | — |
+
+Evidence: [`gpu-setpoint-courses`](evidence/gpu-setpoint-courses.json). The
+two-thruster WAM-V cannot push sideways, so it cannot hold heading and
+position against a side wind; munin_v0's assumed X layout can. Hold RMS near
+0.9 m against a 1.5 m tolerance shows the reference controller's slow, untuned
+settling. These runs show that the interface and scoring work end to end; they
+are a reference controller on an uncalibrated placeholder model, not evidence
+about Munin. Two faults found in the first lab run (a target sent before the
+controller had matched, and no result written on `docker compose stop`) were
+fixed in 99c8e28 before the runs above.
+
 ## Dynamics measurements
 
 Run dynamics measurements with **only the simulator service** running:

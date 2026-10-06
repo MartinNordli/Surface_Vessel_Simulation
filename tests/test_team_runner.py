@@ -37,6 +37,16 @@ class TeamRunnerTests(unittest.TestCase):
         self.assertEqual(metadata['vessel_config_sha256'], hashlib.sha256(self.vessel.read_bytes()).hexdigest())
         self.assertNotIn('scenario', metadata)
         self.assertNotIn('gates', metadata)
+        self.assertEqual(metadata['course'], 'gates')
+
+    def test_setpoint_course_reaches_the_launch_without_target_positions(self):
+        (self.output / 'run_ready.json').write_text(json.dumps(
+            {'run_id': 'run-1', 'course': 'setpoints', 'expected_gates': 0}))
+        command = runner.prepare(self.output, 'run-1', {}, ['course:=gates'])
+        self.assertLess(command.index('course:=gates'), command.index('course:=setpoints'))
+        metadata = self.metadata()
+        self.assertEqual((metadata['course'], metadata['expected_gates']), ('setpoints', 0))
+        self.assertNotIn('setpoints', metadata)
 
     def test_params_are_snapshotted_and_modes_provenance_match_command(self):
         original = self.output / 'requested.yaml'

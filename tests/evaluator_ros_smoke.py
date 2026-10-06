@@ -1,5 +1,6 @@
 """Real DDS regression for evaluator readiness and contact-stream failure."""
 import json
+import math
 from pathlib import Path
 import sys
 import tempfile
@@ -11,6 +12,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "njord_sim"))
 import rclpy
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus
+from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
@@ -19,6 +21,7 @@ from ros_gz_interfaces.msg import Contact, Contacts, Entity
 from std_msgs.msg import Bool, Float64
 from builtin_interfaces.msg import Time
 from test_sensor_runtime import local_node
+from njord_sim.configuration import resolve_configuration
 from njord_sim.constants import GZ_MODEL_NAME, PROCESS_LIVENESS_S
 from njord_sim.evaluator_node import Evaluator
 from njord_sim.scenario_core import wall_budget_s
@@ -241,6 +244,131 @@ class EvaluatorCallbackTests(unittest.TestCase):
         self.assertEqual(metrics["path_messages"], 5)
         self.assertEqual(metrics["replans"], 2)
         self.assertEqual(metrics["plan_samples"], 2)
+
+
+def truth(stamp_s, x=0.0, y=0.0, yaw=0.0):
+    """Ground-truth odometry at simulation time ``stamp_s``."""
+    message = Odometry()
+    ns = round(stamp_s * 1e9)
+    message.header.stamp = Time(sec=ns // 10**9, nanosec=ns % 10**9)
+    message.pose.pose.position.x, message.pose.pose.position.y = x, y
+    message.pose.pose.orientation.z, message.pose.pose.orientation.w = math.sin(yaw / 2), math.cos(yaw / 2)
+    return message
+
+
+class SetpointEvaluatorTests(unittest.TestCase):
+    """Referee and observer modes on a setpoint course, without DDS."""
+    def evaluator(self, **overrides):
+        temporary = tempfile.TemporaryDirectory(prefix="njord-evaluator-setpoint-")
+        self.addCleanup(temporary.cleanup)
+        self.output = Path(temporary.name)
+        # A managed run's configuration: the referee waits for the munin_v0 thruster topics.
+        resolved = resolve_configuration(ROOT/"njord_sim/config/vessels/munin_v0.yaml", ROOT/"scenarios/goto_square.yaml",
+                                         ROOT/"njord_sim/config/algorithms.yaml")
+        (self.output/"resolved_configuration.json").write_text(json.dumps(resolved))
+        context = local_node(Evaluator, {"scenario_file": str(ROOT/"scenarios/goto_square.yaml"),
+                                         "output": str(self.output/"run_metrics.json"), **overrides})
+        node, clock, publishers = context.__enter__()
+        self.addCleanup(context.__exit__, None, None, None)
+        logger = patch.object(Node, "get_logger", return_value=SimpleNamespace(
+            info=lambda _: None, warning=lambda _: None))
+        logger.start()
+        self.addCleanup(logger.stop)
+        self.subscribers = 1
+        listeners = patch.object(Node, "count_subscribers", lambda _, topic: self.subscribers, create=True)
+        listeners.start()
+        self.addCleanup(listeners.stop)
+        self.thrust_publishers = 1
+        senders = patch.object(Node, "count_publishers", lambda _, topic: self.thrust_publishers, create=True)
+        senders.start()
+        self.addCleanup(senders.stop)
+        return node, clock, publishers
+
+    def contacts(self, node, seconds):
+        message = Contacts()
+        message.header.stamp = Time(sec=int(seconds), nanosec=round(seconds % 1 * 1e9))
+        node.on_contacts(message)
+
+    def test_referee_issues_targets_in_order_and_writes_the_report(self):
+        node, clock, publishers = self.evaluator(required_status=["navigation", "controller"])
+        targets = node.scenario["setpoints"]
+        clock.seconds = 100.
+        node.on_odom(truth(100.))
+        self.contacts(node, 100.)
+        for name in ("navigation", "controller"):
+            message = DiagnosticArray()
+            message.header.stamp = clock.now().to_msg()
+            message.status = [DiagnosticStatus(name=name, level=DiagnosticStatus.OK)]
+            node.on_readiness(message)
+        self.assertEqual(node.thruster_topics, [f"/thruster_{i}/command" for i in range(1, 5)])
+        self.subscribers = 0
+        node.check_timeout()
+        self.assertFalse(node.started)  # nobody listens for targets yet
+        self.subscribers, self.thrust_publishers = 1, 0
+        node.check_timeout()
+        self.assertFalse(node.started)  # e.g. RViz listens, but no controller sends thrust
+        self.thrust_publishers = 1
+        node.check_timeout()
+        self.assertTrue(node.started)
+        issued = publishers["/njord/setpoint"].messages
+        self.assertEqual(len(issued), 1)
+        node.repeat_setpoint()  # the 1 Hz repeat keeps the issue stamp
+        self.assertIs(issued[-1], issued[0])
+        del issued[1:]
+        self.assertEqual((issued[0].header.frame_id, issued[0].pose.position.x), ("map", targets[0]["position"][0]))
+        sequence = publishers["/njord/setpoint_sequence"].messages[-1]
+        self.assertEqual(len(sequence.poses), len(targets))
+        # Sit on each target with its heading for longer than the hold.
+        t = 100.
+        for index, target in enumerate(targets):
+            yaw = math.radians(target["heading_deg_enu"])
+            for _ in range(int(target["hold_s"] / 0.1) + 2):
+                t += 0.1
+                clock.seconds = t
+                self.contacts(node, t)
+                node.on_odom(truth(t, *target["position"], yaw))
+            if index + 1 < len(targets):
+                self.assertEqual(len(publishers["/njord/setpoint"].messages), index + 2)
+        self.assertTrue(node.done)
+        self.assertEqual(node.exit_code, 0)
+        metrics = json.loads((self.output/"run_metrics.json").read_text())
+        self.assertEqual((metrics["status"], metrics["course"]), ("completed", "setpoints"))
+        self.assertEqual([s["outcome"] for s in metrics["setpoints"]], ["reached"] * len(targets))
+        self.assertTrue((self.output/"timeseries.csv").read_text().startswith("t_s,x_m"))
+        report = (self.output/"report.html").read_text()
+        self.assertIn("<svg", report)
+        self.assertIn(targets[-1]["name"], report)
+        self.assertFalse(publishers["/njord/race_active"].messages[-1].data)
+
+    def test_observer_scores_targets_sent_from_outside(self):
+        node, clock, publishers = self.evaluator(mode="observe")
+        self.assertNotIn("/njord/race_active", publishers)
+        self.assertNotIn("/njord/setpoint", publishers)
+        clock.seconds = 50.
+        node.on_odom(truth(50.))
+        goal = PoseStamped()
+        goal.header.frame_id = "map"
+        goal.pose.position.x, goal.pose.orientation.w = 3.0, 1.0
+        node.on_setpoint(goal)
+        node.on_setpoint(goal)  # a duplicate of the same message
+        wrong = PoseStamped()
+        wrong.header.frame_id = "base_link"
+        node.on_setpoint(wrong)
+        self.assertEqual(len(node.scorer.tracks), 1)
+        t = 50.
+        for _ in range(60):
+            t += 0.1
+            clock.seconds = t
+            node.on_odom(truth(t, 3.0, 0.0, 0.0))
+        self.assertFalse(node.done)
+        interim = json.loads((self.output/"run_metrics.json").read_text())
+        self.assertEqual(interim["setpoints"][0]["outcome"], "reached")
+        node.check_timeout()  # no watchdog ends an observation
+        self.assertFalse(node.done)
+        node.interrupt()
+        metrics = json.loads((self.output/"run_metrics.json").read_text())
+        self.assertEqual((metrics["status"], metrics["mode"], node.exit_code), ("stopped", "observe", 0))
+        self.assertTrue((self.output/"report.html").is_file())
 
 
 if __name__ == "__main__":

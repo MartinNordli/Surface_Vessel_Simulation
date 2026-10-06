@@ -40,9 +40,13 @@ flowchart LR
   reference mapper, perception, mission, planner and guidance run unless a
   team replaces them (`AUTONOMY`, `CONTROLLER`, `PERCEPTION`, `MAPPING` =
   `external`; see [team integration](team-integration.md)).
-- **evaluator** runs only in a race (`demo`, `benchmark`). It starts the race,
-  scores it against ground truth and writes `run_metrics.json`. `lab` runs
-  without it (`RUN_MODE=free`) so a boat can simply be driven.
+- **evaluator** runs the race (`demo`, `gui`, `benchmark`). It starts the race,
+  scores it against ground truth and writes `run_metrics.json`, `timeseries.csv`
+  and `report.html`. On a setpoint course it is also the referee that issues the
+  target poses on `/njord/setpoint` one at a time
+  ([control-autonomy-setpoints.md](control-autonomy-setpoints.md)). In `lab`
+  (`RUN_MODE=free`) it only observes: the boat can simply be driven, and targets
+  sent with `./scripts/njord goto` are scored until Ctrl-C.
 
 ## The path of a thrust command
 
@@ -51,8 +55,9 @@ flowchart LR
 2. The **command guard** is the only way to the thrusters. It forwards a
    complete set of commands as soon as they arrive, and sends zero instead
    while anything it requires is missing or stale: every thruster's command,
-   the navigation heartbeat, the planner and mission heartbeats when those
-   reference nodes run, and in a race the evaluator's race-active signal.
+   the navigation heartbeat, the planner and mission (or setpoint controller)
+   heartbeats when those reference nodes run, and in a race the evaluator's
+   race-active signal.
 3. The **Gazebo plugin** applies the forces and repeats the same freshness
    check, so a dead guard or bridge also stops the thrust.
 4. Zero thrust is not a brake: the boat keeps its momentum and drifts.

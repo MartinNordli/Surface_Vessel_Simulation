@@ -273,8 +273,8 @@ def render_report(metrics, rows, title=None):
                 f"<td>{_fmt(s['force_impulse_ns'], 0)}</td></tr>")
         out.append("</tbody></table></div>")
         out.append('<p class="note">Reach: first time within tolerance (position, and heading unless free). '
-                   "Settle: start of the final hold. Hold RMS: error during that hold. Overshoot: largest distance "
-                   "after first reaching the target. Path efficiency: straight line / travelled path. Thrust impulse: "
+                   "Settle: start of the final hold. Hold RMS: error during that hold. Overshoot: farthest the boat went "
+                   "past the target along the approach direction. Path efficiency: net displacement / travelled path. Thrust impulse: "
                    "integral of the summed commanded thrust magnitudes, not electrical energy.</p>")
     times = [r["t_s"] for r in rows]
     vlines = [(s["issued_at_s"], str(s["index"] + 1)) for s in setpoints]

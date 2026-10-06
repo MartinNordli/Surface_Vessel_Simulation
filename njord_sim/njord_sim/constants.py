@@ -53,10 +53,10 @@ THRUSTER_COMMAND_TOPIC = '/{name}/command'
 # the code that uses them (evaluator_node.py, setpoint_controller_node.py,
 # scripts/send_setpoint.py).
 #   SETPOINT_TOPIC           geometry_msgs/PoseStamped in map: the active target
-#                            position and heading; a new message replaces it.
-#                            Published reliable + transient local (depth 1);
-#                            subscribe reliable (transient local to get the
-#                            active target when joining late).
+#                            position and heading; a message with a new stamp
+#                            or pose replaces it. Published reliable + transient
+#                            local (depth 1); in a race the evaluator repeats the
+#                            active one every second with its issue stamp.
 #   SETPOINT_SEQUENCE_TOPIC  nav_msgs/Path in map: the active target followed by
 #                            the remaining scripted ones (optional lookahead).
 # Under /sim, derived from ground truth for display only; autonomy must not

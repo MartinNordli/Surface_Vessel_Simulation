@@ -71,7 +71,11 @@ class SetpointTrack:
         self.inside_since = None
         self.time_inside = 0.0
         self.min_distance = self.distance
-        self.overshoot = None
+        # Overshoot is measured along the approach direction (start to target).
+        dx, dy = spec['position'][0] - start_xy[0], spec['position'][1] - start_xy[1]
+        length = math.hypot(dx, dy)
+        self.approach = (dx / length, dy / length) if length > 1e-9 else None
+        self.overshoot = 0.0 if self.approach else None
         self.path_length = 0.0
         self.max_cross_track = 0.0
         self.impulse = 0.0
@@ -103,11 +107,13 @@ class SetpointTrack:
         if self.first_inside is None:
             self.max_cross_track = max(self.max_cross_track,
                                        _segment_distance((x, y), self.start_xy, self.spec['position']))
-        else:
-            self.overshoot = max(self.overshoot, self.distance)
+        if self.approach:
+            past = ((x - self.spec['position'][0]) * self.approach[0]
+                    + (y - self.spec['position'][1]) * self.approach[1])
+            self.overshoot = max(self.overshoot, past)
         if self.inside():
             if self.first_inside is None:
-                self.first_inside, self.overshoot = t, self.distance
+                self.first_inside = t
             if self.inside_since is None:
                 self.inside_since = t
                 self._reset_hold()
@@ -168,7 +174,8 @@ class SetpointTrack:
             'hold_max_heading_error_deg': self.hold['max_heading'] if self.inside_since is not None else None,
             'path_length_m': self.path_length,
             'straight_line_m': math.dist(self.start_xy, self.spec['position']),
-            'path_efficiency': (math.dist(self.start_xy, self.spec['position']) / self.path_length
+            # Net displacement over travelled distance (1 = perfectly straight).
+            'path_efficiency': (math.dist(self.start_xy, self.previous_xy) / self.path_length
                                 if self.path_length > 1e-6 else None),
             'max_cross_track_m': self.max_cross_track,
             # Integral of the summed |thrust| commands the guard passed: an

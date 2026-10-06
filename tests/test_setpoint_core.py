@@ -218,7 +218,14 @@ class SetpointCourseTests(unittest.TestCase):
         self.assertAlmostEqual(a["path_length_m"], 4 * math.sqrt(2))
         self.assertAlmostEqual(a["max_cross_track_m"], 2.0)
         self.assertAlmostEqual(a["force_impulse_ns"], 400.0)
+        self.assertAlmostEqual(a["overshoot_m"], 0.0)
         self.assertAlmostEqual(a["path_efficiency"], 4 / (4 * math.sqrt(2)))
+
+    def test_overshoot_is_measured_past_the_target_along_the_approach(self):
+        scorer = SetpointCourse(self.specs({"name": "a", "position": [10.0, 0.0]}, hold_s=1.0))
+        for i, x in enumerate([0.0, 5.0, 9.5, 11.2, 10.4, 10.0, 10.0, 10.0]):
+            scorer.update(float(i) * 0.5, x, 0.0, 0.0)
+        self.assertAlmostEqual(scorer.metrics()["setpoints"][0]["overshoot_m"], 1.2)
 
 
 class SetpointObserverTests(unittest.TestCase):

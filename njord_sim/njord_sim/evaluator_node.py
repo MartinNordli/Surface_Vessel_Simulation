@@ -9,7 +9,9 @@ use_sim_time:=true once run_ready.json exists):
 1. Wait for readiness: fresh ground-truth odometry, a live contact-monitor
    heartbeat and OK diagnostics from the heartbeats in ``required_status``
    (configuration.guard_requirements: navigation, plus mission and planner on
-   a gate course or the setpoint controller on a setpoint course).
+   a gate course or the setpoint controller on a setpoint course). A setpoint
+   race also waits for at least one subscriber on SETPOINT_TOPIC, so a
+   controller that starts after the simulator still gets the first target.
 2. Start the race and publish ``/njord/race_active`` = true; the command guard
    only forwards thrust while this is true.
 3. Feed every ground-truth pose to the scorer, which scores in simulation
@@ -17,7 +19,8 @@ use_sim_time:=true once run_ready.json exists):
    setpoint_core.SetpointCourse for a setpoint course. On a setpoint course
    the evaluator is the referee: it publishes each target on
    constants.SETPOINT_TOPIC (and the remaining sequence on
-   SETPOINT_SEQUENCE_TOPIC) when the scorer issues it.
+   SETPOINT_SEQUENCE_TOPIC) when the scorer issues it, and repeats the same
+   message (unchanged stamp) every second for subscribers that joined late.
 4. Stop on the first final status and write the metrics JSON atomically,
    then ``timeseries.csv`` and ``report.html`` next to it.
 
@@ -163,6 +166,8 @@ class Evaluator(Node):
         self.trajectory = []             # displayed track: (x, y, yaw)
         self.ticks = 0
         self.publisher_check_done = False
+        self.issued_messages = None      # (PoseStamped, Path) of the active target
+        self.waiting_logged = False
         if self.mode == "race":
             # Transient-local so a late-joining command guard still gets the state.
             self.active_pub = self.create_publisher(Bool, "/njord/race_active",
@@ -248,7 +253,18 @@ class Evaluator(Node):
             name in self.readiness and self.readiness[name][0]
             and 0 <= now_sim - self.readiness[name][1] <= 0.5
             and now_wall - self.readiness[name][2] <= PROCESS_LIVENESS_S
-            for name in self.required_names)
+            for name in self.required_names) and self.setpoint_listener()
+
+    def setpoint_listener(self):
+        """A setpoint race needs a subscriber on SETPOINT_TOPIC before it starts."""
+        if not isinstance(self.scorer, SetpointCourse):
+            return True
+        if self.count_subscribers(SETPOINT_TOPIC) > 0:
+            return True
+        if not self.waiting_logged:
+            self.waiting_logged = True
+            self.get_logger().info(f"Waiting for a subscriber on {SETPOINT_TOPIC} (the controller) to start")
+        return False
 
     def on_path(self, _):
         self.path_messages += 1
@@ -384,7 +400,6 @@ class Evaluator(Node):
         message.header.frame_id, message.header.stamp = MAP_FRAME, stamp
         message.pose.position.x, message.pose.position.y = float(x), float(y)
         message.pose.orientation.z, message.pose.orientation.w = quaternion_z(yaw)
-        self.setpoint_pub.publish(message)
         sequence = Path()
         sequence.header = message.header
         sequence.poses = [message]
@@ -396,7 +411,8 @@ class Evaluator(Node):
             pose.pose.orientation.z, pose.pose.orientation.w = quaternion_z(commanded_yaw(spec, previous))
             sequence.poses.append(pose)
             previous = spec["position"]
-        self.sequence_pub.publish(sequence)
+        self.issued_messages = (message, sequence)
+        self.repeat_setpoint()
         if not self.publisher_check_done:
             self.publisher_check_done = True
             try:
@@ -406,6 +422,16 @@ class Evaluator(Node):
             if count > 1:
                 self.get_logger().warning(f"{count} publishers on {SETPOINT_TOPIC}; the evaluator must be "
                                           "the only one during a setpoint race")
+
+    def repeat_setpoint(self):
+        """(Re)publish the active target and sequence exactly as issued.
+
+        The stamp stays the issue time, so a repeat is the same target, not
+        a new one; it only reaches subscribers that joined late.
+        """
+        if self.issued_messages is not None and self.running():
+            self.setpoint_pub.publish(self.issued_messages[0])
+            self.sequence_pub.publish(self.issued_messages[1])
 
     def publish_markers(self):
         """RViz markers: tolerance disc, heading arrow and label per target."""
@@ -543,6 +569,8 @@ class Evaluator(Node):
             if self.ticks % 10 == 0:
                 self.publish_markers()
                 self.publish_trajectory()
+                if isinstance(self.scorer, SetpointCourse) and self.mode == "race":
+                    self.repeat_setpoint()
         except Exception as error:  # noqa: BLE001 - display must never end a run
             self.get_logger().info(f"Display update failed: {error}")
 

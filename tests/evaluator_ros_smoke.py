@@ -269,6 +269,10 @@ class SetpointEvaluatorTests(unittest.TestCase):
             info=lambda _: None, warning=lambda _: None))
         logger.start()
         self.addCleanup(logger.stop)
+        self.subscribers = 1
+        listeners = patch.object(Node, "count_subscribers", lambda _, topic: self.subscribers, create=True)
+        listeners.start()
+        self.addCleanup(listeners.stop)
         return node, clock, publishers
 
     def contacts(self, node, seconds):
@@ -287,10 +291,17 @@ class SetpointEvaluatorTests(unittest.TestCase):
             message.header.stamp = clock.now().to_msg()
             message.status = [DiagnosticStatus(name=name, level=DiagnosticStatus.OK)]
             node.on_readiness(message)
+        self.subscribers = 0
+        node.check_timeout()
+        self.assertFalse(node.started)  # nobody listens for targets yet
+        self.subscribers = 1
         node.check_timeout()
         self.assertTrue(node.started)
         issued = publishers["/njord/setpoint"].messages
         self.assertEqual(len(issued), 1)
+        node.repeat_setpoint()  # the 1 Hz repeat keeps the issue stamp
+        self.assertIs(issued[-1], issued[0])
+        del issued[1:]
         self.assertEqual((issued[0].header.frame_id, issued[0].pose.position.x), ("map", targets[0]["position"][0]))
         sequence = publishers["/njord/setpoint_sequence"].messages[-1]
         self.assertEqual(len(sequence.poses), len(targets))

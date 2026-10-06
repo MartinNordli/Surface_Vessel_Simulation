@@ -9,8 +9,8 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'njord_sim'))
 from njord_sim.configuration import (resolve_configuration, autonomy_parameters, sensor_timing,
     validate_reference_timing, convert_sensor_schema, _read, validate_vessel)
-from njord_sim.constants import (BASE_FRAME, CAMERAS, IMU_TOPIC, LIDAR_FRAME, LIDAR_POINTS_TOPIC, camera_frame,
-                                 camera_topic)
+from njord_sim.constants import (BASE_FRAME, CAMERAS, IMU_TOPIC, LIDAR_FRAME, LIDAR_POINTS_TOPIC, SETPOINT_MARKERS_TOPIC,
+                                 SETPOINT_TOPIC, TRAJECTORY_TOPIC, camera_frame, camera_topic)
 from njord_sim.vessel import configure_thrusters, remove_sensor_noise
 from njord_sim.visual_geometry import export_visual_geometry
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,7 +25,8 @@ class Contracts(unittest.TestCase):
             self.assertEqual(parameters['base_link_frame'], BASE_FRAME)
             self.assertEqual(parameters['imu0'], IMU_TOPIC)
         rviz = (config/'njord.rviz').read_text()
-        for name in (BASE_FRAME, LIDAR_FRAME, LIDAR_POINTS_TOPIC,
+        for name in (BASE_FRAME, LIDAR_FRAME, LIDAR_POINTS_TOPIC, SETPOINT_TOPIC, SETPOINT_MARKERS_TOPIC,
+                     TRAJECTORY_TOPIC,
                      *(camera_frame(camera, optical=True) for camera in CAMERAS),
                      *(camera_topic(camera, 'image_raw') for camera in CAMERAS)):
             self.assertIn(name, rviz)

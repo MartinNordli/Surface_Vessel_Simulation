@@ -9,7 +9,9 @@ Subscribes:
     ``setpoint_topic`` (default constants.SETPOINT_TOPIC, ``/njord/setpoint``,
         ``geometry_msgs/PoseStamped``, reliable, volatile): target
         position and heading in ``map_frame``. The latest valid message is
-        the target until another replaces it; it does not expire.
+        the target until another replaces it; it does not expire. A message
+        with the same stamp and pose as the active target is a repeat and
+        changes nothing.
     ``odom_topic`` (default ``/njord/odometry``, ``nav_msgs/Odometry``):
         estimated pose in ``map_frame`` with ``child_frame_id == base_frame``
         and body-frame twist (surge, sway, yaw rate).
@@ -87,6 +89,7 @@ class SetpointControllerNode(Node):
         self.core = SetpointController(settings, self.p('thruster_positions'), self.p('thruster_axes'),
                                        self.p('thruster_forward_limits'), self.p('thruster_reverse_limits'))
         self.target = None      # (x, y, yaw) in map
+        self.target_stamp = None  # header stamp (s) of the message that set it
         self.state = None       # ((x, y, yaw), (u, v, r))
         self.odom_stamp = None
         self.last_sim_time = None
@@ -110,7 +113,11 @@ class SetpointControllerNode(Node):
             self.target = None
             self.stop()
             return
-        self.target = (p.x, p.y, yaw_from_quaternion(q))
+        target = (p.x, p.y, yaw_from_quaternion(q))
+        stamp = stamp_seconds(msg.header.stamp)
+        if target == self.target and stamp == self.target_stamp:
+            return  # a repeat of the active target (same stamp and pose)
+        self.target, self.target_stamp = target, stamp
         self.core.reset()
         self.get_logger().info('New setpoint x=%.2f y=%.2f heading=%.1f deg' % (
             p.x, p.y, math.degrees(self.target[2])))

@@ -208,6 +208,18 @@ class SetpointControllerNodeTests(unittest.TestCase):
             status = publishers["/njord/controller_status"].messages[-1].status[0]
             self.assertEqual((status.name, status.level), ("controller", DiagnosticStatus.WARN))
 
+    def test_repeated_target_does_not_reset_the_mode(self):
+        with local_node() as (node, clock, publishers):
+            node.on_odom(self.odometry())
+            node.on_setpoint(self.setpoint(x=3.0))
+            node.step()
+            self.assertEqual(node.core.mode, "station_keeping")
+            node.on_setpoint(self.setpoint(x=3.0))  # same stamp and pose
+            self.assertEqual(node.core.mode, "station_keeping")
+            moved = self.setpoint(x=30.0)
+            node.on_setpoint(moved)
+            self.assertEqual(node.core.mode, "transit")
+
     def test_invalid_target_or_odometry_stops_at_once(self):
         with local_node() as (node, clock, publishers):
             node.on_odom(self.odometry())

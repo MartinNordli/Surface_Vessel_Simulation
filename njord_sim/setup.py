@@ -26,6 +26,7 @@ setup(
             "mapper = njord_sim.mapper_node:main",
             "planner = njord_sim.planner_node:main",
             "guidance = njord_sim.guidance_node:main",
+            "setpoint_controller = njord_sim.setpoint_controller_node:main",
             "evaluator = njord_sim.evaluator_node:main",
             "perception = njord_sim.perception_node:main",
             "mission = njord_sim.mission_node:main",

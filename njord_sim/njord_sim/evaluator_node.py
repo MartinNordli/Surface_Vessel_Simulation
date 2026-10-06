@@ -40,6 +40,7 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data, QoSProfile, DurabilityPolicy
 from std_msgs.msg import Float64, Bool
 
+from .configuration import guard_requirements
 from .constants import GROUND_TRUTH_TOPIC, GZ_MODEL_NAME, HEARTBEATS, PROCESS_LIVENESS_S
 from .scenario_core import RaceScorer, load_scenario, scenario_digest, wall_budget_s
 
@@ -61,7 +62,8 @@ class Evaluator(Node):
             ("path_topic", "/njord/path"), ("contacts_topic", "/njord/contacts"),
             ("output", "outputs/run_metrics.json"), ("run_label", "run"),
             ("profile", "conservative"), ("state_source", "estimate"), ("wall_timeout_s", 600.0),
-            ("odom_wall_timeout_s", 30.0), ("required_status", list(HEARTBEATS)),
+            ("odom_wall_timeout_s", 30.0),
+            ("required_status", guard_requirements({}, "race")["required_status"]),
             ("wait_for_ready", True),
             ("git_commit", os.environ.get("NJORD_IMAGE_SOURCE_COMMIT", "unknown")),
             ("image_source_digest", os.environ.get("NJORD_IMAGE_SOURCE_DIGEST", "unknown")),

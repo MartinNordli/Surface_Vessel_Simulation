@@ -45,7 +45,7 @@ class TeamLaunchTests(unittest.TestCase):
     def launch(self, **overrides):
         context = LaunchContext()
         context.launch_configurations.update({
-            'profile': 'fast', 'seed': '7', 'expected_gates': '5',
+            'profile': 'fast', 'seed': '7', 'expected_gates': '5', 'course': 'gates',
             'autonomy': 'reference', 'controller': 'reference',
             'perception': 'reference', 'mapping': 'reference',
             'state_source': 'estimate', 'run_mode': 'race', 'localization_config': '', 'params_file': '', 'vessel_config': str(SHARE / 'config/vessels/wamv.yaml'),
@@ -76,6 +76,20 @@ class TeamLaunchTests(unittest.TestCase):
         self.assertCountEqual([node['executable'] for node in self.launch(autonomy='external')], [
             'sensor_adapter', 'ekf_node', 'ekf_node', 'navsat_transform_node', 'command_guard',
         ])
+
+    def test_setpoint_course_runs_only_the_setpoint_controller(self):
+        estimation = ['sensor_adapter', 'ekf_node', 'ekf_node', 'navsat_transform_node', 'command_guard']
+        cases = {('reference', 'reference'): (estimation + ['setpoint_controller'], ['navigation', 'controller']),
+                 ('reference', 'external'): (estimation, ['navigation']),
+                 ('external', 'reference'): (estimation, ['navigation'])}
+        for (autonomy, controller), (executables, status) in cases.items():
+            with self.subTest(autonomy=autonomy, controller=controller):
+                nodes = self.launch(course='setpoints', autonomy=autonomy, controller=controller)
+                self.assertCountEqual([node['executable'] for node in nodes], executables)
+                guard = next(n['parameters'] for n in nodes if n['executable'] == 'command_guard')
+                self.assertEqual(guard[-1]['required_status'], status)
+        with self.assertRaisesRegex(ValueError, 'course'):
+            self.launch(course='circle')
 
     def test_bad_mode_never_silently_launches_reference_component(self):
         for argument in ['autonomy', 'controller', 'perception', 'mapping']:

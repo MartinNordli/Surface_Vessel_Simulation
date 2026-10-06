@@ -57,7 +57,7 @@ MISSION_KEYS = {
 }
 # Reference setpoint controller (algorithms.yaml ``setpoint_control``).
 SETPOINT_CONTROL_KEYS = {
-    'control_hz', 'stale_after_s', 'approach_radius_m', 'kp_surge', 'kp_yaw', 'kd_yaw',
+    'control_hz', 'stale_after_s', 'approach_radius_m', 'align_radius_m', 'kp_surge', 'kp_yaw', 'kd_yaw',
     'kp_position', 'kd_position', 'braking_deceleration_mps2', 'reaction_time_s',
 }
 # Algorithm values that may legitimately be zero; everything else must be > 0.
@@ -638,7 +638,7 @@ def convert_algorithm_schema(algorithms):
             raise ValueError('setpoint controller settings require algorithms schema 5')
         result['schema_version'] = 5
         result['setpoint_control'] = dict(control_hz=20., stale_after_s=.5, approach_radius_m=5.,
-                                          kp_surge=200., kp_yaw=400., kd_yaw=300., kp_position=100.,
+                                          align_radius_m=1., kp_surge=200., kp_yaw=400., kd_yaw=300., kp_position=100.,
                                           kd_position=200., braking_deceleration_mps2=.25,
                                           reaction_time_s=1.)
     _version(result, 5)
@@ -751,6 +751,8 @@ def _resolve_algorithms(algorithms, profile, vessel_name='wamv'):
     _keys(algorithms['navigation'], {'stale_after_s', 'processing_margin_s', 'clock_stall_after_s', 'sync_slop_s'}, where='navigation')
     _keys(algorithms['mission'], MISSION_KEYS, where='mission')
     _keys(algorithms['setpoint_control'], SETPOINT_CONTROL_KEYS, where='setpoint_control')
+    if algorithms['setpoint_control']['align_radius_m'] >= algorithms['setpoint_control']['approach_radius_m']:
+        raise ValueError('setpoint_control.align_radius_m must be smaller than approach_radius_m')
     retries = algorithms['mission']['max_gate_retries']
     if type(retries) is not int:
         raise ValueError('max_gate_retries must be an integer')

@@ -9,11 +9,17 @@ navsat_transform and command_guard, plus the navigation state source:
 
 Raw noisy GPS/IMU are published in both modes for a team's own estimator.
 
+The reference chain depends on the course kind (course:=, from run_ready.json):
+
+  course:=gates      mapper, perception, mission, planner and guidance
+  course:=setpoints  setpoint_controller only; the evaluator issues the
+                     targets on /njord/setpoint (constants.SETPOINT_TOPIC)
+
 Reference nodes that a team can replace with its own ('external'):
-  autonomy:=external    -> mapper, perception, mission, planner and guidance
-  controller:=external  -> guidance
-  perception:=external  -> perception
-  mapping:=external     -> mapper
+  autonomy:=external    -> every reference node of the chain
+  controller:=external  -> guidance or setpoint_controller
+  perception:=external  -> perception (gate course)
+  mapping:=external     -> mapper (gate course)
 
 run_mode:=race (default) lets the guard pass thrust only while the evaluator
 reports the race active; run_mode:=free (./scripts/njord lab) drives without
@@ -36,7 +42,7 @@ from launch.logging import get_logger
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
-from njord_sim.configuration import (DEFAULT_PROFILE, RUN_MODES, config_path, guard_requirements,
+from njord_sim.configuration import (COURSE_KINDS, DEFAULT_PROFILE, RUN_MODES, config_path, guard_requirements,
                                      speed_profile_names, validate_reference_timing)
 from njord_sim.constants import GPS_TOPIC, IMU_TOPIC, WORLD_ORIGIN_WGS84
 
@@ -51,7 +57,10 @@ def launch(context):
             raise ValueError(f'{component} must be reference or external')
     if p('state_source') not in STATE_SOURCES:
         raise ValueError('state_source must be estimate or truth')
-    requirements = guard_requirements({'autonomy': p('autonomy')}, p('run_mode'))
+    if p('course') not in COURSE_KINDS:
+        raise ValueError(f'course must be one of {COURSE_KINDS}')
+    components = {name: p(name) for name in (*COMPONENTS, 'course')}
+    requirements = guard_requirements(components, p('run_mode'))
     public_path = context.launch_configurations.get('public_parameters', '')
     public = json.loads(Path(public_path).read_text()) if public_path else {}
     # The simulator resolved the profile against algorithms.yaml; without its
@@ -64,8 +73,7 @@ def launch(context):
         raise ValueError(f'params_file does not exist: {params_file}')
     if public.get('_timing'):
         validate_reference_timing(public, public['_timing']['periods'],
-                                  public['_timing']['navigation'],
-                                  {name: p(name) for name in COMPONENTS})
+                                  public['_timing']['navigation'], components)
     common = {'use_sim_time': True}  # always last: nodes must run on /clock
     overrides = [params_file] if params_file else []
     actions = []
@@ -100,7 +108,10 @@ def launch(context):
                                     ('odometry/gps', '/njord/gps/odometry')]))
 
     # Reference autonomy chain; each part can be left out for a team's own node.
-    if p('autonomy') == 'reference':
+    if p('autonomy') == 'reference' and p('course') == 'setpoints':
+        if p('controller') == 'reference':
+            actions.append(node('setpoint_controller'))
+    elif p('autonomy') == 'reference':
         if p('mapping') == 'reference':
             actions.append(node('mapper'))
         if p('perception') == 'reference':
@@ -121,6 +132,8 @@ def generate_launch_description():
                               description='Recorded speed profile; the speed itself comes from public_parameters'),
         DeclareLaunchArgument('seed', default_value=env('SEED', '1')),
         DeclareLaunchArgument('expected_gates', default_value='3'),
+        DeclareLaunchArgument('course', default_value='gates',
+                              description=' or '.join(COURSE_KINDS) + ': selects the reference chain'),
         *[DeclareLaunchArgument(name, default_value=env(name.upper(), 'reference'),
                                 description='reference or external') for name in COMPONENTS],
         DeclareLaunchArgument('state_source', default_value=env('STATE_SOURCE', 'estimate'),

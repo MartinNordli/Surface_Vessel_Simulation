@@ -69,13 +69,15 @@ mission:
 # drives to one target pose at a time from /njord/setpoint. Far from the target
 # it turns towards it and limits surge speed (speed_profiles_mps) so it can stop
 # with braking_deceleration_mps2; inside approach_radius_m it holds position and
-# heading with PD control on the body-frame error (sway only on a fully actuated
-# vessel such as munin_v0). Gains are starting values for a ~180 kg boat, not
-# evidence of the real one.
+# heading with PD control on the body-frame error. Only a fully actuated vessel
+# (such as munin_v0) can push sideways; a two-thruster boat keeps pointing at the
+# target until it is within align_radius_m and then turns to the target heading.
+# Gains are starting values for a ~180 kg boat, not evidence of the real one.
 setpoint_control:
   control_hz: 20.0                  # thrust command rate
   stale_after_s: 0.5                # odometry older than this stops the boat
   approach_radius_m: 5.0            # switch from transit to station keeping
+  align_radius_m: 1.0               # two-thruster boat: turn to the target heading inside this
   kp_surge: 200.0                   # N per m/s of surge speed error (transit)
   kp_yaw: 400.0                     # N*m per rad of heading error
   kd_yaw: 300.0                     # N*m per rad/s of yaw rate

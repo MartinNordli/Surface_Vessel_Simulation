@@ -10,7 +10,10 @@ their status heartbeats. The decision itself is ``guard_core.GuardCore``.
 Subscribes:
     ``thruster_topics`` (one ``std_msgs/Float64`` per thruster, in vessel-file
         order, e.g. ``/thruster_1/command``): thrust command in N along the
-        thruster's axis; non-finite values count as invalid.
+        thruster's axis; non-finite values count as invalid. Subscribed best
+        effort (depth 1), which matches both reliable and best-effort
+        publishers: a missed sample only delays the next complete set, and
+        freshness decides validity.
     ``/njord/{navigation,planner,mission}_status``
         (``diagnostic_msgs/DiagnosticArray``): health heartbeats for the keys in
         ``required_status``. Each must hold exactly one status with the
@@ -56,7 +59,7 @@ import time
 import rclpy
 from rclpy.clock import Clock, ClockType
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, DurabilityPolicy
+from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus
 from ros_gz_interfaces.msg import Float32Array
 from std_msgs.msg import Float64, Bool
@@ -65,6 +68,10 @@ from njord_sim.configuration import guard_requirements
 from njord_sim.constants import ACTUATOR_FORCES_TOPIC, HEARTBEATS
 from njord_sim.defaults import node_defaults
 from njord_sim.guard_core import GuardCore
+
+# Best effort accepts reliable and best-effort thrust publishers alike, so a
+# controller's QoS choice cannot silently disconnect it from the guard.
+THRUST_QOS = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
 
 
 class CommandGuard(Node):
@@ -92,7 +99,7 @@ class CommandGuard(Node):
         self.pub = self.create_publisher(Float32Array, ACTUATOR_FORCES_TOPIC, 1)
         self.status_pub = self.create_publisher(DiagnosticArray, '/njord/guard_status', 1)
         for index, topic in enumerate(self.topics):
-            self.create_subscription(Float64, topic, lambda m, i=index: self.command(i, m), 1)
+            self.create_subscription(Float64, topic, lambda m, i=index: self.command(i, m), THRUST_QOS)
         for key in required:
             topic, name = HEARTBEATS[key]
             self.create_subscription(DiagnosticArray, topic, lambda m, k=key, n=name: self.status(k, n, m), 1)

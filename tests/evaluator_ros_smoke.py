@@ -21,6 +21,7 @@ from ros_gz_interfaces.msg import Contact, Contacts, Entity
 from std_msgs.msg import Bool, Float64
 from builtin_interfaces.msg import Time
 from test_sensor_runtime import local_node
+from njord_sim.configuration import resolve_configuration
 from njord_sim.constants import GZ_MODEL_NAME, PROCESS_LIVENESS_S
 from njord_sim.evaluator_node import Evaluator
 from njord_sim.scenario_core import wall_budget_s
@@ -261,6 +262,10 @@ class SetpointEvaluatorTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory(prefix="njord-evaluator-setpoint-")
         self.addCleanup(temporary.cleanup)
         self.output = Path(temporary.name)
+        # A managed run's configuration: the referee waits for the munin_v0 thruster topics.
+        resolved = resolve_configuration(ROOT/"njord_sim/config/vessels/munin_v0.yaml", ROOT/"scenarios/goto_square.yaml",
+                                         ROOT/"njord_sim/config/algorithms.yaml")
+        (self.output/"resolved_configuration.json").write_text(json.dumps(resolved))
         context = local_node(Evaluator, {"scenario_file": str(ROOT/"scenarios/goto_square.yaml"),
                                          "output": str(self.output/"run_metrics.json"), **overrides})
         node, clock, publishers = context.__enter__()
@@ -273,6 +278,10 @@ class SetpointEvaluatorTests(unittest.TestCase):
         listeners = patch.object(Node, "count_subscribers", lambda _, topic: self.subscribers, create=True)
         listeners.start()
         self.addCleanup(listeners.stop)
+        self.thrust_publishers = 1
+        senders = patch.object(Node, "count_publishers", lambda _, topic: self.thrust_publishers, create=True)
+        senders.start()
+        self.addCleanup(senders.stop)
         return node, clock, publishers
 
     def contacts(self, node, seconds):
@@ -291,10 +300,14 @@ class SetpointEvaluatorTests(unittest.TestCase):
             message.header.stamp = clock.now().to_msg()
             message.status = [DiagnosticStatus(name=name, level=DiagnosticStatus.OK)]
             node.on_readiness(message)
+        self.assertEqual(node.thruster_topics, [f"/thruster_{i}/command" for i in range(1, 5)])
         self.subscribers = 0
         node.check_timeout()
         self.assertFalse(node.started)  # nobody listens for targets yet
-        self.subscribers = 1
+        self.subscribers, self.thrust_publishers = 1, 0
+        node.check_timeout()
+        self.assertFalse(node.started)  # e.g. RViz listens, but no controller sends thrust
+        self.thrust_publishers = 1
         node.check_timeout()
         self.assertTrue(node.started)
         issued = publishers["/njord/setpoint"].messages

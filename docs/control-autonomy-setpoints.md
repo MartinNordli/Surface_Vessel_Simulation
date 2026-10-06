@@ -118,12 +118,15 @@ Målpunktkursene som følger med:
    docker compose exec simulator /entrypoint.sh ros2 topic echo /njord/guard_status             # hvorfor kraft slippes eller stoppes
    ```
 
-Et målpunktløp starter først når navigasjonen er klar **og** minst én node
-abonnerer på `/njord/setpoint`. Det spiller derfor ingen rolle om nodene deres
-starter før eller etter simulatoren. Til da skriver evaluatoren
-`Waiting for a subscriber on /njord/setpoint`. Kommer ingen
-thrusterkommandoer etter start, holder guarden kraften på null, og løpet ender
-med `setpoints_failed` eller `simulation_timeout`.
+Et målpunktløp starter først når navigasjonen er klar, minst én node
+abonnerer på `/njord/setpoint` **og** hver thrustertopic i vesselfila har en
+publisher. Det spiller derfor ingen rolle om nodene deres starter før eller
+etter simulatoren, heller ikke med GUI: RViz og `ros2 topic echo` abonnerer
+også på målpunktet, men sender ikke kraft, så de alene starter ikke løpet. Til
+da skriver evaluatoren hva den venter på, for eksempel
+`Waiting for a publisher on /thruster_3/command (the controller) to start`.
+Stopper thrusterkommandoene etter start, holder guarden kraften på null, og
+løpet ender med `setpoints_failed` eller `simulation_timeout`.
 
 ## 4. Grensesnittet
 
@@ -141,7 +144,7 @@ med `setpoints_failed` eller `simulation_timeout`.
 
 | Topic | Type | Innhold | Krav | Endres i |
 |---|---|---|---|---|
-| `/thruster_1/command` … `/thruster_N/command` | `std_msgs/Float64` | Kraft i **newton** langs thrusterens retning. Positiv = skyv i retningen `yaw_deg`, negativ = revers. | Send alle thrusterne hver syklus, normalt 20 Hz. Hver kommando må være under 0,5 s gammel i simuleringstid. Ellers setter guarden *alle* thrustere til null. | Navnene: `thrusters[].name` i vesselfila. Malen `/{name}/command`: `THRUSTER_COMMAND_TOPIC` i `constants.py`. |
+| `/thruster_1/command` … `/thruster_N/command` | `std_msgs/Float64` | Kraft i **newton** langs thrusterens retning. Positiv = skyv i retningen `yaw_deg`, negativ = revers. | Send alle thrusterne hver syklus, normalt 20 Hz. Guarden abonnerer best effort (depth 1), så både `RELIABLE` og `BEST_EFFORT` fra dere virker. Hver kommando må være under 0,5 s gammel i simuleringstid. Ellers setter guarden *alle* thrustere til null. | Navnene: `thrusters[].name` i vesselfila. Malen `/{name}/command`: `THRUSTER_COMMAND_TOPIC` i `constants.py`. |
 
 Kraften begrenses til thrusterens grense i vesselfila og til `guidance.max_thrust`
 i `algorithms.yaml` (500 N). Fysikken legger på en førsteordens forsinkelse
@@ -329,7 +332,7 @@ nodene navigerte på estimat eller fasit.
 | `stale in simulation time` | Nodene mangler `use_sim_time:=true`, eller sender for sjelden. |
 | Topic heter `/<ns>/thruster_1/command` | Nodene kjører i et namespace. Start uten, eller remap til `/thruster_N/command`. |
 | Ser ingen topics | Samme `ROS_DOMAIN_ID`? Kjører dere utenfor Docker og ser ingenting, prøv `export FASTDDS_BUILTIN_TRANSPORTS=UDPv4` (samme som containerne). |
-| Løpet starter aldri (`Waiting for a subscriber on /njord/setpoint`) | Ingen node abonnerer på målpunktet: feil topicnavn, namespace eller `ROS_DOMAIN_ID`. |
+| Løpet starter aldri (`Waiting for a subscriber on /njord/setpoint` eller `Waiting for a publisher on /thruster_N/command`) | Ingen node abonnerer på målpunktet, eller en thrustertopic mangler publisher: feil topicnavn, namespace, antall thrustere eller `ROS_DOMAIN_ID`. |
 | Flere publishers på en thrustertopic | Glemt `CONTROLLER=external`. Da kjører også simulatorens referansekontroller. |
 
 ## 10. Begrensninger

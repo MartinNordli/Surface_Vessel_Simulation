@@ -23,7 +23,7 @@ simulation time. Source stamps are preserved through sensing/mapping.
 | `/njord/controller_status` | `diagnostic_msgs/DiagnosticArray` | Reference `setpoint_controller` heartbeat, status `controller`, 10 Hz simulation time; OK while its odometry is fresh |
 | `/njord/path` | `nav_msgs/Path` | D* Lite route; empty explicitly invalidates |
 | `/njord/{planner,mission,navigation}_status` | `diagnostic_msgs/DiagnosticArray` | Fresh validity heartbeat |
-| `/<thruster name>/command`, e.g. `/thruster_1/command` | `std_msgs/Float64` | Controller force per thruster in newtons along its axis, before guard; one topic per thruster in the vessel file (WAM-V: `thruster_1` port, `thruster_2` starboard) |
+| `/<thruster name>/command`, e.g. `/thruster_1/command` | `std_msgs/Float64` | Controller force per thruster in newtons along its axis, before guard; one topic per thruster in the vessel file (WAM-V: `thruster_1` port, `thruster_2` starboard). The guard subscribes best effort, depth 1, so reliable and best-effort publishers both connect |
 | `/njord/actuator_forces` | `ros_gz_interfaces/Float32Array` | Internal force envelope: one force in N per thruster, in vessel-file order |
 | `/njord/race_active` | `std_msgs/Bool` | Evaluator heartbeat, transient local, 10 Hz steady time; required by the guard only with `RUN_MODE=race` |
 | `/njord/guard_status` | `diagnostic_msgs/DiagnosticArray` | Command guard, 20 Hz steady time: status `command_guard`, OK while thrust may pass, otherwise WARN with the reason |
@@ -64,7 +64,8 @@ Only Gazebo-internal topics of the pinned VRX WAM-V keep its `wamv`
 namespace (e.g. `/wamv/thrusters/left/thrust`); they are not bridged to ROS.
 
 Sensor subscriptions use best-effort sensor QoS. Mission/status/control topics
-are reliable. TF comes from robot_state_publisher and the navigation state
+are reliable, except that the guard subscribes to thruster commands best
+effort so that any controller QoS connects. TF comes from robot_state_publisher and the navigation state
 source; no Gazebo world-pose TF publisher is connected.
 
 - `STATE_SOURCE=estimate` (default): the local EKF supplies attitude in `odom`
@@ -93,7 +94,9 @@ thrust without a target or with odometry older than
 non-finite values. In a race the evaluator issues each target when the
 previous one is reached, timed out or replaced (`advance_after_s`) and
 checks that it is the only publisher on `/njord/setpoint`. A setpoint race
-starts only once something subscribes to `/njord/setpoint`, and the active
+starts only once a controller is connected (a subscriber on `/njord/setpoint`
+and a publisher on every thruster command topic; RViz alone does not count),
+and the active
 target is repeated every second with its issue stamp; in `lab` targets come
 from outside and the evaluator only scores them. Exact semantics, QoS advice
 and the metrics are in [control-autonomy-setpoints.md](control-autonomy-setpoints.md).

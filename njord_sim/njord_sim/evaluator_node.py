@@ -10,8 +10,11 @@ use_sim_time:=true once run_ready.json exists):
    heartbeat and OK diagnostics from the heartbeats in ``required_status``
    (configuration.guard_requirements: navigation, plus mission and planner on
    a gate course or the setpoint controller on a setpoint course). A setpoint
-   race also waits for at least one subscriber on SETPOINT_TOPIC, so a
-   controller that starts after the simulator still gets the first target.
+   race also waits for a connected controller: at least one subscriber on
+   SETPOINT_TOPIC and, in a managed run, a publisher on every thruster
+   command topic of the vessel. A controller that starts after the simulator
+   thus still gets the first target, and RViz or ``ros2 topic echo``, which
+   subscribe to the setpoint too, cannot start the race on their own.
 2. Start the race and publish ``/njord/race_active`` = true; the command guard
    only forwards thrust while this is true.
 3. Feed every ground-truth pose to the scorer, which scores in simulation
@@ -68,7 +71,7 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data, QoSProfile, DurabilityPolicy, ReliabilityPolicy
 from std_msgs.msg import Float64, Bool
 
-from .configuration import guard_requirements
+from .configuration import guard_requirements, thruster_table
 from .constants import (ACTUATOR_FORCES_TOPIC, GROUND_TRUTH_TOPIC, GZ_MODEL_NAME, HEARTBEATS, MAP_FRAME,
                         OBSERVED_SETPOINT_ACCEPTANCE, PROCESS_LIVENESS_S, SETPOINT_MARKERS_TOPIC,
                         SETPOINT_SEQUENCE_TOPIC, SETPOINT_STATUS_TOPIC, SETPOINT_TOPIC, TRAJECTORY_TOPIC)
@@ -168,7 +171,8 @@ class Evaluator(Node):
         self.publisher_check_done = False
         self.issued_messages = None      # (PoseStamped, Path) of the active target
         self.last_setpoint_key = None    # observe mode: (stamp, x, y, z, w) of the last target
-        self.waiting_logged = False
+        self.waiting_for = []            # what a setpoint race still waits for (logged on change)
+        self.thruster_topics = self.thruster_command_topics()
         if self.mode == "race":
             # Transient-local so a late-joining command guard still gets the state.
             self.active_pub = self.create_publisher(Bool, "/njord/race_active",
@@ -216,6 +220,13 @@ class Evaluator(Node):
             return json.loads(resolved.read_text()).get('run', {}).get('real_time_factor', 1.0)
         return 1.0
 
+    def thruster_command_topics(self):
+        """Thruster command topics of a managed run's vessel (resolved_configuration.json), else none."""
+        resolved = self.output.parent / 'resolved_configuration.json'
+        if resolved.is_file():
+            return [t['topic'] for t in thruster_table(json.loads(resolved.read_text())['vessel'])]
+        return []
+
     def sim_now(self):
         return self.get_clock().now().nanoseconds * 1e-9
 
@@ -254,18 +265,24 @@ class Evaluator(Node):
             name in self.readiness and self.readiness[name][0]
             and 0 <= now_sim - self.readiness[name][1] <= 0.5
             and now_wall - self.readiness[name][2] <= PROCESS_LIVENESS_S
-            for name in self.required_names) and self.setpoint_listener()
+            for name in self.required_names) and self.controller_connected()
 
-    def setpoint_listener(self):
-        """A setpoint race needs a subscriber on SETPOINT_TOPIC before it starts."""
+    def controller_connected(self):
+        """A setpoint race needs a connected controller before it starts.
+
+        That is at least one subscriber on SETPOINT_TOPIC and a publisher on
+        every thruster command topic. Display tools (RViz, ``ros2 topic
+        echo``) subscribe to the setpoint as well, so a subscriber alone does
+        not prove that a controller is running.
+        """
         if not isinstance(self.scorer, SetpointCourse):
             return True
-        if self.count_subscribers(SETPOINT_TOPIC) > 0:
-            return True
-        if not self.waiting_logged:
-            self.waiting_logged = True
-            self.get_logger().info(f"Waiting for a subscriber on {SETPOINT_TOPIC} (the controller) to start")
-        return False
+        missing = ([f"a subscriber on {SETPOINT_TOPIC}"] if self.count_subscribers(SETPOINT_TOPIC) == 0 else [])
+        missing += [f"a publisher on {topic}" for topic in self.thruster_topics if self.count_publishers(topic) == 0]
+        if missing and missing != self.waiting_for:
+            self.get_logger().info(f"Waiting for {', '.join(missing)} (the controller) to start")
+        self.waiting_for = missing
+        return not missing
 
     def on_path(self, _):
         self.path_messages += 1

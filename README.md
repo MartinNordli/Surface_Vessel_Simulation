@@ -90,7 +90,7 @@ needed.
 | WAM-V sensors (resolution, rate, range, noise) and thrust limit | `njord_sim/config/vessels/wamv.yaml` | default vessel |
 | The Njord boat (geometry, mass, damping, thrusters, sensors) | `njord_sim/config/vessels/njord_v1.yaml` | `VESSEL_CONFIG=/config/vessels/njord_v1.yaml` |
 | Four-thruster Munin placeholder (assumed layout, uncalibrated) | `njord_sim/config/vessels/munin_v0.yaml` | `VESSEL_CONFIG=/config/vessels/munin_v0.yaml` |
-| Gates, obstacles, start pose, time limit, wind/waves/current | `scenarios/<course>.yaml` | course name, `ENVIRONMENT` |
+| Gates or target poses (setpoints), obstacles, start pose, time limit, wind/waves/current | `scenarios/<course>.yaml` | course name, `ENVIRONMENT` |
 | Speed profiles, guidance gains, planner and map tuning | `njord_sim/config/algorithms.yaml` | `PROFILE` |
 | Fixed platform constants (GPS datum, command timeout) | `njord_sim/njord_sim/constants.py` | rebuild |
 
@@ -106,7 +106,15 @@ CONTROLLER=external ./scripts/njord demo slalom   # publish /thruster_<i>/comman
 PERCEPTION=external ./scripts/njord demo slalom   # publish buoy detections
 MAPPING=external    ./scripts/njord demo slalom   # publish an occupancy grid
 AUTONOMY=external   ./scripts/njord lab slalom    # free driving, no race; your stack drives
+CONTROLLER=external VESSEL_CONFIG=/config/vessels/munin_v0.yaml ./scripts/njord demo goto_square
+                                                  # targets on /njord/setpoint, your node drives
+./scripts/njord goto 15 5 90                      # during lab: send a target pose by hand
 ```
+
+Every race writes `outputs/run-*/report.html`: the result, a top view of the
+track and course, per-target results and time plots. Control & Autonomy's
+step-by-step guide for target poses and thrust is
+[docs/control-autonomy-setpoints.md](docs/control-autonomy-setpoints.md).
 
 See the [team integration guide](docs/team-integration.md) for the full
 walkthrough and [interfaces](docs/interfaces.md) for every topic and frame.
@@ -119,6 +127,7 @@ walkthrough and [interfaces](docs/interfaces.md) for every topic and frame.
 | [Running](docs/running.md) | Commands, courses, rendering, WSL, recording and CI/CD |
 | [Configuration](docs/configuration.md) | Where every setting lives; vessel, scenario and algorithm files |
 | [Team integration](docs/team-integration.md) | Step-by-step for Control Systems and Perception/CV |
+| [Control & Autonomy: setpoints](docs/control-autonomy-setpoints.md) | Go-to-position targets and thruster forces for C&A's nodes; reading the report (Norwegian) |
 | [Interfaces](docs/interfaces.md) | ROS topics, message types, frames and node ownership |
 | [Architecture](docs/architecture.md) | Data flow, run lifecycle, code map, safety and limits |
 | [Validation](docs/validation.md) | Test coverage, benchmarks and dynamics measurements |

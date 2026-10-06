@@ -17,7 +17,10 @@ simulation time. Source stamps are preserved through sensing/mapping.
 | `/njord/odometry` | `nav_msgs/Odometry` | Navigation state, `map` → `base_link`: GPS/IMU EKF by default; ground truth with `STATE_SOURCE=truth` |
 | `/njord/occupancy` | `nav_msgs/OccupancyGrid` | -1 unknown, 0 observed free, 100 inflated obstacle |
 | `/njord/buoys` | `vision_msgs/Detection3DArray` | Fused red/green buoy tracks in map |
-| `/njord/goal` | `geometry_msgs/PoseStamped` | Mission waypoint in map |
+| `/njord/goal` | `geometry_msgs/PoseStamped` | Mission waypoint in map (gate courses; internal to the reference chain) |
+| `/njord/setpoint` | `geometry_msgs/PoseStamped` | Setpoint courses: target position and heading in `map` for the controller. Published reliable + transient local by the evaluator (race; repeated every second with the unchanged issue stamp), `njord goto`, RViz or a team node (lab); a message with a new stamp or pose replaces the active target. Provisional name ([control-autonomy-setpoints.md](control-autonomy-setpoints.md)) |
+| `/njord/setpoint_sequence` | `nav_msgs/Path` | Setpoint race: active target followed by the remaining ones (optional lookahead), from the evaluator |
+| `/njord/controller_status` | `diagnostic_msgs/DiagnosticArray` | Reference `setpoint_controller` heartbeat, status `controller`, 10 Hz simulation time; OK while its odometry is fresh |
 | `/njord/path` | `nav_msgs/Path` | D* Lite route; empty explicitly invalidates |
 | `/njord/{planner,mission,navigation}_status` | `diagnostic_msgs/DiagnosticArray` | Fresh validity heartbeat |
 | `/<thruster name>/command`, e.g. `/thruster_1/command` | `std_msgs/Float64` | Controller force per thruster in newtons along its axis, before guard; one topic per thruster in the vessel file (WAM-V: `thruster_1` port, `thruster_2` starboard) |
@@ -26,6 +29,7 @@ simulation time. Source stamps are preserved through sensing/mapping.
 | `/njord/guard_status` | `diagnostic_msgs/DiagnosticArray` | Command guard, 20 Hz steady time: status `command_guard`, OK while thrust may pass, otherwise WARN with the reason |
 | `/sim/ground_truth/odometry` | `nav_msgs/Odometry` | Evaluation; fed to navigation only in explicit truth mode (`STATE_SOURCE=truth`) |
 | `/sim/sensors/{gps/fix_raw,imu/data_raw}` | `sensor_msgs/NavSatFix`, `sensor_msgs/Imu` | Gazebo GPS/IMU before the sensor adapter adds noise; simulator internal |
+| `/sim/setpoint_status`, `/sim/setpoint_markers`, `/sim/trajectory` | `diagnostic_msgs/DiagnosticArray`, `visualization_msgs/MarkerArray`, `nav_msgs/Path` | Evaluator display, derived from ground truth: live score of the active target, RViz target markers, travelled track. Not for autonomy |
 | `/njord/contacts` | `ros_gz_interfaces/Contacts` | Physics-verified contact heartbeat, 20 Hz |
 | `/njord/plan_ms` | `std_msgs/Float64` | Monotonic wall-time search latency |
 
@@ -77,11 +81,28 @@ source; no Gazebo world-pose TF publisher is connected.
   `state_source` in `autonomy_config.json` and `run_metrics.json`; a truth run
   says nothing about estimation.
 
+## Setpoint courses
+
+A scenario with `setpoints:` instead of `gates:` is a setpoint course
+(`course` in `run_ready.json`). The reference chain is then only
+`setpoint_controller`: it subscribes to `/njord/setpoint` (reliable, volatile)
+and `/njord/odometry`, drives to the latest target with thrust in newtons on
+`/<thruster>/command`, and publishes `/njord/controller_status`. It sends zero
+thrust without a target or with odometry older than
+`setpoint_control.stale_after_s`, and rejects targets outside `map` or with
+non-finite values. In a race the evaluator issues each target when the
+previous one is reached, timed out or replaced (`advance_after_s`) and
+checks that it is the only publisher on `/njord/setpoint`. A setpoint race
+starts only once something subscribes to `/njord/setpoint`, and the active
+target is repeated every second with its issue stamp; in `lab` targets come
+from outside and the evaluator only scores them. Exact semantics, QoS advice
+and the metrics are in [control-autonomy-setpoints.md](control-autonomy-setpoints.md).
+
 ## Replace the reference algorithms
 
 Launch `dstar_demo.launch.py autonomy:=external` to keep estimation and the
 command guard while leaving mapping, perception, mission, planner and guidance
-to the team's nodes. With `autonomy:=reference` (default), select
+(or, on a setpoint course, the setpoint controller) to the team's nodes. With `autonomy:=reference` (default), select
 `controller:=external`, `perception:=external`, and/or `mapping:=external` to
 omit only guidance, camera/lidar buoy fusion, and/or the mapper. Mission and
 planner remain active in these partial modes. The Compose equivalents are
@@ -91,8 +112,10 @@ still owns `navigation_status`; do not duplicate it in an external stack.
 
 Publish the documented forces. Which health statuses the guard requires comes
 from `configuration.guard_requirements`: navigation always (the sensor adapter
-or truth relay publishes it), planner and mission only while the reference
-nodes run (`AUTONOMY=reference`), and the evaluator's race-active signal only
+or truth relay publishes it), planner and mission only while those reference
+nodes run (`AUTONOMY=reference` on a gate course), the controller heartbeat only
+while the reference setpoint controller runs (setpoint course with
+`AUTONOMY=reference` and `CONTROLLER=reference`), and the evaluator's race-active signal only
 with `RUN_MODE=race` (`demo`, `benchmark`; `lab` uses `RUN_MODE=free`). An
 external stack therefore needs no Njord status messages. The
 planner diagnostic name is `njord/planner`; mission is `mission`; navigation

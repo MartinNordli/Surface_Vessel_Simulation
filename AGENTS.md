@@ -24,6 +24,7 @@ linked guides, not here.
 │   ├── running.md            Commands, rendering, recording and CI/CD
 │   ├── configuration.md      Where every setting lives; vessel/scenario/algorithm schema
 │   ├── team-integration.md   Step-by-step guide for external team nodes
+│   ├── control-autonomy-setpoints.md  C&A go-to-position interface and report (Norwegian)
 │   ├── run-concepts.md       One-page map of a run for newcomers
 │   ├── architecture.md       Data flow, run lifecycle, code map, limits
 │   ├── validation.md         Test coverage, benchmarks and dynamics measurements
@@ -42,7 +43,8 @@ linked guides, not here.
 │   └── njord_sim/            Nodes (*_node.py), pure-Python cores (*_core.py),
 │                             configuration.py, constants.py
 ├── njord_gz_plugins/         C++ Gazebo plugins: actuator watchdog, Njord physics, contact monitor
-├── scenarios/                Course files: reference, slalom, dynamics
+├── scenarios/                Course files: gate races (reference, slalom), dynamics,
+│                             setpoint courses (goto_square, goto_retarget, station_keeping)
 ├── scripts/                  `njord` CLI, benchmark, runners, host setup, build metadata
 ├── tests/                    unittest suite (test_*.py) and ROS smoke helpers
 ├── validation/               Independent checks: dynamics, lidar, runtime, timeouts
@@ -124,6 +126,7 @@ carries irrelevant detail. A small or single-area task is cheaper to do directly
 | ROS topics, message types, frames, node ownership | [docs/interfaces.md](docs/interfaces.md) |
 | Running the simulator, rendering, recording, CI/CD | [docs/running.md](docs/running.md) |
 | Team workflows, sensor and parameter overrides, replay | [docs/team-integration.md](docs/team-integration.md) |
+| Control & Autonomy target poses (setpoints), thrust interface, run report | [docs/control-autonomy-setpoints.md](docs/control-autonomy-setpoints.md) |
 | How a run fits together (start here) | [docs/run-concepts.md](docs/run-concepts.md) |
 | Data flow, configuration, safety, limits, reproducibility | [docs/architecture.md](docs/architecture.md) |
 | Test coverage, benchmarks, dynamics measurements | [docs/validation.md](docs/validation.md) |

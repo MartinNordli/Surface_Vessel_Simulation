@@ -53,7 +53,13 @@ export ROS_DOMAIN_ID=42
 ros2 run <package> <node> --ros-args -p use_sim_time:=true
 ```
 
-Packages from other ROS distributions must be built for Jazzy. Alternatively,
+Nodes on ROS 2 Humble also exchanged the standard messages with the simulator
+(`Odometry`, `PoseStamped`, `Float64`, `Clock`) in a rehearsal, with a harmless
+repeated `sequence size exceeds remaining buffer` on the Humble side and no
+node list across the two versions
+([validation.md](validation.md#control--autonomy-demo-rehearsal-2026-10-12)).
+Cross-distribution communication is not guaranteed by ROS 2; packages meant to
+run in the simulator image must be built for Jazzy. Alternatively,
 build and run inside the simulator image with the bundled workspace overlay:
 
 ```bash
@@ -126,7 +132,7 @@ connection; the team's actual controller must be tested separately.
 **Go to a position.** For target poses ("drive to this position", several in a
 row, station keeping) and how to see how well the boat did, follow
 [control-autonomy-setpoints.md](control-autonomy-setpoints.md) (Norwegian): the
-setpoint courses (`goto_square`, `goto_retarget`, `station_keeping`) issue
+setpoint courses (`goto_square`, `goto_retarget`, `station_keeping`, `hold_position`) issue
 targets on `/njord/setpoint`, and `./scripts/njord lab` with
 `./scripts/njord goto X Y [HEADING]` sends them by hand.
 
@@ -192,8 +198,10 @@ y right, z down), convert at the boundary of your node:
 | Body force or moment | (X, Y, N) | (X, -Y, -N) |
 
 Thruster commands are scalars along each thruster's own direction, so they do
-not change between conventions. Whether the simulator should provide a NED
-adapter is open question 8.
+not change between conventions. Control & Autonomy does this conversion in its
+own nodes (agreed 2026-10-12); `validation/ned_dp_standin.py` is a runnable
+reference, and [demo-control-autonomy.md](demo-control-autonomy.md) lists the
+steps.
 
 ## 5. Test your own computer vision or map
 

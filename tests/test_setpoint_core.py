@@ -36,7 +36,7 @@ def drive(scorer, poses, start=0.0, step=0.1):
 
 class SetpointScenarioTests(unittest.TestCase):
     def test_shipped_setpoint_courses_resolve(self):
-        for name in ("goto_square", "goto_retarget", "station_keeping"):
+        for name in ("goto_square", "goto_retarget", "station_keeping", "hold_position"):
             with self.subTest(name=name):
                 scenario = load_scenario(ROOT / f"scenarios/{name}.yaml")
                 self.assertEqual(scenario["kind"], "setpoints")

@@ -285,8 +285,8 @@ under `defaults`; there is no built-in fallback. A target is reached after
 or not this one was reached; such a target is optional, and the last target
 cannot use it. A setpoint course needs at least one entry under `obstacles`,
 because the contact monitor only reports collisions for watched models, and
-`gate_y_jitter_m` is rejected. The shipped `goto_square`, `goto_retarget` and
-`station_keeping` courses have `calm`, `windy` (constant wind, any vessel) and
+`gate_y_jitter_m` is rejected. The shipped `goto_square`, `goto_retarget`,
+`station_keeping` and `hold_position` courses have `calm`, `windy` (constant wind, any vessel) and
 `current` (wind plus current, Njord profiles only) presets.
 
 Autonomy receives only the course kind through `run_ready.json`; target
@@ -361,7 +361,7 @@ world origin shared by Gazebo and the GPS transform (63.4305 N, 10.3951 E), the
 the guard, both actuator plugins and the evaluator, the Njord world gravity
 (9.81 m/s², written as the world `<gravity>` and read from there by the
 buoyancy plugin), the thruster command topic pattern `/{name}/command`, the
-provisional setpoint topic names (`SETPOINT_TOPIC` and the rest of that block)
+setpoint topic names (`SETPOINT_TOPIC` and the rest of that block)
 with the lab acceptance `OBSERVED_SETPOINT_ACCEPTANCE` (1.5 m, 15°, 5 s), and the VRX WAM-V hull envelope
 (6 × 3.3 m) and thruster layout: `thruster_1` (port) and `thruster_2`
 (starboard) at x = -2.373776 m, y = ±1.027135 m, pushing forward.

@@ -50,7 +50,7 @@ Eksempel: `SEED=1 VESSEL_CONFIG=/config/vessels/munin_v0.yaml ENVIRONMENT=windy 
 | `./scripts/njord lab <kurs>` | Nei | Fri kjøring. Dere sender mål eller kraft selv. Ctrl-C avslutter. |
 | `GUI=1 ./scripts/njord lab <kurs>` | Gazebo + RViz | Fri kjøring; målpunkt kan klikkes ut i RViz |
 
-Kursene er `goto_square`, `goto_retarget` og `station_keeping` (se tabellen i
+Kursene er `goto_square`, `goto_retarget`, `station_keeping` og `hold_position` (se tabellen i
 [control-autonomy-setpoints.md](control-autonomy-setpoints.md#2-kom-i-gang-på-fem-minutter-uten-egne-noder)).
 GUI bruker X-skjermen til verten. På WSL2 legger `scripts/njord` selv til
 `compose.wsl.yaml`.
@@ -174,7 +174,9 @@ For C&A sine ekte noder, se avsnitt 3 i
   - test C med `munin_v0` og WAM-V
   - test D med `munin_v0`: 4/4 punkt, exit 0
   - test B ved forrige gjennomgang ([validation.md](validation.md#setpoint-courses-2026-10-06))
-- **Ikke verifisert ennå:** `gui`, `GUI=1` og klikk i RViz. Rapporter
-  resultatet når dere har kjørt dem.
+- **Kjørt 2026-10-12 på WSL2:** `gui hold_position` med `munin_v0`. Gazebo og
+  RViz startet, og løpet ble fullført. Vinduene er ikke sett på.
+- **Ikke verifisert ennå:** vinduene på en Linux-PC uten WSL, `GUI=1 lab` og
+  klikk i RViz. Rapporter resultatet når dere har kjørt dem.
 - `munin_v0` er en plassholder. Resultatene sier noe om kontrolleren og
   koblingen, ikke om hvordan Munin vil oppføre seg.

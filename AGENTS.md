@@ -26,6 +26,7 @@ linked guides, not here.
 │   ├── team-integration.md   Step-by-step guide for external team nodes
 │   ├── control-autonomy-setpoints.md  C&A go-to-position interface and report (Norwegian)
 │   ├── testing-setpoints-thrust.md    How simulation tests setpoints and thrust (Norwegian)
+│   ├── demo-control-autonomy.md       Step-by-step C&A demo: both teams' tasks, commands, expected I/O (Norwegian)
 │   ├── run-concepts.md       One-page map of a run for newcomers
 │   ├── architecture.md       Data flow, run lifecycle, code map, limits
 │   ├── validation.md         Test coverage, benchmarks and dynamics measurements
@@ -45,7 +46,8 @@ linked guides, not here.
 │                             configuration.py, constants.py
 ├── njord_gz_plugins/         C++ Gazebo plugins: actuator watchdog, Njord physics, contact monitor
 ├── scenarios/                Course files: gate races (reference, slalom), dynamics,
-│                             setpoint courses (goto_square, goto_retarget, station_keeping)
+│                             setpoint courses (goto_square, goto_retarget, station_keeping,
+│                             hold_position)
 ├── scripts/                  `njord` CLI, benchmark, runners, host setup, build metadata
 ├── tests/                    unittest suite (test_*.py) and ROS smoke helpers
 ├── validation/               Independent checks: dynamics, lidar, runtime, timeouts
@@ -129,6 +131,7 @@ carries irrelevant detail. A small or single-area task is cheaper to do directly
 | Team workflows, sensor and parameter overrides, replay | [docs/team-integration.md](docs/team-integration.md) |
 | Control & Autonomy target poses (setpoints), thrust interface, run report | [docs/control-autonomy-setpoints.md](docs/control-autonomy-setpoints.md) |
 | Testing setpoints and per-thruster thrust, with or without GUI, per vessel (Norwegian) | [docs/testing-setpoints-thrust.md](docs/testing-setpoints-thrust.md) |
+| Running a demo with Control & Autonomy's own nodes, step by step (Norwegian) | [docs/demo-control-autonomy.md](docs/demo-control-autonomy.md) |
 | How a run fits together (start here) | [docs/run-concepts.md](docs/run-concepts.md) |
 | Data flow, configuration, safety, limits, reproducibility | [docs/architecture.md](docs/architecture.md) |
 | Test coverage, benchmarks, dynamics measurements | [docs/validation.md](docs/validation.md) |

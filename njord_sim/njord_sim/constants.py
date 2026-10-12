@@ -48,8 +48,9 @@ HEARTBEATS = {'navigation': ('/njord/navigation_status', 'navigation'),
 THRUSTER_COMMAND_TOPIC = '/{name}/command'
 
 # Setpoint courses ("go to this position"; docs/control-autonomy-setpoints.md).
-# PROVISIONAL names until Control & Autonomy confirms them: rename a topic here
-# and every node, launch file and test follows. The message types are fixed in
+# Control & Autonomy agreed to SETPOINT_TOPIC and its type on 2026-10-12 and
+# converts it to its own NED message in its own nodes. Rename a topic here and
+# every node, launch file and test follows. The message types are fixed in
 # the code that uses them (evaluator_node.py, setpoint_controller_node.py,
 # scripts/send_setpoint.py).
 #   SETPOINT_TOPIC           geometry_msgs/PoseStamped in map: the active target

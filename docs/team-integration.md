@@ -126,7 +126,7 @@ connection; the team's actual controller must be tested separately.
 **Go to a position.** For target poses ("drive to this position", several in a
 row, station keeping) and how to see how well the boat did, follow
 [control-autonomy-setpoints.md](control-autonomy-setpoints.md) (Norwegian): the
-setpoint courses (`goto_square`, `goto_retarget`, `station_keeping`) issue
+setpoint courses (`goto_square`, `goto_retarget`, `station_keeping`, `hold_position`) issue
 targets on `/njord/setpoint`, and `./scripts/njord lab` with
 `./scripts/njord goto X Y [HEADING]` sends them by hand.
 
@@ -192,8 +192,10 @@ y right, z down), convert at the boundary of your node:
 | Body force or moment | (X, Y, N) | (X, -Y, -N) |
 
 Thruster commands are scalars along each thruster's own direction, so they do
-not change between conventions. Whether the simulator should provide a NED
-adapter is open question 8.
+not change between conventions. Control & Autonomy does this conversion in its
+own nodes (agreed 2026-10-12); `validation/ned_dp_standin.py` is a runnable
+reference, and [demo-control-autonomy.md](demo-control-autonomy.md) lists the
+steps.
 
 ## 5. Test your own computer vision or map
 

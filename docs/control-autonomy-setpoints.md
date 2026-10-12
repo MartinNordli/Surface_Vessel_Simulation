@@ -9,10 +9,13 @@ til simulatoren slik at:
 
 og hvordan dere ser hvor godt båten faktisk gjorde det, både med og uten GUI.
 
-> **Foreløpige navn.** Topicnavn og meldingstyper for målpunkt er valgt av
-> simulatorgruppa og ikke avtalt med C&A ennå. Hvert navn har ett hjem i koden,
-> og [avsnitt 11](#11-navn-og-typer-som-må-bekreftes-med-ca) sier hvor det
-> endres. Thrustertopicene `/thruster_N/command` er allerede avtalt med C&A.
+> **Avtalt med C&A 12. oktober 2026.** `/njord/setpoint` og `/njord/odometry`
+> brukes som de er. C&A regner i NED/FRD med egne meldingstyper og konverterer
+> i sine egne noder; simulatoren bygger ikke inn meldingstypene deres. Hvert
+> navn har ett hjem i koden, og
+> [avsnitt 11](#11-navn-og-typer-avtalt-med-ca) sier hvor det endres.
+> Kommandoene for en demo med C&A sine noder står steg for steg i
+> [demo-control-autonomy.md](demo-control-autonomy.md).
 
 Generelle detaljer om topics, rammer og QoS står i [interfaces.md](interfaces.md),
 og oppsett av eget ROS 2-workspace i [team-integration.md](team-integration.md).
@@ -65,6 +68,7 @@ Målpunktkursene som følger med:
 |---|---|
 | `goto_square` | Fire hjørner av et kvadrat på 20 m, hvert med en heading som skal holdes i 5 s |
 | `goto_retarget` | Nye målpunkt kommer før det forrige er nådd (`advance_after_s`), så et siste punkt som må nås |
+| `hold_position` | Hold startposisjonen og headingen i 60 s (DP uten sprang i referansen). Samme miljøer som `station_keeping`. |
 | `station_keeping` | Kjør til ett punkt og hold posisjon og heading i 60 s (DP). Bruk `ENVIRONMENT=windy` (alle båter) eller `ENVIRONMENT=current` (bare Njord-profiler som `munin_v0`). WAM-V med to thrustere klarte ikke å holde headingen mot sidevind ([validation.md](validation.md#setpoint-courses-2026-10-06)); `munin_v0` klarte det. |
 
 ## 3. Koble til deres egne noder
@@ -132,7 +136,7 @@ løpet ender med `setpoints_failed` eller `simulation_timeout`.
 
 ### Inn til C&A
 
-| Topic (foreløpig navn) | Type | Innhold | QoS og takt | Endres i |
+| Topic | Type | Innhold | QoS og takt | Endres i |
 |---|---|---|---|---|
 | `/njord/setpoint` | `geometry_msgs/PoseStamped` | Målposisjon `pose.position.x/y` i meter og heading som `pose.orientation` (rotasjon om z), i rammen `map`. `header.stamp` er simuleringstiden da punktet ble gitt. | Reliable, publiseres transient local, depth 1. Sendes når punktet gis og gjentas deretter hvert sekund med **samme** stempel; samme stempel og pose betyr samme punkt. | `SETPOINT_TOPIC` i `njord_sim/njord_sim/constants.py` |
 | `/njord/setpoint_sequence` | `nav_msgs/Path` | Valgfri lookahead: aktivt punkt først, så resten av rekkefølgen. Bare i et målt løp (`demo`/`gui`). | Som over, oppdatert når et nytt punkt gis | `SETPOINT_SEQUENCE_TOPIC` i `constants.py` |
@@ -243,6 +247,9 @@ CONTROLLER=external VESSEL_CONFIG=/config/vessels/munin_v0.yaml ./scripts/njord 
 ./scripts/njord goto 0 0          # uten heading: båten bes peke langs linja fra der den er
 ```
 
+`goto` sender punktet med en gang og blir stående omtrent fem sekunder for å
+gi det samme punktet, med samme stempel, til noder som oppdages sent.
+
 I `lab` publiserer ikke evaluatoren punkter selv; den måler hvert punkt dere
 sender til det neste kommer. Uten `CONTROLLER=external` kjører simulatorens
 referansekontroller dem. Akseptansen er fast i lab:
@@ -352,22 +359,22 @@ nodene navigerte på estimat eller fasit.
 - **Målpunktkursene** er åpent vann med én fjern bøye. Kartlegging,
   bøyedeteksjon og stiplanlegging fra referansekjeden kjører ikke på dem.
 
-## 11. Navn og typer som må bekreftes med C&A
+## 11. Navn og typer avtalt med C&A
 
-Alle navn under er valgt foreløpig. For å endre et navn: rediger stedet i
+Navnene under ble gjennomgått med C&A 12. oktober 2026. For å endre et navn: rediger stedet i
 kolonnen «Endres i», oppdater RViz-oppsettet `njord_sim/config/njord.rviz` hvis
 navnet står der, kjør `./scripts/njord build` og `./scripts/njord test`. Testen
 `tests/test_parameter_contracts.py` sjekker at RViz-oppsettet bruker de samme
 topicnavnene som `constants.py`.
 
-| Hva | Foreløpig valg | Endres i | Å avklare med C&A |
+| Hva | Valg | Endres i | Status hos C&A |
 |---|---|---|---|
-| Topic for målpunkt | `/njord/setpoint` | `SETPOINT_TOPIC`, `njord_sim/njord_sim/constants.py` | Navn og namespace |
-| Meldingstype for målpunkt | `geometry_msgs/PoseStamped` | Koden som bruker topicen: `evaluator_node.py`, `setpoint_controller_node.py`, `scripts/send_setpoint.py` | Trenger dere ønsket fart, toleranse eller ID i meldingen? (Krever i så fall en egen meldingstype eller et tillegg.) |
-| Lookahead-sekvens | `/njord/setpoint_sequence`, `nav_msgs/Path` | `SETPOINT_SEQUENCE_TOPIC`, `constants.py` | Ønsker dere den i det hele tatt? |
-| Heading-konvensjon | ENU, mot klokka fra øst | Fast i ROS-konvensjonen (REP 103); NED-adapter er åpent spørsmål 8 | Konverterer dere selv? |
+| Topic for målpunkt | `/njord/setpoint` | `SETPOINT_TOPIC`, `njord_sim/njord_sim/constants.py` | Avtalt. DP-noden deres gjør meldingen om til sin egen `DPSetpoint` (x, y, psi i NED). |
+| Meldingstype for målpunkt | `geometry_msgs/PoseStamped` | Koden som bruker topicen: `evaluator_node.py`, `setpoint_controller_node.py`, `scripts/send_setpoint.py` | Avtalt. Fart, toleranse og ID trengs ikke i meldingen. |
+| Lookahead-sekvens | `/njord/setpoint_sequence`, `nav_msgs/Path` | `SETPOINT_SEQUENCE_TOPIC`, `constants.py` | Ikke i bruk ennå. LOS-guidance, som er under utvikling, vil ha en sti med veipunkter. |
+| Heading-konvensjon | ENU, mot klokka fra øst | Fast i ROS-konvensjonen (REP 103) | Avtalt: C&A regner i NED/FRD og konverterer selv. |
 | Thrustertopics | `/thruster_1/command` … `/thruster_4/command` | Navn: `thrusters[].name` i vesselfila. Mal: `THRUSTER_COMMAND_TOPIC` i `constants.py`. | Avtalt (september 2026); rekkefølge og plassering venter på Naval |
 | Thrustertype | `std_msgs/Float64`, newton | `command_guard_node.py`, `setpoint_controller_node.py`, `guidance_node.py` | PWM senere? |
-| Navigasjonstilstand | `/njord/odometry`, `nav_msgs/Odometry`, `map` → `base_link` | [interfaces.md](interfaces.md); rammenavn `MAP_FRAME`, `BASE_FRAME` i `constants.py` | Holder dette, eller vil dere ha egne meldinger fra GNSS/attitude-noden? |
+| Navigasjonstilstand | `/njord/odometry`, `nav_msgs/Odometry`, `map` → `base_link` | [interfaces.md](interfaces.md); rammenavn `MAP_FRAME`, `BASE_FRAME` i `constants.py` | Avtalt: en C&A-node gjør den om til `/vessel/state_est` (`VesselStateEst`) i simulatormodus. Båten får tilstanden fra en Kongsberg Seapath, så GNSS/IMU-topicene brukes ikke. |
 | Toleranser og hold i lab | 1,5 m, 15°, 5 s | `OBSERVED_SETPOINT_ACCEPTANCE`, `constants.py` | Hvilke krav gjelder for DP (spørsmål 14)? |
 | Visning og måling | `/sim/setpoint_status`, `/sim/setpoint_markers`, `/sim/trajectory` | `SETPOINT_STATUS_TOPIC`, `SETPOINT_MARKERS_TOPIC`, `TRAJECTORY_TOPIC`, `constants.py` | Bare til simulatorens visning; ikke for C&A-noder |

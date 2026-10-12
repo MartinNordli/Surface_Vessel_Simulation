@@ -18,7 +18,7 @@ simulation time. Source stamps are preserved through sensing/mapping.
 | `/njord/occupancy` | `nav_msgs/OccupancyGrid` | -1 unknown, 0 observed free, 100 inflated obstacle |
 | `/njord/buoys` | `vision_msgs/Detection3DArray` | Fused red/green buoy tracks in map |
 | `/njord/goal` | `geometry_msgs/PoseStamped` | Mission waypoint in map (gate courses; internal to the reference chain) |
-| `/njord/setpoint` | `geometry_msgs/PoseStamped` | Setpoint courses: target position and heading in `map` for the controller. Published reliable + transient local by the evaluator (race; repeated every second with the unchanged issue stamp), `njord goto`, RViz or a team node (lab); a message with a new stamp or pose replaces the active target. Provisional name ([control-autonomy-setpoints.md](control-autonomy-setpoints.md)) |
+| `/njord/setpoint` | `geometry_msgs/PoseStamped` | Setpoint courses: target position and heading in `map` for the controller. Published reliable + transient local by the evaluator (race; repeated every second with the unchanged issue stamp), `njord goto`, RViz or a team node (lab); a message with a new stamp or pose replaces the active target. Agreed with Control & Autonomy on 2026-10-12 ([control-autonomy-setpoints.md](control-autonomy-setpoints.md)) |
 | `/njord/setpoint_sequence` | `nav_msgs/Path` | Setpoint race: active target followed by the remaining ones (optional lookahead), from the evaluator |
 | `/njord/controller_status` | `diagnostic_msgs/DiagnosticArray` | Reference `setpoint_controller` heartbeat, status `controller`, 10 Hz simulation time; OK while its odometry is fresh |
 | `/njord/path` | `nav_msgs/Path` | D* Lite route; empty explicitly invalidates |

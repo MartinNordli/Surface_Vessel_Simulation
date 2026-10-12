@@ -153,6 +153,63 @@ about Munin. Two faults found in the first lab run (a target sent before the
 controller had matched, and no result written on `docker compose stop`) were
 fixed in 99c8e28 before the runs above.
 
+## Control & Autonomy demo rehearsal (2026-10-12)
+
+Control & Autonomy works in NED/FRD with its own message types and converts at
+the boundary of its nodes ([demo-control-autonomy.md](demo-control-autonomy.md)).
+`validation/ned_dp_standin.py` does that conversion, a PD station-keeping law
+and the thruster allocation in NED/FRD. It stands in for their nodes to check
+the interface; it is not their controller. `tests/test_ned_standin.py` covers
+the conversion signs, the allocation (equal to the simulator's own
+forward/left/up allocation of the mirrored wrench) and a closed loop on a
+planar model, without ROS.
+
+GPU runs on the RTX 5090 (WSL2), `munin_v0`, `ENVIRONMENT=current` (4 m/s wind,
+0.3 m/s current), seed 1, real-time factor 0.92, at commit a029f8f (races) and
+d5d219d (lab and GUI). The container suite passed 310 tests (2 skipped).
+
+| Run | Result | Hold: RMS / max distance, RMS heading | Thrust impulse |
+| --- | --- | --- | --- |
+| `hold_position`, reference `setpoint_controller` (estimate) | completed, held 60 s | 0.36 m / 0.72 m, 0.7° | 6696 N·s |
+| `hold_position`, stand-in external, `STATE_SOURCE=truth` | completed, held 60 s | 0.30 m / 0.33 m, 0.0° | 2525 N·s |
+| `hold_position`, stand-in external, estimate | completed, held 60 s | 0.36 m / 0.72 m, 0.7° | 6721 N·s |
+| `station_keeping` (10 m step), stand-in external, truth | completed; reached after 5.9 s, held 60 s | 0.33 m / 1.00 m, 0.2° | 4218 N·s |
+| `lab`, stand-in started after the simulator, eight `njord goto` targets 2–3 m apart | all eight reached in 6.3–8.6 s, final error 0.10–0.38 m; status `stopped` | — | — |
+| `gui hold_position`, reference controller | completed; Gazebo GUI and RViz started under WSLg (windows not inspected) | — | — |
+
+Evidence: [`gpu-ca-demo-rehearsal`](evidence/gpu-ca-demo-rehearsal.json).
+
+**The estimated velocity is not usable for dynamic positioning.** The EKFs fuse
+GPS position and IMU attitude and angular rate, no velocity. On
+`station_keeping` at c1a4654, a scratch controller (not in the repository)
+logged `/njord/odometry` against ground truth: the surge velocity error was
+0.38–0.72 m/s RMS, as large as the surge velocity itself, sway 0.16–0.20 m/s
+and yaw rate below 0.01 rad/s; position was within 0.28 m RMS. In truth mode
+the velocity differences were at most 0.002 and the position difference
+0.006 m. In that run the boat kept moving at 0.3–0.45 m/s RMS in surge during
+the hold, and on `hold_position` the stand-in's thrust impulse was 2.7 times
+higher with the estimate than with truth. Use `STATE_SOURCE=truth` for
+controller work until the estimate is improved; the real boat gets its state
+from a Kongsberg Seapath, which the simulator does not model.
+
+**`njord goto` missed external controllers.** A new publisher matched the lab
+evaluator after 0.05–1.9 s and the stand-in in its own container after
+0.55–3.1 s, up to 3.0 s later (12 probes, output not retained), longer than
+the 2 s the sender waited, so the volatile
+controller subscription sometimes never received a target the evaluator
+scored. Since d5d219d the sender publishes at once and repeats the identical
+message, with its stamp, for each subscriber matched within 5 s. With the old
+and new sender alternating in one lab session, the stand-in received 8 of 10
+(first session, before the commit) and 4 of 10 (at d5d219d) targets from the
+old sender and 10 of 10 from the new one in both.
+
+Not covered: Control & Autonomy's own nodes, a native Linux host and its
+windows, nodes on a second machine, and `NJORD_CPU=1` on setpoint courses. A
+workspace with messages like `VesselStateEst` and `DPSetpoint` built with
+`colcon` in the team container (`compose.team.yaml`); the image has `g++`,
+Eigen and NumPy but not SciPy. `munin_v0` is a placeholder, so these numbers
+describe the interface and the stand-in, not Munin.
+
 ## Dynamics measurements
 
 Run dynamics measurements with **only the simulator service** running:

@@ -87,7 +87,7 @@ Courses are the files in `scenarios/`:
   and sensor configurations. The reference autonomy is a baseline and is not
   required to complete every run.
 - **`dynamics`**: open water for dynamics measurements, not a race.
-- **`goto_square`, `goto_retarget`, `station_keeping`**: setpoint courses. The
+- **`goto_square`, `goto_retarget`, `station_keeping`, `hold_position`**: setpoint courses. The
   evaluator issues target poses on `/njord/setpoint` one at a time and scores
   how the boat reaches and holds each one; the reference `setpoint_controller`
   drives unless `CONTROLLER=external`. See

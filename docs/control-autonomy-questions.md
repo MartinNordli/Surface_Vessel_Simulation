@@ -66,18 +66,30 @@ X-oppsett.
    båten? `sensor_msgs/NavSatFix` og `sensor_msgs/Imu` (som simulatoren sender
    i dag), eller driverens egne typer, f.eks. heading eller
    `geometry_msgs/TwistStamped` for fart?
-   - Svar:
+   - Svar (C&A, 2026-10-12): Ingen av dem. Båten får posisjon og heading i NED
+     og fart i BODY fra en Kongsberg Seapath. En C&A-node publiserer dette som
+     `/vessel/state_est` (egen type `VesselStateEst`: `header`, `u`, `v`, `r`,
+     `x`, `y`, `psi`, `b`), kanskje med en EKF oppå. GNSS- og IMU-topicene
+     brukes ikke. I simulering abonnerer noden på `/njord/odometry` og
+     konverterer selv ([demo-control-autonomy.md](demo-control-autonomy.md)).
 8. **Konvensjon:** Regner dere i ENU og FLU (x fram, y babord, z opp; ROS-
    standarden og det simulatoren bruker) eller NED og FRD? Skal simulatoren
    tilby en adapter, eller konverterer dere selv?
-   - Svar:
+   - Svar (C&A, 2026-10-12): NED og FRD. C&A konverterer selv i en
+     simulatormodus i sine egne noder, så simulatoren trenger ikke
+     meldingspakkene deres.
 9. **Hardware:** Hvilken GNSS (med eller uten RTK) og hvilken IMU er planlagt?
    Datablad gir realistiske verdier for støy, bias og drift i simuleringen.
-   - Svar:
+   - Svar (C&A, 2026-10-12): Kongsberg Seapath. Programvaren og modellen er
+     proprietære (trolig en ESKF med ukjente parametere), så den lar seg ikke
+     modellere. Et forenklet estimat er godt nok foreløpig.
 10. **Fasit eller estimat:** Vil dere normalt kjøre på fasit
     (`STATE_SOURCE=truth`), på simulatorens estimat, eller på deres egen
     estimator fra rå GNSS/IMU?
-    - Svar:
+    - Svar (C&A, 2026-10-12): Ikke egen estimator fra rå GNSS/IMU. Fasit eller
+      simulatorens estimat, valgt med `STATE_SOURCE`. Simuleringsgruppa
+      anbefaler `STATE_SOURCE=truth` for DP: estimatet har svært støyete fart
+      ([validation.md](validation.md#control--autonomy-demo-rehearsal-2026-10-12)).
 
 ## Kontroll og timing
 
@@ -94,10 +106,15 @@ X-oppsett.
 13. **Settpunkt:** Hvordan vil dere få DP-settpunktet: som
     `geometry_msgs/PoseStamped` på `/njord/goal` (posisjon og heading i
     `map`), eller på en annen måte?
-    - Svar:
+    - Svar (C&A, 2026-10-12): DP-regulatoren tar en egen `DPSetpoint`
+      (`header`, `x`, `y`, `psi` i NED). I simulering gjør DP-noden om
+      `geometry_msgs/PoseStamped` fra `/njord/setpoint`; fart, toleranse og ID
+      trengs ikke i meldingen. Regulatoren forventer en glatt referanse fra en
+      MPC-node som er under utvikling, men kan holde en posisjon i 60 s alene.
+      LOS-guidance er også under utvikling og vil ha en sti med veipunkter.
 14. **Toleranser:** Hvilke krav gjelder for DP (for eksempel ±1 m og ±5°), og
     hvor lenge skal posisjonen holdes?
-    - Svar:
+    - Svar (C&A, 2026-10-12): Ikke bestemt; ikke viktig foreløpig.
 15. **Måltall:** Hvilke Autodrone-måltall er aktuelle: banefølgingsfeil mot
     hvilken referanse (planlagt sti eller linjen mellom portene), tid,
     kollisjoner, energibruk?

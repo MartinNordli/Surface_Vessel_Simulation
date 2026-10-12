@@ -108,7 +108,6 @@ tregere, og målpunktkursene er ikke prøvd slik.
 ```bash
 git clone https://github.com/MartinNordli/Surface_Vessel_Simulation.git
 cd Surface_Vessel_Simulation
-git checkout feat/setpoint-missions
 sudo bash scripts/setup-host.sh     # én gang: Docker, Compose og NVIDIA Container Toolkit
 sudo usermod -aG docker $USER       # så docker virker uten sudo; logg ut og inn igjen etterpå
 ```

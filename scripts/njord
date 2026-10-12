@@ -65,7 +65,7 @@ Test
   smoke           Check live sensors against an already running stack
 
 Courses: $(courses)
-Setpoint courses (goto_*, station_keeping) issue target poses instead of gates;
+Setpoint courses (goto_*, station_keeping, hold_position) issue target poses instead of gates;
 see docs/control-autonomy-setpoints.md.
 Common settings: SEED, ENVIRONMENT, PROFILE, VESSEL_CONFIG, ALGORITHMS_CONFIG,
 CONTROLLER/PERCEPTION/MAPPING/AUTONOMY=external, STATE_SOURCE=truth (navigate on

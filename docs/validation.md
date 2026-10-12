@@ -203,8 +203,26 @@ and new sender alternating in one lab session, the stand-in received 8 of 10
 (first session, before the commit) and 4 of 10 (at d5d219d) targets from the
 old sender and 10 of 10 from the new one in both.
 
+**A ROS 2 Humble controller works against the Jazzy simulator.** Control &
+Autonomy probably uses Humble. A scratch NED PD node (not in the repository)
+in a `ros:humble-ros-base` container (Fast DDS 2.6.12, host network, default
+transports) was the external controller at ac5b58e, with `STATE_SOURCE=truth`:
+`hold_position` completed (hold RMS 0.30 m), `station_keeping` completed
+(reached after 6.8 s, held 60 s) and all eight `njord goto` targets of a lab
+run were received and reached. A Humble container listed the same 36 topics as
+a Jazzy one, and `/clock` and `/njord/odometry` decoded. Two
+differences: every Humble process printed `sequence size exceeds remaining
+buffer` about once a second (7 lines in 10 s) while its data was correct, and
+`ros2 node list` on Humble showed none of the simulator's 8 nodes. The cause
+was not investigated; it is consistent with the internal node-graph topic
+having changed format after Humble. Only `nav_msgs/Odometry`,
+`geometry_msgs/PoseStamped`, `std_msgs/Float64` and `rosgraph_msgs/Clock`
+crossed between the versions, on one host. ROS 2 does not guarantee
+communication between distributions. Evidence:
+[`gpu-ca-humble-controller`](evidence/gpu-ca-humble-controller.json).
+
 Not covered: Control & Autonomy's own nodes, a native Linux host and its
-windows, nodes on a second machine, and `NJORD_CPU=1` on setpoint courses. A
+windows, nodes on a second machine (Humble or Jazzy), and `NJORD_CPU=1` on setpoint courses. A
 workspace with messages like `VesselStateEst` and `DPSetpoint` built with
 `colcon` in the team container (`compose.team.yaml`); the image has `g++`,
 Eigen and NumPy but not SciPy. `munin_v0` is a placeholder, so these numbers

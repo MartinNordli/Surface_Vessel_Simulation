@@ -53,7 +53,13 @@ export ROS_DOMAIN_ID=42
 ros2 run <package> <node> --ros-args -p use_sim_time:=true
 ```
 
-Packages from other ROS distributions must be built for Jazzy. Alternatively,
+Nodes on ROS 2 Humble also exchanged the standard messages with the simulator
+(`Odometry`, `PoseStamped`, `Float64`, `Clock`) in a rehearsal, with a harmless
+repeated `sequence size exceeds remaining buffer` on the Humble side and no
+node list across the two versions
+([validation.md](validation.md#control--autonomy-demo-rehearsal-2026-10-12)).
+Cross-distribution communication is not guaranteed by ROS 2; packages meant to
+run in the simulator image must be built for Jazzy. Alternatively,
 build and run inside the simulator image with the bundled workspace overlay:
 
 ```bash

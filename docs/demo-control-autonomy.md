@@ -232,7 +232,7 @@ enn den som er logget inn på skrivebordet.
 3. **Allokeringsnoden** publiserer som avtalt på `/thruster_1/command` …
    `/thruster_4/command`, med thrusteroppsettet i avsnitt 1.
 4. Alle noder startes med `use_sim_time:=true`, uten namespace og med
-   `ROS_DOMAIN_ID=42`.
+   `ROS_DOMAIN_ID=42`. Både ROS 2 Humble og Jazzy virker (avsnitt 4.1).
 
 Regler som er lette å glemme:
 
@@ -337,8 +337,9 @@ nå enn på demoen.
 ### 3.4 Send dette til simuleringsgruppa før demoen
 
 - Lenke til repoet og branchen, og hvordan det bygges (`colcon build`?).
-- Avhengigheter utover ROS 2 Jazzy. Simulator-imaget har `g++`, Eigen og
-  NumPy, men for eksempel ikke SciPy.
+- Hvilken ROS 2-versjon dere bruker (Humble eller Jazzy), og avhengigheter
+  utover den. Simulator-imaget (Jazzy) har `g++`, Eigen og NumPy, men for
+  eksempel ikke SciPy.
 - Thrusteroppsettet allokeringen deres regner med, hvis det avviker fra
   tabellen i avsnitt 1.
 - Frekvensen på kontrollsløyfen.
@@ -347,41 +348,74 @@ nå enn på demoen.
 
 ### 4.1 Koble C&A sine noder til simulatoren
 
-**Alternativ A (anbefalt): bygg og kjør workspacet deres på demo-PC-en**, i
-simulator-imaget. Da er nettverket ute av bildet.
+Simulatoren kjører ROS 2 Jazzy. **Noder på ROS 2 Humble virker også mot den**
+(prøvd, se avsnitt 6), med disse forbeholdene:
+
+- Humble-terminalene skriver `sequence size exceeds remaining buffer` omtrent
+  hvert sekund. Data kommer likevel riktig fram. Feilen gjelder trolig
+  ROS sin interne oversikt over noder, som har byttet format etter Humble.
+- `ros2 node list` på Humble viser ikke simulatorens noder, og omvendt.
+  `ros2 topic list`, `echo` og `hz` virker.
+- Bare standardtypene som krysser mellom simulatoren og C&A er prøvd
+  (`Odometry`, `PoseStamped`, `Float64`, `Clock`). De er like i Humble og Jazzy.
+- ROS 2 lover ikke at ulike versjoner kan snakke sammen. Bruk standard DDS
+  (Fast DDS, altså ikke sett `RMW_IMPLEMENTATION`).
+
+**Alternativ A (tryggest): kjør C&A sine noder i en container på demo-PC-en.**
+Da er nettverket mellom maskiner ute av bildet. `~/ca_ws/src` inneholder C&A
+sitt repo.
+
+For kode skrevet for **Humble**:
 
 ```bash
-# Simuleringsgruppa, i simulator-repoet. ~/ca_ws/src inneholder C&A sitt repo.
+docker run --rm -it --network host -e ROS_DOMAIN_ID=42 -e HOME=/tmp \
+  -u $(id -u):$(id -g) -v $HOME/ca_ws:/ca_ws -w /ca_ws ros:humble-ros-base bash
+# inne i containeren:
+colcon build                       # forventet: Summary: N packages finished
+source install/setup.bash
+ros2 launch <pakke> <launchfil> use_sim_time:=true
+```
+
+For kode som bygger på **Jazzy**, i simulator-imaget (kjøres fra simulator-repoet):
+
+```bash
 export TEAM_WS_HOST=$HOME/ca_ws NJORD_UID=$(id -u) NJORD_GID=$(id -g)
 docker compose -p njord-ca -f compose.yaml -f compose.team.yaml run --rm team \
   colcon --log-base log-sim build --build-base build-sim --install-base install-sim
-```
-
-Forventet: `Summary: N packages finished`. Feiler byggingen på en manglende
-avhengighet, bruk alternativ B.
-
-```bash
-# C&A starter nodene sine i en ny container med det samme workspacet:
 docker compose -p njord-ca -f compose.yaml -f compose.team.yaml run --rm team bash
+# inne i containeren:
 source /team_ws/install-sim/setup.bash
 ros2 launch <pakke> <launchfil> use_sim_time:=true
 ```
 
-**Alternativ B: C&A sin egen maskin** med ROS 2 Jazzy, koblet med kabel til
-samme svitsj som demo-PC-en. Trådløse nett som eduroam slipper normalt ikke
-gjennom oppdagelsestrafikken (multicast) til ROS 2.
+Feiler byggingen på en manglende avhengighet, må den installeres i
+containeren først (start den da uten `-u …`, altså som root, og kjør
+`apt-get update && rosdep install --from-paths src -y --ignore-src`), eller
+bruk alternativ B.
+
+**Alternativ B: C&A sin egen maskin** med ROS 2 Humble eller Jazzy, koblet med
+kabel til samme svitsj som demo-PC-en. Trådløse nett som eduroam slipper
+normalt ikke gjennom oppdagelsestrafikken (multicast) til ROS 2.
 
 ```bash
-source /opt/ros/jazzy/setup.bash
+source /opt/ros/humble/setup.bash            # eller jazzy
 source <deres_ws>/install/setup.bash
 export ROS_DOMAIN_ID=42
-export FASTDDS_BUILTIN_TRANSPORTS=UDPv4      # samme som i simulatorens containere
 unset ROS_LOCALHOST_ONLY
 ros2 launch <pakke> <launchfil> use_sim_time:=true
 ```
 
+På Jazzy settes i tillegg `export FASTDDS_BUILTIN_TRANSPORTS=UDPv4`, som i
+simulatorens containere. Sjekk koblingen fra C&A sin maskin mens simulatoren
+går (4.2):
+
+```bash
+ros2 topic list | grep njord       # skal vise /njord/odometry og /njord/setpoint
+ros2 topic hz /njord/odometry      # ca. 30 Hz
+```
+
 Alternativ B er ikke prøvd mellom to maskiner. Sett av tid til det før
-demoen, eller bruk A.
+demoen, og ha alternativ A som reserve.
 
 ### 4.2 Sjekk koblingen før første løp
 
@@ -478,6 +512,7 @@ blir stående omtrent 0,3 m fra målet i vind og strøm.
 | Båten rykker fram og tilbake | Kjører uten `STATE_SOURCE=truth` (støyete fart), eller målpunktet behandles som nytt hvert sekund. |
 | Topicen heter `/<ns>/thruster_1/command` | Noden kjører i et namespace. Start uten. |
 | `ros2 topic list` på C&A sin maskin viser ingen `/njord/…` | Ulik `ROS_DOMAIN_ID`, `ROS_LOCALHOST_ONLY` er satt, brannmur, eller nettet blokkerer multicast. Bruk alternativ A. |
+| `sequence size exceeds remaining buffer` gjentas i en Humble-terminal | Ufarlig når Humble snakker med Jazzy (4.1); data kommer fram. |
 | To publishers på en thrustertopic | `CONTROLLER=external` er glemt, så simulatorens regulator kjører også. |
 | `Image … has a missing or mismatched … digest` | Koden er endret etter at imaget ble hentet. Kjør `./scripts/njord pull` eller `build`. |
 | Ingen vinduer med `gui` | Kjør fra en terminal på skrivebordet til demo-PC-en, som brukeren som er logget inn. |
@@ -493,12 +528,18 @@ Prøvd 12. oktober 2026 på GPU (RTX 5090, WSL2), `munin_v0`
   simulatoren: alle åtte nådd.
 - `gui hold_position`: Gazebo og RViz startet, og løpet ble fullført.
   Vinduene er ikke sett på.
-- Et workspace med `VesselStateEst` og `DPSetpoint` bygger i team-containeren.
+- Et workspace med `VesselStateEst` og `DPSetpoint` bygger i team-containeren
+  (Jazzy) og i `ros:humble-ros-base`.
+- **ROS 2 Humble mot simulatoren:** en regulatornode i en
+  `ros:humble-ros-base`-container på samme maskin fullførte `hold_position` og
+  `station_keeping` og fikk åtte av åtte `goto`-punkt. Alle 36 topics var
+  synlige fra Humble.
 
 Ikke prøvd:
 
 - En Linux-PC uten WSL, og vinduene der.
-- C&A sin egen kode, og alternativ B mellom to maskiner.
+- C&A sin egen kode, og alternativ B mellom to maskiner (verken med Humble
+  eller Jazzy).
 - `NJORD_CPU=1` på målpunktkursene.
 
 `munin_v0` er en plassholder med antatt skrog og thrusteroppsett. Resultatene

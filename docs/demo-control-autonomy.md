@@ -12,8 +12,10 @@ simulatoren forventer inn og gir ut.
 
 Bakgrunn og flere detaljer:
 [control-autonomy-setpoints.md](control-autonomy-setpoints.md) (grensesnittet),
-[running.md](running.md) (kjøremiljøet) og
-[team-integration.md](team-integration.md) (eget ROS 2-workspace).
+[running.md](running.md) (kjøremiljøet),
+[team-integration.md](team-integration.md) (eget ROS 2-workspace) og
+[demo-control-autonomy-gui.md](demo-control-autonomy-gui.md) (de samme
+kjøringene med Gazebo- og RViz-vinduene, steg for steg).
 
 ## 1. Hva simulatoren gir ut og tar inn
 
@@ -219,6 +221,10 @@ eller kjør `docker rm -f njord-sim-rviz-1`.
 
 Åpnes ingen vinduer, kjører dere trolig over SSH eller som en annen bruker
 enn den som er logget inn på skrivebordet.
+
+Hva vinduene viser, hvordan dere zoomer inn i RViz, og generalprøve B og fri
+kjøring med vinduer står i
+[demo-control-autonomy-gui.md](demo-control-autonomy-gui.md).
 
 ## 3. Control & Autonomy: før demoen
 
@@ -526,7 +532,8 @@ Prøvd 12. oktober 2026 på GPU (RTX 5090, WSL2), `munin_v0`
 - Fri kjøring med åtte `goto`-punkt og stand-in-regulatoren startet etter
   simulatoren: alle åtte nådd.
 - `gui hold_position`: Gazebo og RViz startet, og løpet ble fullført.
-  Vinduene er ikke sett på.
+  Vinduene ble ikke sett på den dagen; det ble gjort 13. oktober
+  ([demo-control-autonomy-gui.md](demo-control-autonomy-gui.md#10-hva-som-er-prøvd)).
 - Et workspace med `VesselStateEst` og `DPSetpoint` bygger i team-containeren
   (Jazzy) og i `ros:humble-ros-base`.
 - **ROS 2 Humble mot simulatoren:** en regulatornode i en

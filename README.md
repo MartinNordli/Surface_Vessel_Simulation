@@ -129,6 +129,7 @@ walkthrough and [interfaces](docs/interfaces.md) for every topic and frame.
 | [Team integration](docs/team-integration.md) | Step-by-step for Control Systems and Perception/CV |
 | [Control & Autonomy: setpoints](docs/control-autonomy-setpoints.md) | Go-to-position targets and thruster forces for C&A's nodes; reading the report (Norwegian) |
 | [Control & Autonomy: demo](docs/demo-control-autonomy.md) | Step-by-step demo with C&A's nodes: what each team does, commands, expected input and output (Norwegian) |
+| [Control & Autonomy: demo with windows](docs/demo-control-autonomy-gui.md) | The same demo runs with the Gazebo and RViz windows: what they show and what to click (Norwegian) |
 | [Interfaces](docs/interfaces.md) | ROS topics, message types, frames and node ownership |
 | [Architecture](docs/architecture.md) | Data flow, run lifecycle, code map, safety and limits |
 | [Validation](docs/validation.md) | Test coverage, benchmarks and dynamics measurements |

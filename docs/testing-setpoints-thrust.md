@@ -176,7 +176,10 @@ For C&A sine ekte noder, se avsnitt 3 i
   - test B ved forrige gjennomgang ([validation.md](validation.md#setpoint-courses-2026-10-06))
 - **Kjørt 2026-10-12 på WSL2:** `gui hold_position` med `munin_v0`. Gazebo og
   RViz startet, og løpet ble fullført. Vinduene er ikke sett på.
-- **Ikke verifisert ennå:** vinduene på en Linux-PC uten WSL, `GUI=1 lab` og
-  klikk i RViz. Rapporter resultatet når dere har kjørt dem.
+- **Kjørt 2026-10-13 på WSL2:** `gui` og `GUI=1 lab` med `munin_v0`, med
+  skjermbilder av vinduene
+  ([demo-control-autonomy-gui.md](demo-control-autonomy-gui.md#10-hva-som-er-prøvd)).
+- **Ikke verifisert ennå:** vinduene på en Linux-PC uten WSL og klikk i
+  RViz. Rapporter resultatet når dere har kjørt dem.
 - `munin_v0` er en plassholder. Resultatene sier noe om kontrolleren og
   koblingen, ikke om hvordan Munin vil oppføre seg.

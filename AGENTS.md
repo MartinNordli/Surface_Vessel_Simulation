@@ -27,6 +27,7 @@ linked guides, not here.
 │   ├── control-autonomy-setpoints.md  C&A go-to-position interface and report (Norwegian)
 │   ├── testing-setpoints-thrust.md    How simulation tests setpoints and thrust (Norwegian)
 │   ├── demo-control-autonomy.md       Step-by-step C&A demo: both teams' tasks, commands, expected I/O (Norwegian)
+│   ├── demo-control-autonomy-gui.md   The same demo runs with the Gazebo and RViz windows (Norwegian)
 │   ├── run-concepts.md       One-page map of a run for newcomers
 │   ├── architecture.md       Data flow, run lifecycle, code map, limits
 │   ├── validation.md         Test coverage, benchmarks and dynamics measurements
@@ -132,6 +133,7 @@ carries irrelevant detail. A small or single-area task is cheaper to do directly
 | Control & Autonomy target poses (setpoints), thrust interface, run report | [docs/control-autonomy-setpoints.md](docs/control-autonomy-setpoints.md) |
 | Testing setpoints and per-thruster thrust, with or without GUI, per vessel (Norwegian) | [docs/testing-setpoints-thrust.md](docs/testing-setpoints-thrust.md) |
 | Running a demo with Control & Autonomy's own nodes, step by step (Norwegian) | [docs/demo-control-autonomy.md](docs/demo-control-autonomy.md) |
+| The same demo with the Gazebo and RViz windows: what they show and what to click (Norwegian) | [docs/demo-control-autonomy-gui.md](docs/demo-control-autonomy-gui.md) |
 | How a run fits together (start here) | [docs/run-concepts.md](docs/run-concepts.md) |
 | Data flow, configuration, safety, limits, reproducibility | [docs/architecture.md](docs/architecture.md) |
 | Test coverage, benchmarks, dynamics measurements | [docs/validation.md](docs/validation.md) |

@@ -1,6 +1,6 @@
 """NED/FRD stand-in controller: the conversion sent to Control & Autonomy.
 
-Pure-Python checks of validation/ned_dp_standin.py against the simulator's own
+Pure-Python checks of scripts/ned_dp_standin.py against the simulator's own
 forward/left/up helpers. They verify signs and the thruster layout, not the
 simulated or real boat's behaviour.
 """
@@ -15,7 +15,7 @@ sys.path.insert(0, str(ROOT / "njord_sim"))
 from njord_sim.configuration import _read, thruster_table, validate_vessel
 from njord_sim.control_core import allocate_thrusters
 
-spec = importlib.util.spec_from_file_location("ned_dp_standin", ROOT / "validation/ned_dp_standin.py")
+spec = importlib.util.spec_from_file_location("ned_dp_standin", ROOT / "scripts/ned_dp_standin.py")
 standin = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(standin)
 

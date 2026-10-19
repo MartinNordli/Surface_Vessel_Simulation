@@ -3,7 +3,7 @@
 #   CONTROLLER=external VESSEL_CONFIG=/config/vessels/munin_v0.yaml ./scripts/njord demo goto_square
 #
 # Instead of gates, the evaluator issues the targets below one at a time on
-# /njord/setpoint (docs/control-autonomy-setpoints.md). A target counts as
+# /njord/setpoint (docs/ros2-interface.md). A target counts as
 # reached once the boat stays within tolerance_m and heading_tolerance_deg for
 # hold_s; then the next one is issued. Positions are map ENU metres; headings
 # are degrees counter-clockwise from east. Every value can be set per target

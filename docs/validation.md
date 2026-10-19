@@ -1,236 +1,210 @@
 # Validation
 
-```bash
-python3 tests/test_dstar_lite.py
-python3 -m unittest discover -s tests -p 'test_*.py'
-./scripts/njord test
-./scripts/njord selftest    # NJORD_CPU=1 without a usable GPU
-```
+How the simulator is tested, what CI checks, and the measured evidence behind
+the claims in the documentation. Evidence is reported as measured, with its
+scope: a passing CPU test does not establish GPU rendering, marine fidelity,
+ROS integration or collision-free completion.
 
-## Test coverage
-
-CPU tests cover independent A* comparisons, incremental obstacle repair, invalid
-endpoints, complete grid geometry, observed-free tracking, map clearing/aging,
-full 3D sensor transforms, camera color detection, lidar association, ordered
-gates, collision scoring, strict metrics and benchmark comparisons. ROS/model tests
-explicitly skip when their dependencies are absent on the host; run the container
-suite for the full check. Transport tests run in isolated ROS domains.
-
-Team integration regressions cover all eight controller/perception/mapping
-combinations, full external mode, parameter precedence, configuration snapshots,
-invalid settings and generation of a customized WAM-V sensor model. On 2026-09-10
-a live lab smoke test with `examples/sensors_low_bandwidth.yaml` received both
-320×180 camera streams, finite lidar returns, estimated odometry and optical TF;
-the lab remained running after the inspection process exited. This verifies the
-tested sensor configuration and ROS connection, not race completion or the
-team's unpublished algorithms.
-
-Configuration regressions check schema validation, partial WAM-V overrides,
-speed-profile selection for every vessel and the `/config` lookup order.
-
-The mapper traces every ray of a scan with integer Bresenham steps advanced for
-all rays at once (`mapping_core.trace_rays`). `tests/test_mapping_raytrace.py`
-checks that the cells equal the per-cell `grid_line` loop, kept as the
-independent reference, for random, off-map and degenerate rays and a full
-720-ray scan. `validation/mapper_timing.py` (fixed seed, default 160 m grid,
-720 rays up to 80 m) measured a median update of 44.1 ms before and 7.3 ms
-after on the development host (2026-09-28), the same CPU work per scan.
-
-The Njord plugin's force math is header-only C++ and tested without Gazebo:
-`test/hydrostatics_test.cc` (clipped buoyancy and actuator lag) and
-`test/loads_test.cc` (wind-table interpolation, wind load and thruster wrench
-in `njord/Loads.hh`). The loads test has hand-derived cases and checks
-`test/load_vectors.csv`, which `scripts/make_load_vectors.py` writes from the
-Python mirror `physics_core.py`; `tests/test_njord_physics.py` compiles both
-C++ tests and checks that `physics_core` still reproduces the vectors, so a
-change on either side fails a test. The vectors are regenerated only by hand
-after an intended model change, never by a test. These establish that the
-implementation matches its formulas, not that the formulas match the real
-boat.
-
-On 2026-09-26, after the configuration cleanup, the container suite passed all
-166 tests, the GPU selftest passed (both 640×360 cameras, lidar, navigation in
-`map`), and `./scripts/njord demo reference` (seed 1, calm, fast) completed 3/3
-gates in 111.5 s with no contact and 3.60 m minimum clearance.
-
-## Slalom course
-
-Slalom regressions check seeds 1–10 for unambiguous ordered gate selection,
-camera-to-buoy sightlines at the start and gate exits, alternating turns and
-traversable routes with the existing 4 m inflation. The offline checks use the
-complete scenario geometry; they do not establish live perception or physical
-completion. Run the six calm-water slalom races with both speed profiles using:
+## 1. Running the tests
 
 ```bash
-./scripts/njord benchmark slalom --seeds 1 2 3 --environments calm
+python3 tests/test_dstar_lite.py                       # D* Lite against an independent A*
+python3 -m unittest discover -s tests -p 'test_*.py'   # host suite, no Docker
+./scripts/njord test                                   # full suite in the container
+./scripts/njord selftest                               # live cameras, lidar and navigation on the GPU
 ```
 
-Initial live checks in calm conditions completed all five slalom gates with the
-fast profile on seeds 1 and 2, with measured contact monitoring and no collisions.
-The conservative baseline can stop when a slow gate approach or crossing exhausts
-the 45 s remembered-gate window. Retain these failures when comparing algorithms;
-completion across all profiles, seeds and sensor configurations is not established.
+The host suite skips tests whose ROS or Gazebo dependencies are missing; only
+`./scripts/njord test` is a complete pass. Which checks a change needs, per
+area, is in [agent-workflows.md](agent-workflows.md#verification-by-change-area).
 
-## Headless sandbox
+## 2. What the tests cover
 
-`sandbox/headless_demo.py` runs the planner core closed loop against a 3-DOF vessel
-and a simulated 2D lidar, with no ROS and no Gazebo. Five seeds take about ten
-seconds and exit nonzero if any seed fails to reach the goal or collides. It tests
-planner, inflation and guidance parameters, not hydrodynamics, rendering or ROS
-integration. `sandbox/make_gif.py` animates the same run. Both write to
-`outputs/sandbox/`; the committed figures in `sandbox/` are illustrations and are
-not regenerated by a run.
+- **Planning:** D* Lite against an independent A* reference, incremental
+  obstacle repair, invalid endpoints and grid geometry.
+- **Mapping and perception:** ray tracing equal to a reference Bresenham loop
+  for random, off-map and full 720-ray scans; unknown/free/occupied cells and
+  aging; scan ordering; self filtering; full 3D sensor transforms; camera
+  colour detection and lidar association; TF wait queues.
+- **Mission and scoring:** ordered gates, search and retry checked with the
+  scorer's own crossing rule, collision scoring, strict metrics, slalom
+  feasibility on seeds 1–10, benchmark comparisons.
+- **Setpoint courses:** schema, issuing order, hold, timeouts,
+  `advance_after_s`, heading wrap, overshoot, path and impulse metrics
+  (`test_setpoint_core.py`); the reference controller's allocation signs,
+  braking, limits, freshness and a closed loop on a planar model
+  (`test_setpoint_control.py`); the NED stand-in's conversion and allocation
+  (`test_ned_standin.py`); the report (`test_report_core.py`).
+- **Configuration:** schema validation, partial WAM-V overrides, speed
+  profiles for every vessel, parameter precedence, snapshots, and all eight
+  controller/perception/mapping combinations plus full external mode.
+- **Physics:** the plugin's header-only C++ (`hydrostatics_test.cc`,
+  `loads_test.cc`) against hand-derived cases and against vectors written by
+  the independent Python mirror `physics_core.py`, so a change on either side
+  fails; generated SDF signs and plugins; analytic oracles for flotation and
+  momentum balance. These show the code matches its formulas, not that the
+  formulas match the boat.
+- **Safety:** command guard decisions on simulation and steady time; truth
+  relay drops invalid input; run handoff never reveals gate geometry.
+- **ROS transport:** real DDS tests in isolated domains for the evaluator,
+  sensors and team launch selection.
 
-## Runtime and benchmark acceptance
+The headless sandbox (`python3 sandbox/headless_demo.py`) runs the planner
+and guidance closed loop against a 3-DOF boat and a 2D lidar, without ROS or
+Gazebo; five seeds take about ten seconds and fail if any seed collides or
+misses the goal.
 
-`validation/check_runtime.py` checks actual camera pixels, finite lidar returns,
-GPS/IMU odometry and optical TF against a running simulator. Benchmark acceptance
-requires every reference run to finish the ordered course with no contact and no
-geometric overlap, verified contact monitoring, and a faster median for the fast
-profile on matched seeds. Reports retain failures, timeouts and unavailable data.
-Seeds improve repeatability; GPU rendering is not promised to be bit deterministic.
+<img src="media/headless-dstar.gif" width="440" alt="Headless sandbox: the D* Lite route adapts as the lidar discovers obstacles">
 
-## GPU verification of the 2026-09 changes
+## 3. Continuous integration
 
-Simulations are run with GPU rendering; CPU rendering (`NJORD_CPU=1`) is only
-the CI fallback. On 2026-09-28 the changes to names, actuation timing, run
-modes, mission recovery, TF handling and the estimator start-up were checked
-on an RTX 5090:
+`.github/workflows/ci.yml` runs on every push, `v*` tag and fork pull request:
 
-| Check | Result | Evidence |
-| --- | --- | --- |
-| `./scripts/njord test`, `selftest` | 258 tests OK; both cameras, lidar and navigation accepted with the vessel-neutral names | [`gpu-selftest`](evidence/gpu-selftest.json) |
-| Actuator expiry (Njord and WAM-V plugins) | 0.51–0.54 s of simulation time at factors 0.3, 1 and 3 | [`gpu-actuator-expiry`](evidence/gpu-actuator-expiry.json) |
-| WAM-V reference course | 3/3 at factor 1 (123 s) and at 0.3 on seeds 1 and 2 (113, 107 s); slalom 5/5 (192 s) | [`gpu-rtf-races`](evidence/gpu-rtf-races.json) |
-| TF wait queue at factor 0.3 | map age p95 0.10 s and 782 buoy arrays in 90 s once the estimator has started | [`gpu-tf-availability`](evidence/gpu-tf-availability.json) |
-| Mission recovery, benchmark against the previous version | slalom fast 5/5 on seeds 1–3 in both; Njord 2/0/0 before and 0/3/0 after (spread, not a trend) | [`gpu-benchmark-mission-recovery`](evidence/gpu-benchmark-mission-recovery.json) |
-| Campaign smoke, two and four thrusters | fails at 300 N (also before these changes); passes at the 150 N default | [`gpu-campaign-smoke`](evidence/gpu-campaign-smoke.json) |
-| `lab` free driving | reference autonomy moved 21 m in 40 s; an external probe's commands moved the boat 19 m and thrust stopped when they stopped | `outputs/gpu-verify/probe-lab-*.log` (not summarized) |
+1. `unit` runs the host suite.
+2. `image` builds the image with a GHCR layer cache, checks that its source
+   digest matches the commit, runs `./scripts/njord test` and a CPU-rendered
+   `NJORD_CPU=1 ./scripts/njord selftest`, then publishes
+   `ghcr.io/martinnordli/surface_vessel_simulation` as `sha-<commit>`,
+   `latest` (main) and the tag name. Fork pull requests are tested, not
+   published.
 
-| Njord and Munin reference races | `njord_v1` seeds 1–5 and `munin_v0` seeds 1–3 completed 3/3 each (70–73 s) with the shared tuning | [`gpu-njord-munin-races`](evidence/gpu-njord-munin-races.json) |
+`./scripts/njord pull` fetches `sha-<commit>`, so every image other teams use
+has passed CI. CI does not test GPU rendering, race completion or benchmarks.
 
-Before the lidar fix these races reached 0–3 gates. The cause was the
-simulator, not the reference tuning: the Njord-profile lidar had no visibility
-mask and returned the rendered sea surface 3–10 m around the boat, 0.2–0.6 m
-above the flat physical water, which the mapper kept as obstacles. It now uses
-the VRX lidar mask (`constants.LIDAR_VISIBILITY_MASK`). These are reference
-autonomy races on uncalibrated models, not evidence about the real boat.
+## 4. Measured evidence
 
-## Setpoint courses (2026-10-06)
+All runs below used GPU rendering on an RTX 5090 (WSL2) unless stated. Raw
+results stay in the git-ignored `outputs/` of the machine that produced them;
+each cited summary in [`evidence/`](evidence/) was written by
+`scripts/summarize_evidence.py` and records the SHA-256 of every raw file.
+`munin_v0` and `njord_v1` are uncalibrated placeholders, so these numbers
+describe the simulator, the interface and the controllers, not Munin.
 
-Target poses ("go to this position", [control-autonomy-setpoints.md](control-autonomy-setpoints.md))
-are covered without ROS by `tests/test_setpoint_core.py` (schema, issuing
-order, hold, timeouts, `advance_after_s`, heading wrap, overshoot, path and
-impulse metrics, observer replacement), `tests/test_setpoint_control.py`
-(allocation signs, braking, hysteresis, limits, node freshness, and a closed
-loop on a planar rigid-body model with linear damping for the munin_v0 and
-WAM-V layouts; that model is not Gazebo and not the boat) and
-`tests/test_report_core.py` (well-formed SVG, no external resources), and with
-ROS messages by the referee/observer cases in `tests/evaluator_ros_smoke.py`
-and the course selection in `tests/test_team_launch.py`.
+### Control & Autonomy's own nodes (2026-10-19)
 
-GPU runs on the RTX 5090, seed 1, calm unless stated, `fast` profile, at
-commit 23f502c (races with the reference `setpoint_controller`) and 99c8e28
-(external controller and lab). The container suite passed 300 tests (2 skipped).
+C&A's `navigation_node`, `dp_node` and `thrust_allocator` from `Njord2627`
+`master` c1c4589, started with `scripts/ca-nodes.sh`, `munin_v0`,
+`STATE_SOURCE=truth`, `CONTROLLER=external`, seed 1, real-time factor
+0.90–0.91. Steps and commands: [control-autonomy.md](control-autonomy.md).
 
-| Run | Result | Per target: final error, hold RMS |
-| --- | --- | --- |
-| WAM-V `goto_square` | completed, 4/4 in 126 s, no contact | 0.10–0.34 m; hold RMS 0.23–0.85 m and up to 8.6° |
-| munin_v0 `goto_square` | completed, 4/4 in 81 s | 0.26–0.44 m; hold RMS 0.86–0.92 m, ≤ 0.6° |
-| munin_v0 `goto_retarget` | completed in 45 s; two targets replaced after 12 s and 15 s as scripted, final target 0.09 m | — |
-| munin_v0 `station_keeping`, `current` (4 m/s wind, 0.3 m/s current) | completed; reached after 10.1 s, held 60 s | 0.34 m; hold RMS 0.41 m / 0.9° |
-| WAM-V `station_keeping`, `windy` (4 m/s side wind) | **setpoints_failed**: position within 0.84 m but heading 14.9° off (10° required) at the 200 s timeout | — |
-| munin_v0 `goto_square`, `CONTROLLER=external`, controller started 20 s late in its own container | completed, 4/4 in 85 s; the race waited for the subscriber | 0.26–0.39 m |
-| munin_v0 `lab`, two `njord goto` targets, then `docker compose stop` | both reached (0.28 m, 0.35 m), status `stopped` with metrics and report | — |
+| Run | Result |
+|---|---|
+| `goto_square`, calm, without and twice with windows (`gui`) | Completed all three times, 4/4: reached after 19.0–19.1, 44.7, 46.5 and 44.4–44.5 s; final error 0.15 m then 0.02 m; heading error 0.0° at the east-facing target and 7.8° at the other three |
+| `station_keeping`, calm | Completed: reached after 10.0 s, held 60 s; hold 0.14 m RMS, 1.0 m max; overshoot 0.28 m; impulse 1119 N·s |
+| `hold_position`, `current` | **setpoints_failed**: settled about 1.5 m from the target (1.0 m tolerance) until the 200 s timeout |
+| `lab hold_position`, three `njord goto` targets | All reached; Ctrl-C wrote the report |
 
-Evidence: [`gpu-setpoint-courses`](evidence/gpu-setpoint-courses.json). The
-two-thruster WAM-V cannot push sideways, so it cannot hold heading and
-position against a side wind; munin_v0's assumed X layout can. Hold RMS near
-0.9 m against a 1.5 m tolerance shows the reference controller's slow, untuned
-settling. These runs show that the interface and scoring work end to end; they
-are a reference controller on an uncalibrated placeholder model, not evidence
-about Munin. Two faults found in the first lab run (a target sent before the
-controller had matched, and no result written on `docker compose stop`) were
-fixed in 99c8e28 before the runs above.
+Evidence: [`gpu-ca-master-runs`](evidence/gpu-ca-master-runs.json).
 
-## Control & Autonomy demo rehearsal (2026-10-12)
+### Control & Autonomy demo rehearsal (2026-10-12)
 
-Control & Autonomy works in NED/FRD with its own message types and converts at
-the boundary of its nodes ([demo-control-autonomy.md](demo-control-autonomy.md)).
-`validation/ned_dp_standin.py` does that conversion, a PD station-keeping law
-and the thruster allocation in NED/FRD. It stands in for their nodes to check
-the interface; it is not their controller. `tests/test_ned_standin.py` covers
-the conversion signs, the allocation (equal to the simulator's own
-forward/left/up allocation of the mirrored wrench) and a closed loop on a
-planar model, without ROS.
+`scripts/ned_dp_standin.py` (then in `validation/`) did the conversion C&A
+does, a PD station-keeping law and allocation in NED/FRD, standing in for
+their nodes. `munin_v0`, `ENVIRONMENT=current` (4 m/s wind, 0.3 m/s current),
+seed 1, real-time factor 0.92, at a029f8f and d5d219d; container suite 310
+tests OK.
 
-GPU runs on the RTX 5090 (WSL2), `munin_v0`, `ENVIRONMENT=current` (4 m/s wind,
-0.3 m/s current), seed 1, real-time factor 0.92, at commit a029f8f (races) and
-d5d219d (lab and GUI). The container suite passed 310 tests (2 skipped).
-
-| Run | Result | Hold: RMS / max distance, RMS heading | Thrust impulse |
-| --- | --- | --- | --- |
-| `hold_position`, reference `setpoint_controller` (estimate) | completed, held 60 s | 0.36 m / 0.72 m, 0.7° | 6696 N·s |
-| `hold_position`, stand-in external, `STATE_SOURCE=truth` | completed, held 60 s | 0.30 m / 0.33 m, 0.0° | 2525 N·s |
-| `hold_position`, stand-in external, estimate | completed, held 60 s | 0.36 m / 0.72 m, 0.7° | 6721 N·s |
-| `station_keeping` (10 m step), stand-in external, truth | completed; reached after 5.9 s, held 60 s | 0.33 m / 1.00 m, 0.2° | 4218 N·s |
-| `lab`, stand-in started after the simulator, eight `njord goto` targets 2–3 m apart | all eight reached in 6.3–8.6 s, final error 0.10–0.38 m; status `stopped` | — | — |
-| `gui hold_position`, reference controller | completed; Gazebo GUI and RViz started under WSLg (windows not inspected) | — | — |
+| Run | Result | Hold: RMS / max, RMS heading | Impulse |
+|---|---|---|---|
+| `hold_position`, reference controller, estimate | completed | 0.36 m / 0.72 m, 0.7° | 6696 N·s |
+| `hold_position`, stand-in, truth | completed | 0.30 m / 0.33 m, 0.0° | 2525 N·s |
+| `hold_position`, stand-in, estimate | completed | 0.36 m / 0.72 m, 0.7° | 6721 N·s |
+| `station_keeping`, stand-in, truth | completed, reached after 5.9 s | 0.33 m / 1.00 m, 0.2° | 4218 N·s |
+| `lab`, stand-in started after the simulator, eight `goto` targets | all reached in 6.3–8.6 s, 0.10–0.38 m | — | — |
 
 Evidence: [`gpu-ca-demo-rehearsal`](evidence/gpu-ca-demo-rehearsal.json).
 
-**The estimated velocity is not usable for dynamic positioning.** The EKFs fuse
-GPS position and IMU attitude and angular rate, no velocity. On
-`station_keeping` at c1a4654, a scratch controller (not in the repository)
-logged `/njord/odometry` against ground truth: the surge velocity error was
-0.38–0.72 m/s RMS, as large as the surge velocity itself, sway 0.16–0.20 m/s
-and yaw rate below 0.01 rad/s; position was within 0.28 m RMS. In truth mode
-the velocity differences were at most 0.002 and the position difference
-0.006 m. In that run the boat kept moving at 0.3–0.45 m/s RMS in surge during
-the hold, and on `hold_position` the stand-in's thrust impulse was 2.7 times
-higher with the estimate than with truth. Use `STATE_SOURCE=truth` for
-controller work until the estimate is improved; the real boat gets its state
-from a Kongsberg Seapath, which the simulator does not model.
+- **The estimated velocity is not usable for dynamic positioning.** The EKFs
+  fuse GPS position and IMU attitude and rate, no velocity. Logged against
+  ground truth on `station_keeping`, the surge velocity error was 0.38–0.72
+  m/s RMS, as large as the velocity itself; position was within 0.28 m RMS.
+  With the estimate the stand-in used 2.7 times the thrust impulse. Use
+  `STATE_SOURCE=truth` for controller work.
+- **`njord goto` repeats its target.** External subscribers matched up to
+  3 s late and missed targets from the old sender (4–8 of 10 received). Since
+  d5d219d it repeats the target for subscribers matched within 5 s; 10 of 10
+  received.
+- **ROS 2 Humble works against the Jazzy simulator on one host.** A Humble NED
+  controller in a `ros:humble-ros-base` container completed `hold_position`
+  and `station_keeping` and reached all eight `goto` targets. Humble printed a
+  harmless `sequence size exceeds remaining buffer` about once a second, and
+  `ros2 node list` did not show nodes across versions. Only `Odometry`,
+  `PoseStamped`, `Float64` and `Clock` crossed. Evidence:
+  [`gpu-ca-humble-controller`](evidence/gpu-ca-humble-controller.json).
 
-**`njord goto` missed external controllers.** A new publisher matched the lab
-evaluator after 0.05–1.9 s and the stand-in in its own container after
-0.55–3.1 s, up to 3.0 s later (12 probes, output not retained), longer than
-the 2 s the sender waited, so the volatile
-controller subscription sometimes never received a target the evaluator
-scored. Since d5d219d the sender publishes at once and repeats the identical
-message, with its stamp, for each subscriber matched within 5 s. With the old
-and new sender alternating in one lab session, the stand-in received 8 of 10
-(first session, before the commit) and 4 of 10 (at d5d219d) targets from the
-old sender and 10 of 10 from the new one in both.
+### Setpoint courses with the reference controller (2026-10-06)
 
-**A ROS 2 Humble controller works against the Jazzy simulator.** Control &
-Autonomy probably uses Humble. A scratch NED PD node (not in the repository)
-in a `ros:humble-ros-base` container (Fast DDS 2.6.12, host network, default
-transports) was the external controller at ac5b58e, with `STATE_SOURCE=truth`:
-`hold_position` completed (hold RMS 0.30 m), `station_keeping` completed
-(reached after 6.8 s, held 60 s) and all eight `njord goto` targets of a lab
-run were received and reached. A Humble container listed the same 36 topics as
-a Jazzy one, and `/clock` and `/njord/odometry` decoded. Two
-differences: every Humble process printed `sequence size exceeds remaining
-buffer` about once a second (7 lines in 10 s) while its data was correct, and
-`ros2 node list` on Humble showed none of the simulator's 8 nodes. The cause
-was not investigated; it is consistent with the internal node-graph topic
-having changed format after Humble. Only `nav_msgs/Odometry`,
-`geometry_msgs/PoseStamped`, `std_msgs/Float64` and `rosgraph_msgs/Clock`
-crossed between the versions, on one host. ROS 2 does not guarantee
-communication between distributions. Evidence:
-[`gpu-ca-humble-controller`](evidence/gpu-ca-humble-controller.json).
+Seed 1, calm unless stated, at 23f502c and 99c8e28; container suite 300
+tests OK.
 
-Not covered: Control & Autonomy's own nodes, a native Linux host and its
-windows, nodes on a second machine (Humble or Jazzy), and `NJORD_CPU=1` on setpoint courses. A
-workspace with messages like `VesselStateEst` and `DPSetpoint` built with
-`colcon` in the team container (`compose.team.yaml`); the image has `g++`,
-Eigen and NumPy but not SciPy. `munin_v0` is a placeholder, so these numbers
-describe the interface and the stand-in, not Munin.
+| Run | Result | Per target: final error, hold RMS |
+|---|---|---|
+| WAM-V `goto_square` | completed 4/4 in 126 s | 0.10–0.34 m; 0.23–0.85 m, up to 8.6° |
+| `munin_v0` `goto_square` | completed 4/4 in 81 s | 0.26–0.44 m; 0.86–0.92 m, ≤ 0.6° |
+| `munin_v0` `goto_retarget` | completed in 45 s; two targets replaced as scripted, final 0.09 m | — |
+| `munin_v0` `station_keeping`, `current` | completed; reached after 10.1 s, held 60 s | 0.34 m; 0.41 m / 0.9° |
+| WAM-V `station_keeping`, `windy` | **setpoints_failed**: 0.84 m but heading 14.9° off (10° required) | — |
+| `munin_v0` `goto_square`, external controller started 20 s late | completed 4/4 in 85 s; the race waited | 0.26–0.39 m |
+| `munin_v0` `lab`, two `goto` targets, then `docker compose stop` | both reached, status `stopped` with report | — |
 
-## Dynamics measurements
+The two-thruster WAM-V cannot push sideways, so it cannot hold heading and
+position in a side wind; `munin_v0`'s X layout can. Evidence:
+[`gpu-setpoint-courses`](evidence/gpu-setpoint-courses.json).
 
-Run dynamics measurements with **only the simulator service** running:
+### Gate races and platform checks (2026-09-28)
+
+| Check | Result | Evidence |
+|---|---|---|
+| `./scripts/njord test`, `selftest` | 258 tests OK; both cameras, lidar and navigation accepted | [`gpu-selftest`](evidence/gpu-selftest.json) |
+| Actuator expiry, Njord and WAM-V plugins | 0.51–0.54 s of simulation time at real-time factors 0.3, 1 and 3 | [`gpu-actuator-expiry`](evidence/gpu-actuator-expiry.json) |
+| WAM-V reference course | 3/3 at factor 1 (123 s) and at 0.3 on seeds 1 and 2 (113, 107 s); slalom 5/5 (192 s). A target of 3 reached only about 1.3. | [`gpu-rtf-races`](evidence/gpu-rtf-races.json) |
+| TF wait queue at factor 0.3 | map age p95 0.10 s, 782 buoy arrays in 90 s | [`gpu-tf-availability`](evidence/gpu-tf-availability.json) |
+| Mission search and retry, benchmark against the previous version | slalom fast 5/5 on seeds 1–3 in both | [`gpu-benchmark-mission-recovery`](evidence/gpu-benchmark-mission-recovery.json) |
+| Dynamics campaign smoke, two and four thrusters | fails at 300 N; passes at the 150 N default | [`gpu-campaign-smoke`](evidence/gpu-campaign-smoke.json) |
+| Njord and Munin reference races | `njord_v1` seeds 1–5 and `munin_v0` seeds 1–3 completed 3/3 (70–73 s) with the shared tuning | [`gpu-njord-munin-races`](evidence/gpu-njord-munin-races.json) |
+
+Before a lidar fix the Njord-profile races reached 0–3 gates: the lidar
+returned the rendered sea surface around the boat as obstacles. It now uses
+the VRX lidar visibility mask. Dropping lidar clouds that arrived before
+their TF lost about 10 % of clouds at factor 1 and 79 % at 0.3; mapper and
+perception now queue them (`tf_wait.py`).
+
+**Slalom.** Calm-water slalom races completed all five gates with the fast
+profile on seeds 1 and 2. The conservative profile can stop when a slow
+approach exhausts the 45 s remembered-gate window. Completion across all
+profiles, seeds and sensor settings is not established.
+
+**Mapper timing.** `validation/mapper_timing.py` (fixed seed, 160 m grid,
+720 rays to 80 m): median update 44.1 ms before and 7.3 ms after vectorized
+ray tracing (2026-09-28), the same cells.
+
+### Njord model evidence
+
+Recorded before the 2026-09-26 configuration cleanup, which moved files but
+left resolved values unchanged. Image `njord-sim:physics-validation-final`
+(`sha256:9739e3c9…`), source fingerprint `246dbd71…`.
+
+| Check | Result | Evidence |
+|---|---|---|
+| WAM-V baseline before the change | 119 tests passed, original dynamics observations | [`yaml-physics-baseline`](evidence/yaml-physics-baseline.json) |
+| Container suite | 163 tests passed, including ROS transport, generated SDF and C++ hydrostatics | [`yaml-physics-final-container-suite`](evidence/yaml-physics-final-container-suite.json) |
+| GPU sensors and navigation | both 640×360 cameras, lidar, navigation and camera TF | [`njord-final-sensor-smoke`](evidence/njord-final-sensor-smoke.json) |
+| Plugin loading | the running process loads gz-sim 8.15 hydrodynamics and the Njord plugin | [`njord-runtime-library-maps`](evidence/njord-runtime-library-maps.json) |
+| Actuator behaviour | applied force followed the 0.1 s lag; invalid input decayed; wall expiry 0.506 s for 0.5 s | [`njord-actuator-evidence`](evidence/njord-actuator-evidence.json) |
+| Manoeuvres at 150 N | flotation within 1 cm and restoring; wind and current drift the right way; reverse surges negative; turns symmetric; coast stops | [`njord-runtime-final`](evidence/njord-runtime-final.json) |
+| Numerical convergence 4/2/1 ms | all six experiments within the 2→1 ms criterion; largest use: coast 0.0044 m of 0.145 m allowed | [`njord-numerical-acceptance`](evidence/njord-numerical-acceptance.json) |
+| WAM-V reference race | 3/3 gates in 111.5 s, 3.58 m minimum clearance | [`wamv-reference-demo-final`](evidence/wamv-reference-demo-final.json) |
+| Njord reference race (before the lidar fix) | 2/3 gates, then `simulation_timeout` | [`njord-debug-race`](evidence/njord-debug-race.json) |
+
+The parameter-propagation work (2026-09) additionally passed 201 host tests
+and 210 container tests, and a CPU-rendered live sensor check with 10.0 s of
+overlapping camera, lidar and navigation coverage; an empty calibration
+manifest was correctly rejected. No real-boat measurements exist yet.
+
+## 5. Dynamics measurements
+
+Run with **only the simulator service**, so the measuring script is the only
+thrust publisher:
 
 ```bash
 export RUN_ID=$(python3 -c 'import uuid; print(uuid.uuid4().hex)')
@@ -238,16 +212,22 @@ export OUTPUT_HOST=./outputs/dynamics-$RUN_ID
 export SCENARIO=/opt/njord/scenarios/dynamics.yaml
 docker compose up simulator
 # A second terminal with the same environment:
-docker compose run --rm autonomy python3 validation/check_dynamics.py --ros-args -p use_sim_time:=true \
-    -p manifest_path:=/outputs/run_manifest.json
+docker compose run --rm autonomy python3 validation/check_dynamics.py --ros-args \
+  -p use_sim_time:=true -p manifest_path:=/outputs/run_manifest.json -p experiment:=straight
 ```
 
-The script is the sole force-envelope publisher for this experiment. It reads
-the thruster layout from `resolved_configuration.json` next to the manifest
-(or `resolved_path`), so it drives any number of thrusters. It measures
-straight-line acceleration/top speed, turning speed/yaw rate/radius, and coast arc
-length. An unfinished stop is reported explicitly. Use a clear scenario for these
-open-loop manoeuvres. Lidar validation accepts a known cylindrical target and
-measures range from the actual sensor origin using a separate truth TF buffer.
+On WSL add `COMPOSE_FILE=compose.yaml:compose.wsl.yaml`. The script reads the
+thruster layout from the run's resolved configuration and measures
+acceleration, top speed, turning, coasting or drift
+([physics-model.md](physics-model.md#isolated-simulator-experiments)). The
+whole 4/2/1 ms campaign is automated by `scripts/dynamics_campaign.py`
+(`./scripts/njord campaign --help`).
 
-For the uncalibrated Njord model, see [njord-calibration.md](njord-calibration.md).
+## 6. Not established
+
+- Any agreement between `njord_v1`/`munin_v0` and the real boat.
+- Estimator accuracy beyond the velocity finding above; a Seapath-like state
+  source.
+- A native Linux PC with windows (all GUI runs were on WSL2), nodes on a
+  second machine, and setpoint courses with `NJORD_CPU=1`.
+- Completion of every course on every seed, profile and sensor setting.

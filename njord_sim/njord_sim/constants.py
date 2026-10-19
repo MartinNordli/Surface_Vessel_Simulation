@@ -16,7 +16,7 @@ the autonomy launch from silently disagreeing.
 # otherwise GPS positions and the ENU map frame drift apart.
 WORLD_ORIGIN_WGS84 = (63.4305, 10.3951, 0.0)
 
-# Actuation uses two clocks (docs/interfaces.md). A thrust command or health
+# Actuation uses two clocks (docs/ros2-interface.md). A thrust command or health
 # heartbeat is stale once it is older than COMMAND_TIMEOUT_S of simulation
 # time: that decides how long it acts on the boat, at any real-time factor.
 # PROCESS_LIVENESS_S of steady wall time is only a watchdog for a stopped
@@ -47,7 +47,7 @@ HEARTBEATS = {'navigation': ('/njord/navigation_status', 'navigation'),
 # file. '/thruster_1/command' matches Control & Autonomy's allocation node.
 THRUSTER_COMMAND_TOPIC = '/{name}/command'
 
-# Setpoint courses ("go to this position"; docs/control-autonomy-setpoints.md).
+# Setpoint courses ("go to this position"; docs/ros2-interface.md).
 # Control & Autonomy agreed to SETPOINT_TOPIC and its type on 2026-10-12 and
 # converts it to its own NED message in its own nodes. Rename a topic here and
 # every node, launch file and test follows. The message types are fixed in
@@ -80,7 +80,7 @@ MAP_FRAME = 'map'
 OBSERVED_SETPOINT_ACCEPTANCE = {'tolerance_m': 1.5, 'heading_tolerance_deg': 15.0, 'hold_s': 5.0}
 
 # ROS-facing sensor topics and frames, identical for every vessel profile so a
-# team's code does not depend on which boat is simulated (docs/interfaces.md).
+# team's code does not depend on which boat is simulated (docs/ros2-interface.md).
 # Frames follow REP-105 without a vessel prefix. The Gazebo link names equal
 # the frame names, so TF, sensor headers and Gazebo agree. Topics under /sim
 # exist only in simulation: ground truth and raw GPS/IMU before the sensor

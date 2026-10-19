@@ -1,5 +1,10 @@
 # Configuration
 
+Reference for every setting: where it lives, the file formats and how values
+take precedence. For everyday use (which file to edit for a common change,
+and how to run again) start with
+[running.md](running.md#7-change-the-configuration-and-run-again).
+
 Every setting has exactly one home. A run is defined by three YAML files, a few
 environment variables that pick between them, and a small set of fixed platform
 constants. Configuration is read once at startup; change a file and start a new
@@ -56,7 +61,7 @@ changing them.
 | `RUN_MODE` | `race` | `race` passes thrust only while the evaluator reports the race active; `free` needs no race-active signal (`lab` sets it) |
 | `EVALUATOR_MODE` | `race` | `race` scores the scenario and ends the run; `observe` scores the targets sent during a free run and never ends it (`lab` sets it) |
 | `GUI` | `0` | `1` adds the Gazebo window and RViz to `demo` or `lab` (`gui` is `GUI=1 demo`) |
-| `AUTONOMY`, `CONTROLLER`, `PERCEPTION`, `MAPPING` | `reference` | `external` leaves out reference nodes ([team integration](team-integration.md)) |
+| `AUTONOMY`, `CONTROLLER`, `PERCEPTION`, `MAPPING` | `reference` | `external` leaves out reference nodes ([ros2-interface.md](ros2-interface.md#6-replacing-the-reference-algorithms)) |
 | `CONFIG_HOST` | `./njord_sim/config` | Host directory mounted at `/config`; with your own directory, point `VESSEL_CONFIG` and `ALGORITHMS_CONFIG` at files in it |
 | `NJORD_CPU` | `0` | `1` selects software rendering |
 
@@ -146,8 +151,8 @@ engineering parameters and two aft thrusters; it is not measured Njord
 geometry. `munin_v0.yaml` uses the same hull numbers with four thrusters in an
 assumed 'X' layout, so four-thruster allocation and dynamic positioning can be
 tested before Munin's design is fixed. Neither is Munin's real design. See
-[njord-calibration.md](njord-calibration.md) for how it will be calibrated and
-[njord-model-evidence.md](njord-model-evidence.md) for what has been verified.
+[physics-model.md](physics-model.md) for how the physics is computed, what
+has been verified and how it will be calibrated.
 
 ```bash
 VESSEL_CONFIG=/config/vessels/njord_v1.yaml ./scripts/njord demo
@@ -226,9 +231,9 @@ wind variance in the selected environment are rejected. The reference autonomy
 is tuned for the WAM-V; changing the vessel does not constitute controller
 tuning or physical calibration. Self filtering follows the actual visual surfaces.
 
-## Scenario files (`scenarios/<course>.yaml`)
+## Scenario files
 
-A course file owns the world: gates, obstacles, start pose, seed, time limit
+A course file, `scenarios/<course>.yaml`, owns the world: gates, obstacles, start pose, seed, time limit
 and environment presets. `./scripts/njord demo <name>` finds
 `scenarios/<name>.yaml` automatically, so a new course is one new file (then
 `./scripts/njord build`, because scenarios are copied into the image).
@@ -263,8 +268,8 @@ autonomy is told how many gates there are, never where.
 Instead of `gates`, a course can list target poses under `setpoints` (exactly
 one of the two). The evaluator then issues the targets one at a time on
 `/njord/setpoint` and scores each one; see
-[control-autonomy-setpoints.md](control-autonomy-setpoints.md) for the
-interface and the metrics.
+[ros2-interface.md](ros2-interface.md#targets-setpoint-courses) for the
+interface and [running.md](running.md#8-results) for the metrics.
 
 ```yaml
 setpoints:
@@ -296,10 +301,10 @@ Older scenario files without `schema_version` (JSON syntax with
 `wind_direction_deg`) are still accepted and converted with still water,
 1000 kg/m³, water level 0 and a 4 ms step.
 
-## Algorithms file (`config/algorithms.yaml`)
+## Algorithms file
 
-Tuning for the reference guidance, planner, mapper and setpoint controller,
-shared by all vessels (schema 5; files of schema 1–4 are converted, and 4 → 5
+`njord_sim/config/algorithms.yaml` holds the tuning for the reference
+guidance, planner, mapper and setpoint controller, shared by all vessels (schema 5; files of schema 1–4 are converted, and 4 → 5
 adds the shipped `setpoint_control` values).
 `speed_profiles_mps` maps each `PROFILE` name to a speed ceiling; guidance then
 reduces speed further for heading error, clearance and the braking distance in
@@ -353,10 +358,10 @@ it is mapped, so a course must fit inside with room for approach and exit;
 `tests/test_algorithms_config.py` checks every race course in `scenarios/`
 with a 10 m margin. A larger grid costs mapping and planning time.
 
-## Fixed constants (`njord_sim/njord_sim/constants.py`)
+## Fixed constants
 
-Values that belong to the pinned platform rather than to an experiment: the
-world origin shared by Gazebo and the GPS transform (63.4305 N, 10.3951 E), the
+`njord_sim/njord_sim/constants.py` holds values that belong to the pinned
+platform rather than to an experiment: the world origin shared by Gazebo and the GPS transform (63.4305 N, 10.3951 E), the
 0.5 s simulation-time command timeout and 2 s steady-time liveness limit used by
 the guard, both actuator plugins and the evaluator, the Njord world gravity
 (9.81 m/s², written as the world `<gravity>` and read from there by the
@@ -386,7 +391,7 @@ filesystem access can read evaluation files. Use separate mounts if that
 matters.
 
 
-## Parameter fidelity contracts
+## Schema versions and sensor details
 
 WAM-V schema 2 and Njord schema 3 explicitly own IMU rate noise
 (`imu_angular_velocity_noise_rad_s`, assumed 0.009 rad/s) and acceleration

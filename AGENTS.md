@@ -20,27 +20,21 @@ linked guides, not here.
 ├── .codex/agents/            Sub-agent role definitions (see docs/agent-workflows.md)
 ├── .github/workflows/        CI/CD: unit suite, image build, container tests, GHCR publish
 ├── docker/                   Image dependencies, lock file, entrypoint, VRX license
-├── docs/                     Design and reference documents
-│   ├── running.md            Commands, rendering, recording and CI/CD
+├── docs/                     Documentation
+│   ├── running.md            Every run option: courses, vessels, GUI, settings, results
 │   ├── configuration.md      Where every setting lives; vessel/scenario/algorithm schema
-│   ├── team-integration.md   Step-by-step guide for external team nodes
-│   ├── control-autonomy-setpoints.md  C&A go-to-position interface and report (Norwegian)
-│   ├── testing-setpoints-thrust.md    How simulation tests setpoints and thrust (Norwegian)
-│   ├── demo-control-autonomy.md       Step-by-step C&A demo: both teams' tasks, commands, expected I/O (Norwegian)
-│   ├── demo-control-autonomy-gui.md   The same demo runs with the Gazebo and RViz windows (Norwegian)
-│   ├── run-concepts.md       One-page map of a run for newcomers
-│   ├── architecture.md       Data flow, run lifecycle, code map, limits
-│   ├── validation.md         Test coverage, benchmarks and dynamics measurements
-│   ├── interfaces.md         ROS topics, types, frames and ownership per node
-│   ├── njord-calibration.md  Calibration protocol for the Njord model
-│   ├── njord-model-evidence.md  Measured evidence for the Njord model
+│   ├── ros2-interface.md     ROS topics, types, frames, QoS, timing rules, external nodes
+│   ├── control-autonomy.md   Step-by-step guide for running C&A's nodes (scripts/ca-nodes.sh)
+│   ├── codebase.md           What each directory and file does
+│   ├── physics-model.md      How the physics is computed; calibration protocol
+│   ├── validation.md         Tests, CI and measured evidence
+│   ├── agent-workflows.md    How to build, verify, delegate and commit
 │   ├── evidence/             Compact summaries of runs the docs cite (scripts/summarize_evidence.py)
-│   ├── simulatorplattform-vrx-vs-pygemini.md  Why VRX/Gazebo (Norwegian)
-│   ├── control-autonomy-questions.md  Open questions for C&A and Naval (Norwegian)
-│   └── agent-workflows.md    How to build, verify, delegate and commit
+│   ├── media/                Images and animations used by the docs
+│   └── archive/              Earlier decision documents (platform choice, C&A questions)
 ├── njord_sim/                ROS 2 Python package (main simulator logic)
 │   ├── config/               algorithms.yaml, localization.yaml, RViz
-│   │   ├── vessels/          One file per vessel: wamv.yaml (default), njord_v1.yaml
+│   │   ├── vessels/          One file per vessel: wamv.yaml (default), njord_v1.yaml, munin_v0.yaml
 │   │   └── examples/         Partial sensor override and ROS parameter examples
 │   ├── launch/               simulation.launch.py, dstar_demo.launch.py
 │   └── njord_sim/            Nodes (*_node.py), pure-Python cores (*_core.py),
@@ -49,7 +43,7 @@ linked guides, not here.
 ├── scenarios/                Course files: gate races (reference, slalom), dynamics,
 │                             setpoint courses (goto_square, goto_retarget, station_keeping,
 │                             hold_position)
-├── scripts/                  `njord` CLI, benchmark, runners, host setup, build metadata
+├── scripts/                  `njord` CLI, C&A node runner, benchmark, runners, host setup, build metadata
 ├── tests/                    unittest suite (test_*.py) and ROS smoke helpers
 ├── validation/               Independent checks: dynamics, lidar, runtime, timeouts
 ├── sandbox/                  Headless demo and figures without ROS/Gazebo
@@ -126,14 +120,10 @@ carries irrelevant detail. A small or single-area task is cheaper to do directly
 | Topic | File |
 | --- | --- |
 | Build and run commands, verification per change area, subagent roles | [docs/agent-workflows.md](docs/agent-workflows.md) |
+| Courses, vessels, run settings, GUI and headless runs, results | [docs/running.md](docs/running.md) |
 | Where settings live, file schemas, parameter precedence | [docs/configuration.md](docs/configuration.md) |
-| ROS topics, message types, frames, node ownership | [docs/interfaces.md](docs/interfaces.md) |
-| Running the simulator, rendering, recording, CI/CD | [docs/running.md](docs/running.md) |
-| Team workflows, sensor and parameter overrides, replay | [docs/team-integration.md](docs/team-integration.md) |
-| Control & Autonomy target poses (setpoints), thrust interface, run report | [docs/control-autonomy-setpoints.md](docs/control-autonomy-setpoints.md) |
-| Testing setpoints and per-thruster thrust, with or without GUI, per vessel (Norwegian) | [docs/testing-setpoints-thrust.md](docs/testing-setpoints-thrust.md) |
-| Running a demo with Control & Autonomy's own nodes, step by step (Norwegian) | [docs/demo-control-autonomy.md](docs/demo-control-autonomy.md) |
-| The same demo with the Gazebo and RViz windows: what they show and what to click (Norwegian) | [docs/demo-control-autonomy-gui.md](docs/demo-control-autonomy-gui.md) |
-| How a run fits together (start here) | [docs/run-concepts.md](docs/run-concepts.md) |
-| Data flow, configuration, safety, limits, reproducibility | [docs/architecture.md](docs/architecture.md) |
-| Test coverage, benchmarks, dynamics measurements | [docs/validation.md](docs/validation.md) |
+| ROS topics, message types, frames, QoS, guard timing, external nodes | [docs/ros2-interface.md](docs/ros2-interface.md) |
+| Control & Autonomy's nodes against the simulator, step by step | [docs/control-autonomy.md](docs/control-autonomy.md) |
+| What each directory and file does | [docs/codebase.md](docs/codebase.md) |
+| Physics computation, model limits, calibration protocol | [docs/physics-model.md](docs/physics-model.md) |
+| Test coverage, CI, measured evidence, dynamics measurements | [docs/validation.md](docs/validation.md) |

@@ -6,7 +6,7 @@
 # response are copied from the njord_v1 analytic test hull, and the thruster
 # layout below is an assumed 'X' arrangement. Replace the thruster positions,
 # directions and limits with Naval's design when it is decided, and the rest
-# with measurements (docs/njord-calibration.md).
+# with measurements (docs/physics-model.md).
 #
 # This is the only place to change this vessel: geometry, mass properties,
 # hydrodynamics, wind response, thrusters and sensors are all read from here.

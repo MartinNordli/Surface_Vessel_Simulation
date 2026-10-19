@@ -3,7 +3,7 @@
 
 Control & Autonomy (C&A) works in NED and a forward/right/down (FRD) body
 frame with its own message types, and converts at the boundary of its nodes
-(docs/demo-control-autonomy.md). This node does the same conversion on the
+(docs/control-autonomy.md). This node does the same conversion on the
 simulator's ROS-standard topics, runs a plain PD dynamic-positioning law in
 NED/FRD and allocates the wrench to the thrusters with the vessel file's
 layout expressed in FRD. It answers one question before C&A's own nodes are
@@ -15,7 +15,7 @@ Run it as the external controller of a setpoint course, with the same
 VESSEL_CONFIG as the run (a fully actuated vessel such as munin_v0):
 
     VESSEL_CONFIG=/config/vessels/munin_v0.yaml docker compose -p njord-ca \\
-        run --rm autonomy python3 /opt/njord/validation/ned_dp_standin.py
+        run --rm autonomy python3 /opt/njord/scripts/ned_dp_standin.py
     STATE_SOURCE=truth CONTROLLER=external VESSEL_CONFIG=/config/vessels/munin_v0.yaml \\
         ./scripts/njord demo hold_position
 

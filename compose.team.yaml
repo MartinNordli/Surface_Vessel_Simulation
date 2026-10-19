@@ -1,5 +1,5 @@
 # Optional source workspace shared by team nodes. Build inside this Jazzy image.
-# Usage (see docs/team-integration.md):
+# Usage (see docs/ros2-interface.md):
 #   export TEAM_WS_HOST=/absolute/path/to/team_ws   # workspace containing src/
 #   docker compose -f compose.yaml -f compose.team.yaml run --rm team bash
 # The container joins the same host network and ROS domain as the simulator,

@@ -70,7 +70,7 @@ x-common: &common
     # accept the simulator's run_ready.json. scripts/njord generates it.
     RUN_ID: ${RUN_ID:-}
     # "reference" runs the built-in node, "external" leaves that role to a
-    # team's own node (see docs/team-integration.md).
+    # team's own node (see docs/ros2-interface.md).
     AUTONOMY: ${AUTONOMY:-reference}
     CONTROLLER: ${CONTROLLER:-reference}
     PERCEPTION: ${PERCEPTION:-reference}

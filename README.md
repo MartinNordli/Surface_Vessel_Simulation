@@ -2,7 +2,7 @@
 
 # Njord VRX Simulator
 
-**A containerized autonomous surface vessel simulator for Njord NTNU**
+**Test autonomous surface vessel software before it goes on the water**
 
 [![CI](https://github.com/MartinNordli/Surface_Vessel_Simulation/actions/workflows/ci.yml/badge.svg)](https://github.com/MartinNordli/Surface_Vessel_Simulation/actions/workflows/ci.yml)
 ![ROS 2 Jazzy](https://img.shields.io/badge/ROS_2-Jazzy-22314E?logo=ros)
@@ -11,172 +11,135 @@
 ![Docker](https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white)
 
 <img src="docs/media/slalom.gif" width="640" alt="The WAM-V reference boat running the slalom course in Gazebo, seen from a chase camera">
-<br><sub>The reference autonomy completing the slalom course in Gazebo, 20× speed. WAM-V reference vessel, not a calibrated Njord model.
-Made with <code>./scripts/njord film slalom</code>.</sub>
+<br><sub>The built-in autonomy racing the slalom course on its own sensors (Gazebo, 20× speed, WAM-V reference boat)</sub>
 
 </div>
 
-A boat in Gazebo races through red-left/green-right buoy gates using only its
-own sensors. The full autonomy stack runs out of the box, and the Control
-Systems and Perception teams can swap in their own ROS 2 nodes to test them
-against the same courses, seeds and metrics before going on the water.
-
 <p align="center">
-  <img src="sandbox/headless_demo.png" width="440" alt="D* Lite closed loop: the planned route adapts as lidar discovers obstacles">
-  <br><sub>D* Lite replanning around obstacles as the lidar discovers them (headless sandbox)</sub>
+  <img src="docs/media/ca-goto-square-rviz.gif" width="640" alt="RViz: Control & Autonomy's DP controller drives the Munin placeholder through four target poses on a 20 m square">
+  <br><sub>Control & Autonomy's own DP nodes driving the four-thruster Munin placeholder to four target poses (RViz, about 11× speed). Grey: waiting, yellow: active, green: reached.</sub>
 </p>
 
-## Features
+## What it does
 
-- **Perception**: two RGB cameras and a 3D lidar fused into red/green buoy detections
-- **Navigation**: GPS/IMU EKF estimation, observed occupancy mapping and incremental D* Lite planning
-- **Control**: collision-checked guidance with force-based differential thrust behind a command guard and watchdog
-- **Evaluation**: ground-truth race evaluator, contact monitoring and repeatable seeded benchmarks
-- **Team integration**: replace the controller, perception, mapping or the whole autonomy chain with your own nodes
-- **One place per setting**: each vessel, course and tuning set is a single YAML file, validated before start
-- **Reproducible**: pinned dependencies, and every commit gets a tested image on GHCR
+A Gazebo simulation of a surface vessel on the water, wired to ROS 2 exactly
+like a real boat: cameras, lidar, GPS and IMU come out as ROS topics, and the
+boat moves only from per-thruster forces in newtons. Njord NTNU's teams can
+connect their own nodes and test them before the boat is in the water.
+
+- **Courses.** Buoy-gate races (`reference`, `slalom`) and "go to this
+  position" courses for dynamic positioning (`goto_square`, `goto_retarget`,
+  `station_keeping`, `hold_position`), in calm water, wind, waves or current.
+- **Vessels.** The VRX WAM-V reference boat, and Njord-profile vessels with
+  their own physics, including a four-thruster Munin placeholder. One YAML
+  file per vessel.
+- **Built-in autonomy** that can be swapped out piece by piece: buoy
+  perception, occupancy mapping, D* Lite planning, guidance, and a setpoint
+  controller.
+- **Measured results.** An evaluator scores every run from ground truth and
+  writes a report with the track, per-target results and thrust plots.
+- **Reproducible.** Pinned dependencies, seeded runs, and a CI-tested Docker
+  image for every commit.
 
 > [!NOTE]
-> The default vessel is the VRX **WAM-V reference**, not a calibrated digital
-> twin of Njord. A separate, **uncalibrated** Njord physics model is available
-> as its own vessel file; see [configuration](docs/configuration.md).
+> The Njord-profile vessels are **uncalibrated** placeholders, not a measured
+> model of Njord's boat. Results show how software behaves against this
+> model; see [physics-model.md](docs/physics-model.md).
+
+## Installation
+
+You need an x86-64 PC with **Ubuntu 24.04** (or Windows with **WSL2** and
+Ubuntu 24.04) and an **NVIDIA graphics card** with its driver installed
+(`nvidia-smi` works). Docker does the rest; ROS and Gazebo are not installed
+on the PC.
+
+```bash
+# 1. Get the code
+git clone https://github.com/MartinNordli/Surface_Vessel_Simulation.git
+cd Surface_Vessel_Simulation
+
+# 2. Install Docker and the NVIDIA Container Toolkit (once per PC)
+sudo bash scripts/setup-host.sh
+sudo usermod -aG docker $USER      # then log out and in again (WSL2: wsl --shutdown)
+
+# 3. Download the tested image for this commit (a few GB) and check the setup
+./scripts/njord pull
+./scripts/njord doctor
+
+# 4. Run a race with the Gazebo and RViz windows
+./scripts/njord gui slalom
+```
+
+`setup-host.sh` never installs a GPU driver; on WSL2 the Windows driver is
+used. Without an NVIDIA card, put `NJORD_CPU=1` in front of the commands
+(slow software rendering). After changing code that is not yet pushed, use
+`./scripts/njord build` instead of `pull`.
 
 ## Quick start
 
-Requires an x86-64 Ubuntu 24.04 host or WSL2. A GPU is optional.
-
 ```bash
-git clone https://github.com/MartinNordli/Surface_Vessel_Simulation.git
-cd Surface_Vessel_Simulation
-sudo bash scripts/setup-host.sh   # once per machine: Docker + NVIDIA Container Toolkit
-./scripts/njord pull              # download the CI-tested image for this commit
-./scripts/njord doctor            # check Docker, GPU and image
-./scripts/njord selftest          # verify live cameras, lidar and navigation
-./scripts/njord demo              # run a race
+./scripts/njord gui goto_square                                  # setpoint course with windows
+VESSEL_CONFIG=/config/vessels/munin_v0.yaml ./scripts/njord gui station_keeping
+SEED=2 ENVIRONMENT=moderate ./scripts/njord demo slalom          # without windows
+CONTROLLER=external ./scripts/njord gui goto_square              # your own controller drives
+./scripts/njord help                                             # all commands
 ```
 
-No usable GPU? Prefix commands with `NJORD_CPU=1` for software rendering.
-Working on unpushed changes? Use `./scripts/njord build` instead of `pull`.
+Each run writes `outputs/run-<time>/report.html`. Every run option, course and
+setting is in [docs/running.md](docs/running.md).
 
-## Usage
+## Repository layout
 
-```bash
-./scripts/njord demo slalom                              # headless race, results in outputs/run-*
-./scripts/njord gui slalom                               # same race with Gazebo and RViz
-SEED=2 ENVIRONMENT=moderate PROFILE=conservative ./scripts/njord demo
-./scripts/njord benchmark slalom --seeds 1 2 3           # seeded comparison matrix
-./scripts/njord test                                     # full test suite in the container
-./scripts/njord help                                     # all commands and courses
+```
+njord_sim/              ROS 2 package
+  njord_sim/            nodes (*_node.py), ROS-free logic (*_core.py), configuration
+  launch/               simulator and autonomy launch files
+  config/               vessels/, algorithms.yaml, RViz layout, examples
+njord_gz_plugins/       C++ Gazebo plugins: Njord physics, actuator watchdog, contacts
+scenarios/              one YAML file per course
+scripts/                njord CLI, host setup, C&A node runner, run and report tools
+tests/                  unit and integration tests
+validation/             live checks and acceptance tools
+sandbox/                headless planner demo without ROS or Gazebo
+docker/                 image dependencies, lock file, entrypoint
+docs/                   documentation
 ```
 
-| Course | Layout |
-|---|---|
-| `reference` (default) | 3 gates, 2 obstacles |
-| `slalom` | 5 alternating gates, 5 obstacles |
-| `dynamics` | open water for dynamics measurements |
-
-A course is a file in `scenarios/`; add a file there to add a course. Every run
-writes metrics, the resolved configuration and generated models to a fresh
-`outputs/run-*` directory.
-
-## Where to change settings
-
-Each setting lives in exactly one file. Edit it and start a new run; files
-under `njord_sim/config/` are mounted into the containers, so no rebuild is
-needed.
-
-| To change | Edit | Select with |
-|---|---|---|
-| WAM-V sensors (resolution, rate, range, noise) and thrust limit | `njord_sim/config/vessels/wamv.yaml` | default vessel |
-| The Njord boat (geometry, mass, damping, thrusters, sensors) | `njord_sim/config/vessels/njord_v1.yaml` | `VESSEL_CONFIG=/config/vessels/njord_v1.yaml` |
-| Four-thruster Munin placeholder (assumed layout, uncalibrated) | `njord_sim/config/vessels/munin_v0.yaml` | `VESSEL_CONFIG=/config/vessels/munin_v0.yaml` |
-| Gates or target poses (setpoints), obstacles, start pose, time limit, wind/waves/current | `scenarios/<course>.yaml` | course name, `ENVIRONMENT` |
-| Speed profiles, guidance gains, planner and map tuning | `njord_sim/config/algorithms.yaml` | `PROFILE` |
-| Fixed platform constants (GPS datum, command timeout) | `njord_sim/njord_sim/constants.py` | rebuild |
-
-The full table, file formats and parameter precedence are in
-[docs/configuration.md](docs/configuration.md).
-
-## Testing your own algorithms
-
-Leave out reference nodes and connect your own over ROS 2 (domain 42, `use_sim_time`):
-
-```bash
-CONTROLLER=external ./scripts/njord demo slalom   # publish /thruster_<i>/command in newtons
-PERCEPTION=external ./scripts/njord demo slalom   # publish buoy detections
-MAPPING=external    ./scripts/njord demo slalom   # publish an occupancy grid
-AUTONOMY=external   ./scripts/njord lab slalom    # free driving, no race; your stack drives
-CONTROLLER=external VESSEL_CONFIG=/config/vessels/munin_v0.yaml ./scripts/njord demo goto_square
-                                                  # targets on /njord/setpoint, your node drives
-./scripts/njord goto 15 5 90                      # during lab: send a target pose by hand
-```
-
-Every race writes `outputs/run-*/report.html`: the result, a top view of the
-track and course, per-target results and time plots. Control & Autonomy's
-step-by-step guide for target poses and thrust is
-[docs/control-autonomy-setpoints.md](docs/control-autonomy-setpoints.md).
-
-See the [team integration guide](docs/team-integration.md) for the full
-walkthrough and [interfaces](docs/interfaces.md) for every topic and frame.
+Every file is described in [docs/codebase.md](docs/codebase.md).
 
 ## Documentation
 
-| Guide | Contents |
+| Document | Contents |
 |---|---|
-| [How a run fits together](docs/run-concepts.md) | Start here: inputs, processes, the thrust path, the two clocks |
-| [Running](docs/running.md) | Commands, courses, rendering, WSL, recording and CI/CD |
-| [Configuration](docs/configuration.md) | Where every setting lives; vessel, scenario and algorithm files |
-| [Team integration](docs/team-integration.md) | Step-by-step for Control Systems and Perception/CV |
-| [Control & Autonomy: setpoints](docs/control-autonomy-setpoints.md) | Go-to-position targets and thruster forces for C&A's nodes; reading the report (Norwegian) |
-| [Control & Autonomy: demo](docs/demo-control-autonomy.md) | Step-by-step demo with C&A's nodes: what each team does, commands, expected input and output (Norwegian) |
-| [Control & Autonomy: demo with windows](docs/demo-control-autonomy-gui.md) | The same demo runs with the Gazebo and RViz windows: what they show and what to click (Norwegian) |
-| [Interfaces](docs/interfaces.md) | ROS topics, message types, frames and node ownership |
-| [Architecture](docs/architecture.md) | Data flow, run lifecycle, code map, safety and limits |
-| [Validation](docs/validation.md) | Test coverage, benchmarks and dynamics measurements |
-| [Njord calibration](docs/njord-calibration.md) | Calibration protocol for the Njord model |
-| [Njord model evidence](docs/njord-model-evidence.md) | What the Njord physics model implements and how it was verified |
-| [Platform choice](docs/simulatorplattform-vrx-vs-pygemini.md) | Why VRX/Gazebo (Norwegian) |
-| [Open questions for C&A](docs/control-autonomy-questions.md) | Interface and model questions for Control & Autonomy and Naval, with answers (Norwegian) |
-| [AGENTS.md](AGENTS.md) | Engineering rules and contributor workflow |
+| [Running the simulator](docs/running.md) | All courses, vessels and settings; GUI and headless runs; changing the configuration; results |
+| [Control & Autonomy guide](docs/control-autonomy.md) | Step by step: set up a PC, build C&A's nodes, run setpoint courses with windows |
+| [ROS 2 interface](docs/ros2-interface.md) | Topics, message types, frames, QoS, timing rules, connecting your own nodes |
+| [Configuration](docs/configuration.md) | Every setting, the file formats and parameter precedence |
+| [Codebase](docs/codebase.md) | What each directory and file does |
+| [Physics model](docs/physics-model.md) | How the vessel physics is computed and how it will be calibrated |
+| [Validation](docs/validation.md) | Tests, CI and measured evidence |
+| [AGENTS.md](AGENTS.md), [agent workflows](docs/agent-workflows.md) | Engineering rules and verification steps for contributors |
 
-## Project structure
-
-```
-njord_sim/                  ROS 2 package
-  config/                   algorithms.yaml, localization.yaml, RViz layout
-    vessels/                one file per vessel: wamv.yaml (default), njord_v1.yaml
-    examples/               partial sensor override, ROS parameter file
-  launch/                   simulator and autonomy launch files
-  njord_sim/                nodes (*_node.py), ROS-free cores (*_core.py), configuration
-njord_gz_plugins/           C++ Gazebo plugins: actuator watchdog, Njord physics, contacts
-scenarios/                  course files
-scripts/                    njord CLI, host setup, benchmark and run tooling
-tests/                      unit and integration tests
-validation/                 live runtime and dynamics checks
-sandbox/                    headless planner demo without ROS or Gazebo
-docker/                     image dependencies, lock file and entrypoint
-docs/                       guides listed above
-```
+Older decision documents (platform choice, open questions to C&A) are in
+[docs/archive/](docs/archive/).
 
 ## Contributing
 
 Work on a branch (`git checkout -b feat/<topic>`), keep changes small and run
-the checks for the area you touched. [AGENTS.md](AGENTS.md) holds the
-engineering rules and [docs/agent-workflows.md](docs/agent-workflows.md) the
-verification per change area. The quick loop without Docker:
+the checks for what you touched ([agent-workflows.md](docs/agent-workflows.md)).
+The quick loop without Docker:
 
 ```bash
-python3 tests/test_dstar_lite.py
 python3 -m unittest discover -s tests -p 'test_*.py'
 ```
 
-`./scripts/njord test` runs the complete suite, including ROS and Gazebo model
-tests, inside the container. CI runs the same commands on every push.
+`./scripts/njord test` runs the complete suite in the container; CI runs it on
+every push.
 
 ## Acknowledgements
 
-Built on [VRX](https://github.com/osrf/vrx) and
-[Gazebo](https://gazebosim.org/). The Docker setup derives from the Apache-2.0
-licensed [VRX v3.1.0 container setup](https://github.com/osrf/vrx/tree/v3.1.0/docker)
-and retains its [license](docker/LICENSE.vrx). WAM-V assets and VRX plugins keep
-their upstream licenses.
+Built on [VRX](https://github.com/osrf/vrx) and [Gazebo](https://gazebosim.org/).
+The Docker setup derives from the Apache-2.0 licensed
+[VRX v3.1.0 container setup](https://github.com/osrf/vrx/tree/v3.1.0/docker)
+and retains its [license](docker/LICENSE.vrx). WAM-V assets and VRX plugins
+keep their upstream licenses.

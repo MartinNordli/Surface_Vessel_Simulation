@@ -5,7 +5,7 @@ Run after building the image. Each repetition gets isolated Compose/ROS/Gazebo
 identities and fresh output. Does not modify or stop an existing simulator stack.
 
 Where to run: on the host, from a checkout, with Docker and the built image.
-Nothing needs to be running. Example (see docs/njord-calibration.md):
+Nothing needs to be running. Example (see docs/physics-model.md):
 
     python3 scripts/dynamics_campaign.py --output outputs/dynamics-campaign --repetitions 3
 

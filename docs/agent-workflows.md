@@ -3,7 +3,7 @@
 Procedures for common tasks. [AGENTS.md](../AGENTS.md) holds the rules that apply
 regardless of task; this file holds the how-to. User-facing detail on running and
 configuring the simulator stays in [running.md](running.md) and
-[team-integration.md](team-integration.md).
+[configuration.md](configuration.md).
 
 ## Build and run
 
@@ -16,10 +16,10 @@ right Compose overlay (including WSL) and stamps run provenance.
 ./scripts/njord check-image           # Fail unless the image was built from this checkout
 ./scripts/njord test                  # Full unit suite inside the container
 ./scripts/njord selftest              # Start simulator + autonomy, run check_runtime.py, stop
-./scripts/njord demo [reference|slalom]   # Headless race, exits with the evaluator
-./scripts/njord gui   [reference|slalom]  # Same with Gazebo GUI and RViz
-./scripts/njord lab   [reference|slalom]  # Free driving: simulator + autonomy, no evaluator
-./scripts/njord benchmark [reference|slalom] [--seeds ...] [--environments ...]
+./scripts/njord demo [course]         # Headless race, exits with the evaluator
+./scripts/njord gui  [course]         # Same with Gazebo GUI and RViz
+./scripts/njord lab  [course]         # Free driving: no race; the evaluator scores goto targets
+./scripts/njord benchmark [course] [--seeds ...] [--environments ...]
 ./scripts/njord smoke                 # validation/check_runtime.py against a live stack
 ./scripts/njord doctor                # Docker, Compose, NVIDIA and image checks
 ```
@@ -79,7 +79,7 @@ passed CI.
 ## Changing interfaces
 
 Topic names, message types, frames, QoS and node ownership are documented in
-[docs/interfaces.md](interfaces.md). Update that file in the same commit as any
+[docs/ros2-interface.md](ros2-interface.md). Update that file in the same commit as any
 interface change, and keep replaceable-algorithm boundaries intact so a team can
 substitute their own controller, perception or mapping node.
 
@@ -87,7 +87,7 @@ substitute their own controller, perception or mapping node.
 
 The primary agent owns everything other areas depend on: `njord_sim/config/`,
 `configuration.py`, `constants.py`, `defaults.py`, the launch files, the
-scenario format, `docs/interfaces.md` and `docs/configuration.md`. A new
+scenario format, `docs/ros2-interface.md` and `docs/configuration.md`. A new
 setting goes into the file that owns it (see
 [configuration.md](configuration.md)) and is read from there.
 

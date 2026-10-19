@@ -66,7 +66,7 @@ Test
 
 Courses: $(courses)
 Setpoint courses (goto_*, station_keeping, hold_position) issue target poses instead of gates;
-see docs/control-autonomy-setpoints.md.
+see docs/running.md.
 Common settings: SEED, ENVIRONMENT, PROFILE, VESSEL_CONFIG, ALGORITHMS_CONFIG,
 CONTROLLER/PERCEPTION/MAPPING/AUTONOMY=external, STATE_SOURCE=truth (navigate on
 ground truth instead of the GPS/IMU estimate). NJORD_CPU=1 uses software

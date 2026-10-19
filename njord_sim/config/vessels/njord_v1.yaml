@@ -1,7 +1,7 @@
 # Njord vessel, analytic test hull (select with VESSEL_CONFIG=/config/vessels/njord_v1.yaml).
 #
 # UNCALIBRATED infrastructure fixture: the numbers are invented engineering
-# values, NOT measured Njord geometry. See docs/njord-calibration.md.
+# values, NOT measured Njord geometry. See docs/physics-model.md.
 #
 # This is the only place to change the Njord vessel: geometry, mass properties,
 # hydrodynamics, wind response, thrusters and sensors are all read from here.

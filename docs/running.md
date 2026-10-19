@@ -1,215 +1,396 @@
 # Running the simulator
 
-Everything goes through the `scripts/njord` wrapper, which selects the right
-Compose overlays (including WSL) and stamps run provenance. Run
-`./scripts/njord --help` for the full usage.
+Everything the simulator can run, and how to change it and run again. All
+commands go through `./scripts/njord` from the repository root; it picks the
+right Docker Compose files (including WSL) and writes each run to a fresh
+directory. Installation is in the [README](../README.md#installation).
 
-## Requirements
+Contents: [1 GUI runs](#1-gui-runs) · [2 The windows](#2-the-windows) ·
+[3 Courses](#3-courses) · [4 Vessels](#4-vessels) ·
+[5 Run settings](#5-run-settings) · [6 Free driving](#6-free-driving-lab) ·
+[7 Change the configuration and run again](#7-change-the-configuration-and-run-again) ·
+[8 Results](#8-results) · [9 Without GUI](#9-without-gui) ·
+[10 Troubleshooting](#10-troubleshooting)
 
-- x86-64 Ubuntu 24.04 host, or WSL2
-- Docker Engine with Compose v2.24 or newer, Git and Python 3
-- For GPU rendering: NVIDIA Container Toolkit and a working NVIDIA host driver
-
-`sudo bash scripts/setup-host.sh` installs Docker and the toolkit, **never a GPU
-kernel driver**.
-
-Docker commands need access to the Docker socket. Use `sudo` or your Docker group
-configuration. If group membership was just added, start a fresh login or use
-`sg docker -c './scripts/njord demo'` in the existing shell.
-
-## Getting the image
-
-CI publishes a tested image for every commit pushed to GitHub, so a new machine
-downloads it instead of compiling Gazebo and VRX:
+## 1. GUI runs
 
 ```bash
-./scripts/njord pull              # image CI built and tested for this exact commit
-./scripts/njord pull latest       # newest main image
-./scripts/njord pull v1.0.0       # a release tag
+./scripts/njord gui                  # reference course with the WAM-V
+./scripts/njord gui slalom           # any course name from scenarios/
+SEED=2 ENVIRONMENT=moderate ./scripts/njord gui slalom
+VESSEL_CONFIG=/config/vessels/munin_v0.yaml ./scripts/njord gui goto_square
 ```
 
-`pull` downloads `ghcr.io/martinnordli/surface_vessel_simulation:sha-<commit>`
-and tags it `njord-sim:local`; every other command uses that tag. Pull again after
-`git pull` or `git checkout`.
+`gui` starts a measured race with two windows, Gazebo and RViz. The race
+starts by itself once the boat's sensors, navigation and controller are
+ready, runs until the course is completed or fails, then closes Gazebo and
+prints the path of the report:
 
-Commands pin one immutable image ID and reject a missing or mismatched executable
-digest. Editable YAML under `njord_sim/config` may change without rebuilding.
-`./scripts/njord check-image`, `test` and CI additionally require the full source
-digest, including YAML. There is no stale-image validation bypass.
+```
+Report: outputs/run-20261019T213859/report.html
+```
 
-An image exists only after the CI run for that commit has passed. For unpushed
-commits or local changes, build instead with `./scripts/njord build`. An uncached
-build compiles the Gazebo vendor packages and VRX and takes a long time.
-Scenarios are copied into the image, so rebuild after adding or changing one;
-`./scripts/njord build simulator` updates the shared image used by all three race
-services.
+The exit code is the result: 0 when the course was completed, non-zero
+otherwise. `GUI=1 ./scripts/njord demo <course>` is the same as `gui`.
 
-## Commands
+Run from a terminal on the desktop (not over SSH) so the windows can open.
+On WSL2, `scripts/njord` adds the WSLg setup by itself.
 
-| Command | What it does |
+## 2. The windows
+
+### Gazebo: the simulation
+
+![Gazebo window](media/demo-gui-gazebo.png)
+
+Gazebo shows the water, the boat, the buoys and the obstacles. The real-time
+factor is shown bottom right (about 90 % on the RTX 5090 used for testing).
+The camera does not follow the boat: after long moves, follow the boat in
+RViz or move the Gazebo camera with the mouse.
+
+- **Do not close the Gazebo window during a run.** If you do, Gazebo asks
+  `Do you really want to exit?`; choose `CANCEL`. `OK` stops the simulator
+  and the race ends with `contact_monitor_timeout`.
+- **Do not press pause or reset** (the orange buttons bottom left).
+  Simulation time stops for every node; the evaluator is built to end the
+  race with `odometry_timeout` after 30 s (not tried).
+- `munin_v0` and `njord_v1` are drawn as grey boxes; they are placeholders,
+  not hull models.
+
+### RViz: what the boat knows and the targets
+
+![RViz window](media/demo-gui-rviz.png)
+
+| In RViz | Meaning |
 |---|---|
-| `doctor` | Docker, Compose, NVIDIA and image checks |
-| `test` | Full test suite (CPU + ROS transport/model tests) in the container |
-| `selftest` | Starts simulator and autonomy, checks live cameras, lidar and navigation, then stops |
-| `demo [course]` | Headless race with simulator, autonomy and evaluator |
-| `gui [course]` | Same race with the Gazebo window and RViz (`GUI=1` does the same for `demo` and `lab`) |
-| `lab [course]` | Free driving (`RUN_MODE=free`): simulator, estimation and selected reference nodes, no race. The evaluator only observes: it scores the targets sent with `goto` or RViz and writes the report on Ctrl-C |
-| `goto X Y [HEADING_DEG]` | Send a target pose (map ENU metres, degrees from east) to a running `lab`; it replaces the active one |
-| `report [run-dir]` | Rebuild `report.html` of a run on the host (default: newest `outputs/run-*`) |
-| `benchmark [course]` | Seed × environment × profile matrix, e.g. `--jobs 2` or `--dry-run` |
-| `film [course]` | Headless race filmed by a chase camera, then a sped-up GIF (see [Filming](#filming)) |
-| `simulator` | Simulator service only |
-| `smoke` | `validation/check_runtime.py` against an already running stack |
+| WAM-V model, or a red box for `njord_v1` and `munin_v0` | The boat |
+| White line | The track it has travelled (ground truth) |
+| Coloured points | Lidar returns, coloured by height |
+| Shaded cells | The observed occupancy map (gate courses) |
+| Teal line | The planned D* Lite route (gate courses) |
+| Orange arrow | The mission's current goal (gate courses) |
+| Disc with an arrow and a label | A setpoint: radius = tolerance, arrow = heading. Yellow active, green reached, red failed, blue replaced, grey waiting |
+| Yellow arrow | The active setpoint |
+| Camera panels (left) | The two front cameras |
 
-### Races
+On setpoint courses the map, route and goal stay empty, and `Observed
+occupancy` shows a warning icon: the reference mapper and planner only run
+on gate courses.
 
-`demo` creates a fresh timestamped `outputs/run-*` directory, waits for valid
-perception, planning, navigation and contact monitoring, then starts race timing.
-It stops all services on completion or failure, and exits nonzero for a failed
-race. Generated SDF, URDF, bridge configuration, the resolved scenario and
-metrics are kept in the output directory, together with `timeseries.csv` and
-`report.html`, a page that opens offline in a browser with the result, a top
-view of the track and course, per-target results and time plots. The command
-prints its path at the end.
+RViz starts zoomed out over the whole course area. To get close to the boat:
+choose **Focus Camera** (key C) and click on the boat, then scroll to zoom.
+Left drag rotates, middle drag pans.
 
-```bash
-./scripts/njord demo                                   # reference course (default)
-./scripts/njord demo slalom
-SEED=1 ENVIRONMENT=moderate PROFILE=fast ./scripts/njord demo slalom
-./scripts/njord benchmark slalom --dry-run
-```
+RViz runs in its own container. Closing it never ends a run, and it stays
+open after the run so you can look at the result. The next `gui` command
+replaces it; `docker rm -f njord-sim-rviz-1` closes it.
 
-Courses are the files in `scenarios/`:
+## 3. Courses
 
-- **`reference`**: three gates and two additional obstacles.
-- **`slalom`**: five alternating gates and five obstacles. It is a shared test
-  environment for the control/autonomy and perception teams to compare algorithms
-  and sensor configurations. The reference autonomy is a baseline and is not
-  required to complete every run.
-- **`dynamics`**: open water for dynamics measurements, not a race.
-- **`goto_square`, `goto_retarget`, `station_keeping`, `hold_position`**: setpoint courses. The
-  evaluator issues target poses on `/njord/setpoint` one at a time and scores
-  how the boat reaches and holds each one; the reference `setpoint_controller`
-  drives unless `CONTROLLER=external`. See
-  [control-autonomy-setpoints.md](control-autonomy-setpoints.md). Their
-  environments are `calm`, `windy` and `current` (Njord profiles only).
+A course is a file in `scenarios/`; the file name is the course name. There
+are three kinds.
 
-Gate courses support `SEED`, `ENVIRONMENT` (`calm`, `moderate`) and `PROFILE` (a
-`speed_profiles_mps` name in `algorithms.yaml`: `conservative` or `fast` as
-shipped). An explicit course name overrides `SCENARIO` for that
-invocation; without one, `SCENARIO` (a path inside the container) still works.
-Additional arguments follow the course name, for example
-`./scripts/njord demo slalom recorder`.
+### Gate races
 
-To add a course, copy a file in `scenarios/`, edit it (format in
-[configuration.md](configuration.md#scenario-files-scenarioscourseyaml)) and run
-`./scripts/njord build`; it is then available as `./scripts/njord demo <file name>`.
-To use a different vessel or tuning, see [configuration.md](configuration.md).
+The boat drives through red-left/green-right buoy gates using only its own
+cameras and lidar. The reference autonomy (perception, mapping, mission,
+D* Lite planning and guidance) drives unless you replace it.
 
-## Rendering
+| Course | Layout | Time limit |
+|---|---|---|
+| `reference` (default) | 3 gates 14 m wide, 2 extra obstacles | 360 s |
+| `slalom` | 5 alternating gates, 5 obstacles flanking the route | 480 s |
 
-The default simulator uses OGRE2 with headless EGL rendering, and NVIDIA graphics
-capabilities are passed to the container.
+Gate positions get a seeded random offset (`SEED`) of up to ±0.75 m
+(`reference`) or ±0.5 m (`slalom`). Environments: `calm` and `moderate`.
 
-- **WSL2**: `scripts/njord` automatically adds `compose.wsl.yaml`, mounting
-  WSLg/DXG and selecting Mesa D3D12 on the NVIDIA adapter. WSL uses the Windows
-  driver; do not install Linux NVIDIA kernel modules inside WSL.
-- **No GPU**: `NJORD_CPU=1` selects Mesa software rendering (`compose.cpu.yaml`)
-  and skips the NVIDIA checks. It renders the real sensors, slowly, and is what CI
-  uses. It does not replace a GPU for rendering-performance or benchmark claims.
+### Setpoint courses ("go to this position")
 
-```bash
-NJORD_CPU=1 ./scripts/njord doctor
-NJORD_CPU=1 ./scripts/njord selftest
-```
+The evaluator sends target poses on `/njord/setpoint` one at a time and
+scores how the boat reaches and holds each one. The simulator's reference
+`setpoint_controller` drives unless `CONTROLLER=external`
+([control-autonomy.md](control-autonomy.md)).
 
-`nvidia-smi` passing alone does not establish rendering: inspect Gazebo's
-`~/.gz/rendering/ogre2.log` and run the live smoke test.
+| Course | Targets | Pass criterion |
+|---|---|---|
+| `goto_square` | 4 corners of a 20 m square: (20, 0) facing east, (20, 20) north, (0, 20) west, (0, 0) south | Each within 1.5 m and 15° for 5 s, 100 s per target |
+| `goto_retarget` | (40, 0), replaced after 12 s; (15, 15), replaced after 15 s; then (25, 5) | Last target within 1.5 m and 15° for 5 s |
+| `station_keeping` | One target 10 m east of the start, facing east | Within 1.0 m and 10° for 60 s, within 200 s |
+| `hold_position` | The start pose (no step) | Within 1.0 m and 10° for 60 s, within 200 s |
 
-The GUI overlay uses the existing X display and Xauthority; it never runs
-`xhost +`. `gui` and `GUI=1` also start the RViz service detached, so closing its
-window does not end the run; it shows the map, lidar, cameras, the travelled
-track, setpoint markers and the active setpoint, and its "2D Goal Pose" tool
-publishes on `/njord/setpoint` (use it in `lab`). RViz alone is available with
-`docker compose --profile gui up rviz`, using the same Compose files, ROS domain
-and Gazebo partition as the simulator.
+Environments: `calm`, `windy` and `current`. Coordinates are metres in the
+`map` frame (x east, y north); headings are counter-clockwise from east.
 
-### Free driving with targets (`lab`)
+### Dynamics
 
-```bash
-./scripts/njord lab goto_square            # terminal 1; GUI=1 adds Gazebo and RViz
-./scripts/njord goto 15 5 90               # terminal 2: go to x=15, y=5, face north
-./scripts/njord goto 0 0                   # face along the leg from the current position
-# Ctrl-C in terminal 1 writes run_metrics.json and report.html for every target sent.
-```
+`dynamics` is open water with one far gate, used by the dynamics
+measurements in [validation.md](validation.md#5-dynamics-measurements). It is
+not a race.
 
-On a setpoint course the reference `setpoint_controller` drives to each target
-(`CONTROLLER=external` leaves it to your node); on a gate course the reference
-autonomy drives the gates and targets are only scored. Lab targets are scored
-with `OBSERVED_SETPOINT_ACCEPTANCE` in `constants.py` (1.5 m, 15°, 5 s hold).
+### Environments
 
-## Manual Compose sessions
+| Name | Wind | Waves | Current | Courses |
+|---|---|---|---|---|
+| `calm` (default) | none | none | none | all |
+| `moderate` | 3 m/s toward north-east, with gusts | yes | none | gate courses, `dynamics`; WAM-V only |
+| `windy` | 4 m/s toward north-west, constant | none | none | setpoint courses |
+| `current` | 4 m/s toward north-west | none | 0.3 m/s toward south | setpoint courses; Njord-profile vessels only |
 
-To keep an interactive simulator running and inspect it from another terminal:
+The WAM-V uses VRX physics, which has waves but no current. The Njord
+profile (`njord_v1`, `munin_v0`) has current but only flat water and
+constant wind, so `moderate` is rejected for it.
+
+## 4. Vessels
+
+Select a vessel with `VESSEL_CONFIG` (a path inside the container; the
+`njord_sim/config/` folder is mounted at `/config`):
+
+| Vessel | `VESSEL_CONFIG=` | Thrusters | What it is |
+|---|---|---|---|
+| WAM-V (default) | `/config/vessels/wamv.yaml` | 2, parallel, aft | The VRX reference boat. Hull and hydrodynamics from VRX. |
+| Njord test hull | `/config/vessels/njord_v1.yaml` | 2, parallel, aft | Uncalibrated analytic box hull with invented parameters |
+| Munin placeholder | `/config/vessels/munin_v0.yaml` | 4, X layout at ±45° | The `njord_v1` hull with an assumed four-thruster layout. Can push sideways (dynamic positioning). |
+
+None of these is a calibrated model of Njord's boat; see
+[physics-model.md](physics-model.md).
+
+## 5. Run settings
+
+Put settings in front of the command; they apply to that run only.
 
 ```bash
-export COMPOSE_FILE=compose.yaml:compose.wsl.yaml  # WSL; native Linux: compose.yaml
-export RUN_ID=$(python3 -c 'import uuid; print(uuid.uuid4().hex)')
-export OUTPUT_HOST=./outputs/manual-$RUN_ID
-docker compose up simulator autonomy evaluator
-# Another terminal, same Compose configuration:
-./scripts/njord smoke
-# Finish:
-docker compose down
+SEED=3 ENVIRONMENT=moderate PROFILE=conservative ./scripts/njord gui slalom
 ```
 
-## Recording
+| Setting | Default | Meaning |
+|---|---|---|
+| `SEED` | the course's seed | Gate offsets, wind gusts and sensor noise. Same seed, same inputs. |
+| `ENVIRONMENT` | `calm` | Environment preset from the course file ([section 3](#environments)) |
+| `PROFILE` | `fast` | Speed ceiling of the reference autonomy: `fast` (2.0 m/s) or `conservative` (1.0 m/s) |
+| `VESSEL_CONFIG` | `/config/vessels/wamv.yaml` | Vessel file ([section 4](#4-vessels)) |
+| `ALGORITHMS_CONFIG` | `/config/algorithms.yaml` | Tuning of the reference autonomy |
+| `STATE_SOURCE` | `estimate` | `truth` navigates on the exact simulated state instead of the GPS/IMU estimate |
+| `CONTROLLER`, `PERCEPTION`, `MAPPING`, `AUTONOMY` | `reference` | `external` leaves out that part of the reference autonomy, so your own node can take its place ([ros2-interface.md](ros2-interface.md#6-replacing-the-reference-algorithms)) |
+| `REAL_TIME_FACTOR` | `1.0` | Target of simulated seconds per wall second |
+| `ROS_PARAMS_FILE` | empty | Extra ROS parameters for reference nodes |
+| `GUI` | `0` | `1` adds the windows to `demo` or `lab` |
 
-Add `compose.wsl.yaml` to the list on WSL:
+The full list is in [configuration.md](configuration.md#environment-variables).
+
+## 6. Free driving (`lab`)
+
+`lab` starts the simulator without a race. Nothing ends the run until you
+press Ctrl-C. Send targets and watch the boat drive to them:
 
 ```bash
-COMPOSE_FILE=compose.yaml:compose.record.yaml ./scripts/njord demo recorder
+# Terminal 1
+VESSEL_CONFIG=/config/vessels/munin_v0.yaml GUI=1 ./scripts/njord lab goto_square
+# Terminal 2, from the repository root
+./scripts/njord goto 15 5 90      # x = 15 m, y = 5 m, face north (90° from east)
+./scripts/njord goto 0 0          # no heading: face along the line to the target
 ```
 
-This writes compressed MCAP bags under the run directory, including `/clock`, TF,
-sensors, navigation, commands and evaluation topics. `recording.json` records
-topic selection and image/source provenance. Existing bags are never overwritten.
-See [team integration](team-integration.md#7-record-and-compare-trials) for replay.
+In RViz, the **2D Goal Pose** tool (key G) does the same: click where the
+boat should go and drag in the direction it should face.
 
-## Filming
+Each target is scored (1.5 m, 15°, held 5 s) until the next one arrives.
+Ctrl-C in terminal 1 writes the report with one section per target. On a
+setpoint course the reference controller drives to the targets; on a gate
+course the reference autonomy drives the gates and targets are only scored.
+With `CONTROLLER=external` or `AUTONOMY=external` your own node drives, and
+with no node the boat drifts.
 
-The animation at the top of the README is made with:
+## 7. Change the configuration and run again
+
+Each setting lives in exactly one file. Edit it and start a new run.
+
+| To change | Edit | Rebuild? |
+|---|---|---|
+| Sensors (resolution, rate, range, noise) of the WAM-V; its thrust limit | `njord_sim/config/vessels/wamv.yaml` | no |
+| Anything about a Njord-profile boat: mass, geometry, damping, thrusters, sensors | `njord_sim/config/vessels/njord_v1.yaml` or `munin_v0.yaml` | no |
+| Speed profiles, guidance and setpoint-controller gains, planner and map | `njord_sim/config/algorithms.yaml` | no |
+| Gates, obstacles, setpoints, start pose, time limit, wind, waves, current | `scenarios/<course>.yaml` | **yes**: `./scripts/njord build` |
+| WAM-V sensor mounting poses | `njord_sim/config/vessels/wamv_sensors.xacro` | **yes** |
+| GPS datum, command timeout, topic names | `njord_sim/njord_sim/constants.py` | **yes** |
+
+Files under `njord_sim/config/` are mounted into the containers, so the next
+run reads them. Scenarios and code are copied into the image, so changing
+them needs `./scripts/njord build` (fast when only those files changed;
+Docker reuses the Gazebo and VRX layers). Every file
+is validated before Gazebo starts: an unknown key or invalid value stops the
+run with a message naming it.
+
+**Example: give Munin more thrust.** In `munin_v0.yaml`, change
+`forward_limit_n` and `reverse_limit_n` of each thruster, then:
+
+```bash
+VESSEL_CONFIG=/config/vessels/munin_v0.yaml ./scripts/njord gui station_keeping
+```
+
+**Example: a new setpoint course.** Copy `scenarios/goto_square.yaml` to
+`scenarios/my_course.yaml`, edit the targets, then:
+
+```bash
+./scripts/njord build
+./scripts/njord gui my_course
+```
+
+```yaml
+setpoints:
+  defaults: {tolerance_m: 1.5, heading_tolerance_deg: 15.0, hold_s: 5.0, timeout_s: 100.0}
+  sequence:
+  - {name: p1, position: [25.0, 0.0], heading_deg_enu: 0.0}
+  - {name: p2, position: [25.0, 20.0], heading_deg_enu: 90.0, hold_s: 10.0}
+  - {name: p3, position: [0.0, 20.0]}                           # heading free
+  - {name: swap, position: [10.0, 5.0], advance_after_s: 8.0}   # replaced after 8 s, reached or not
+  - {name: home, position: [0.0, 0.0], heading_deg_enu: -90.0}
+```
+
+A course has either `gates` or `setpoints`, and at least one entry under
+`obstacles` (the contact monitor needs one). The full format is in
+[configuration.md](configuration.md#scenario-files).
+
+**Example: a new vessel.** Copy `munin_v0.yaml` to
+`njord_sim/config/vessels/my_boat.yaml`, change it, and select it with
+`VESSEL_CONFIG=/config/vessels/my_boat.yaml`. No rebuild is needed.
+
+**Example: change only a few WAM-V sensor settings.** A flat file with just
+the keys to change is merged onto `wamv.yaml`:
+
+```bash
+VESSEL_CONFIG=/config/examples/sensors_low_bandwidth.yaml ./scripts/njord gui slalom
+```
+
+**Your own configuration folder.** To keep your files out of the
+repository, mount another folder at `/config`:
+
+```bash
+mkdir -p ~/my-config/vessels
+cp njord_sim/config/vessels/munin_v0.yaml ~/my-config/vessels/
+cp njord_sim/config/algorithms.yaml ~/my-config/
+CONFIG_HOST=$HOME/my-config VESSEL_CONFIG=/config/vessels/munin_v0.yaml \
+  ALGORITHMS_CONFIG=/config/algorithms.yaml ./scripts/njord gui goto_square
+```
+
+## 8. Results
+
+Every run writes a new directory `outputs/run-<time>/`:
+
+| File | Content |
+|---|---|
+| `report.html` | Opens offline in a browser: result, top view of the track and course, a table per gate or target, and plots of distance, heading error, speed and thrust per thruster |
+| `run_metrics.json` | All numbers, plus provenance: commit, image, seed and checksums of every input |
+| `timeseries.csv` | 10 Hz ground-truth pose, body velocity, active target error and thrust per thruster |
+| `resolved_configuration.json`, `source_config/` | The exact configuration the run used |
+
+`./scripts/njord report [run-dir]` rebuilds `report.html`.
+
+**Run status** (`status` in `run_metrics.json`):
+
+| Status | Meaning |
+|---|---|
+| `completed` | Every gate or required target done |
+| `setpoints_failed` | The target sequence finished but a required target was not reached |
+| `collision`, `geometric_overlap` | The boat hit something, or its hull envelope overlapped an obstacle |
+| `simulation_timeout` | The course time limit ran out |
+| `wall_timeout`, `odometry_timeout`, `contact_monitor_timeout` | Infrastructure failed (e.g. Gazebo closed or paused) |
+| `stopped` | A `lab` run was ended with Ctrl-C |
+
+**Per target** (`setpoints[]`): `outcome`, `time_to_reach_s`,
+`time_to_settle_s`, `final_distance_m`, `final_heading_error_deg`, hold
+precision (`hold_rms_distance_m`, `hold_max_distance_m`,
+`hold_rms_heading_error_deg`), `overshoot_m`, `max_cross_track_m`,
+`path_length_m`, `path_efficiency` and `force_impulse_ns` (∫ Σ|F| dt, a
+measure of control effort, not electrical energy).
+
+All scoring uses the simulator's ground truth. `state_source` in the
+metrics says whether the boat navigated on the estimate or on truth.
+
+## 9. Without GUI
+
+Everything above works without windows; use `demo` instead of `gui` and leave
+out `GUI=1`.
+
+```bash
+./scripts/njord demo slalom                       # measured race, no windows
+SEED=1 VESSEL_CONFIG=/config/vessels/munin_v0.yaml ./scripts/njord demo goto_square
+./scripts/njord lab goto_square                   # free driving without windows
+```
+
+### Benchmark: many races at once
+
+```bash
+./scripts/njord benchmark slalom --seeds 1 2 3 --environments calm moderate
+./scripts/njord benchmark slalom --dry-run        # print the matrix only
+```
+
+Runs every combination of seed, environment and speed profile in isolated
+Docker projects (`--jobs 2` runs two at a time) and writes `summary.json`
+and one directory per race under `outputs/benchmark-<time>/`. Keep failures
+when comparing.
+
+### Film: an animated GIF
 
 ```bash
 ./scripts/njord film slalom --output docs/media/slalom.gif
 ```
 
-This runs the normal headless race plus a `filmer` service (`compose.film.yaml`,
-`scripts/run_filmer.py`). The filmer spawns a camera into the world and moves it
-behind and above the vessel, following its ground-truth pose. The camera is
-presentation only: it is not on the vessel and is not bridged to ROS, so autonomy
-never sees it. It adds a rendered 960×540 camera at 10 Hz, so the race can run
-slower than real time; simulation time is unaffected. Frames and `frames.jsonl`
-land in `<run>/film/`.
+Runs a headless race with an extra chase camera (presentation only, not seen
+by autonomy) and turns the frames into a GIF at 20× speed. It needs Python 3
+with NumPy and Pillow on the host. `--speed`, `--fps` and `--width` change
+the GIF.
 
-Only when the evaluator reports a completed course does `scripts/make_film_gif.py`
-run on the host (Python 3 with numpy and Pillow). It skips the wait before the
-vessel moves, plays at 20× simulation time and 12 frames per second, and uses one
-shared palette. `--speed`, `--fps`, `--width` and `--colors` change this. A
-race can fail on a heavily loaded host; the reference slalom does not complete
-every run, so rerun it rather than committing a GIF of a failed race.
+### Record and replay
 
-## Continuous integration and delivery
+```bash
+# Native Linux; on WSL use COMPOSE_FILE=compose.yaml:compose.wsl.yaml:compose.record.yaml
+COMPOSE_FILE=compose.yaml:compose.record.yaml ./scripts/njord demo slalom recorder
+```
 
-`.github/workflows/ci.yml` runs on every push, tag and fork pull request:
+Writes a compressed MCAP bag of sensors, TF, navigation, commands and
+evaluation topics into the run directory. Replay the sensors, with the
+simulator stopped and in a separate ROS domain:
 
-1. `unit` runs the host unit suite without Docker.
-2. `image` builds the image with a layer cache in GHCR, confirms that its source
-   digest matches the commit, runs `./scripts/njord test` and a CPU-rendered
-   `./scripts/njord selftest`, then publishes the image. Tags are `sha-<commit>`
-   for every push, `latest` for `main` and the tag name for `v*` tags. Pull
-   requests from forks are tested but not published.
+```bash
+export OUTPUT_HOST="$PWD/outputs/run-<time>"
+ROS_DOMAIN_ID=43 docker compose run --rm autonomy ros2 bag play /outputs/bag --clock \
+  --topics /tf /tf_static /njord/odometry /sensors/lidar/points \
+  /sensors/cameras/front_left/image_raw /sensors/cameras/front_left/camera_info
+```
 
-Images are only published after the tests pass. CI proves that the image builds,
-that the container suite passes and that live sensors and navigation start with
-software rendering. It does not test GPU rendering, race completion or benchmarks.
+Start your node on domain 43 with `use_sim_time:=true`. Replay cannot react
+to new commands; comparing controllers needs new simulated runs.
+
+### Checks
+
+```bash
+./scripts/njord doctor      # Docker, Compose, GPU and image
+./scripts/njord selftest    # start the simulator, check cameras, lidar and navigation, stop
+./scripts/njord test        # full test suite in the container
+```
+
+### Simulator only, or a long session
+
+```bash
+./scripts/njord simulator slalom      # Gazebo and sensors, no autonomy and no evaluator
+```
+
+For a session you inspect from other terminals, start `lab` and use
+`docker compose exec autonomy /entrypoint.sh ros2 …` from the repository
+root ([ros2-interface.md](ros2-interface.md#8-looking-at-topics-from-the-command-line)).
+
+### No GPU
+
+`NJORD_CPU=1` in front of any command uses software rendering. Sensors work,
+but slowly (real-time factor around 0.7), and it says nothing about GPU
+rendering performance. CI uses it.
+
+## 10. Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| `Image … has a missing or mismatched … digest` | The code changed after the image was made. Run `./scripts/njord pull` (pushed commits) or `./scripts/njord build`. |
+| No windows open | Run from a terminal on the desktop, as the logged-in user; `echo $DISPLAY` must print something. |
+| The boat does not move | `docker compose exec autonomy /entrypoint.sh ros2 topic echo /njord/guard_status --field status` names what blocks thrust. |
+| A setpoint race never starts | The terminal prints what it waits for, e.g. `Waiting for a publisher on /thruster_1/command`: with `CONTROLLER=external` your controller is not connected. |
+| `moderate` rejected for a Njord-profile vessel | That profile supports flat water only; use `calm`, `windy` or `current`. |
+| A run hangs after the race | Another container from the same Compose project is still running; stop it, or give team containers their own project name (`-p`). |

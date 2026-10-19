@@ -8,7 +8,7 @@ Use --ros-args -p experiment:=coast -p manifest_path:=... -p output_path:=...
 Where to run: inside the container (``autonomy`` or ``tests`` service) on the
 same ROS domain as a running ``simulator`` service and no autonomy stack; this
 node must be the only publisher of /njord/actuator_forces. See
-docs/validation.md and docs/njord-calibration.md for the full protocol, and
+docs/validation.md and docs/physics-model.md for the full protocol, and
 scripts/dynamics_campaign.py, which automates fresh-process repetitions.
 
 Experiments (``experiment`` parameter): straight, reverse (every thruster at

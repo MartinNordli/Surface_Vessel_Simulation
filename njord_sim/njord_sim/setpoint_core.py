@@ -1,7 +1,7 @@
 """Setpoint sequencing and scoring without ROS or Gazebo dependencies.
 
 Pure-Python core of the evaluator for setpoint courses (scenario kind
-``setpoints``, see docs/control-autonomy-setpoints.md); evaluator_node.py
+``setpoints``, see docs/ros2-interface.md); evaluator_node.py
 wires it to ROS. Two modes share the scoring:
 
 - ``SetpointCourse`` (a race, ``demo``/``gui``): issues the scenario's target
